@@ -720,6 +720,13 @@ fun DesktopSearchScreen(q: String?, today: Today) {
     val index = rememberLoad("search-index") { loadSearchIndex(it) }
     val hits = remember(index.value, query) { index.value?.let { searchTitles(it.titles, query) } }
     var remote by remember { mutableStateOf(RemoteHits(emptyList(), emptyList())) }
+    // 演员：本地人名单（名字 / 拼音缩写）+ 服务器的人物搜索；打名字正好是某位演员 → 演员和 ta 的作品排在前面，缩写照旧片子在前
+    val peopleIndex = rememberLoad("search-people") { com.gugaart.ui.screens.search.loadPeopleIndex(it) }
+    val localPeople = remember(peopleIndex.value, query) { com.gugaart.ui.screens.search.searchPeopleLocal(peopleIndex.value.orEmpty(), query) }
+    val people = remember(localPeople, remote) { com.gugaart.ui.screens.search.mergePeople(localPeople, remote.people, query) }
+    val star = people.firstOrNull()?.person?.takeIf { com.gugaart.ui.screens.search.peopleFirst(query, hits.orEmpty(), people) }
+    val worksLoad = rememberLoad("search-works", star?.id) { c -> star?.let { com.gugaart.ui.screens.search.loadPersonWorks(c, it.id) }.orEmpty() }
+    val works = worksLoad.value.orEmpty().takeIf { star != null }.orEmpty()
     val client = graph.session.session.value?.client
     LaunchedEffect(query, client) {
         if (client == null || query.isBlank()) {
@@ -738,6 +745,21 @@ fun DesktopSearchScreen(q: String?, today: Today) {
     val field = remember { FocusRequester() }
     LaunchedEffect(graph.searchFocusTick) { runCatching { field.requestFocus() } }
     val suggestions = hits.orEmpty().take(7)
+    // 最近搜过 + 词云（按了 Enter / 打开了哪一条 / 点了词 = 记一笔）
+    val recents = com.gugaart.ui.screens.search.rememberSearchRecents()
+    val cloud = remember(index.value, recents.items) {
+        com.gugaart.ui.screens.search.searchCloud(index.value?.titles.orEmpty(), seed = today.day, skip = recents.items.take(3).map { it.term }.toSet(), max = 14)
+    }
+    fun openHit(id: String) {
+        recents.add(query)
+        graph.open(id)
+    }
+    fun pick(term: String) {
+        query = term
+        submitted = true
+        picked = 0
+        recents.add(term)
+    }
     DisposableEffect(Unit) {
         DesktopKeys.onEscape = {
             if (query.isNotEmpty()) {
@@ -790,7 +812,8 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                                 }
                                 Key.Enter, Key.NumPadEnter -> {
                                     val hit = suggestions.getOrNull(picked)
-                                    if (!submitted && hit != null && picked > 0) graph.open(hit.title.id) else submitted = query.isNotBlank()
+                                    if (!submitted && hit != null && picked > 0) openHit(hit.title.id) else submitted = query.isNotBlank()
+                                    if (submitted) recents.add(query)
                                     true
                                 }
                                 else -> false
@@ -801,7 +824,10 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                     singleLine = true,
                     cursorBrush = SolidColor(colors.spot),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { submitted = query.isNotBlank() }),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        submitted = query.isNotBlank()
+                        if (submitted) recents.add(query)
+                    }),
                 )
             }
             Kbd("Esc 清空")
@@ -810,10 +836,10 @@ fun DesktopSearchScreen(q: String?, today: Today) {
         Spacer(Modifier.height(Guga.rem(3.6f)))
         val titles = hits.orEmpty()
         when {
-            query.isBlank() -> SearchIdleView(seed = today.day)
+            query.isBlank() -> DesktopSearchIdle(index.value?.titles.orEmpty(), peopleIndex.value.orEmpty(), recents.items, cloud, today.day, ::pick, recents::clear)
             index.value == null && index.error != null -> ErrorView(index.error!!, index::retry)
             index.value == null -> if (index.showSkeleton) LoadingView(seed = today.day)
-            titles.isEmpty() && remote.episodes.isEmpty() && remote.people.isEmpty() -> SearchNoneView(query, {
+            titles.isEmpty() && remote.episodes.isEmpty() && people.isEmpty() -> SearchNoneView(query, {
                 query = ""
                 submitted = false
             })
@@ -822,38 +848,67 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                     // 左栏：联想 / 最佳匹配
                     Column(Modifier.weight(DeskBrowseSpec.SEARCH_LEFT)) {
                         val best = titles.firstOrNull()
-                        if (submitted && best != null) {
+                        if (star != null && (submitted || suggestions.isEmpty())) {
+                            // 打的是演员的名字：最佳匹配是这位演员
                             DeskSection(null, "最佳匹配", "BEST MATCH")
-                            BestMatch(best) { graph.open(best.title.id) }
+                            Row(horizontalArrangement = Arrangement.spacedBy(dimens.gutter), verticalAlignment = Alignment.Bottom) {
+                                PersonCell(star, Guga.rem(15f), query) { openHit(star.id) }
+                                Column(Modifier.padding(bottom = Guga.rem(3f))) {
+                                    BasicText("演员", style = Guga.note(rsp(1.3f), colors.spot), maxLines = 1)
+                                    BasicText(if (works.isNotEmpty()) "片库里 ${works.size} 部作品" else "片库里的人物", Modifier.padding(top = Guga.rem(0.4f)), style = Guga.song(rsp(1.6f), color = colors.dim), maxLines = 1)
+                                }
+                            }
+                        } else if (submitted && best != null) {
+                            DeskSection(null, "最佳匹配", "BEST MATCH")
+                            BestMatch(best) { openHit(best.title.id) }
                         } else {
                             DeskSection(null, "联想", "SUGGEST") { SectionNote("↑ ↓ 选择 · Enter 打开") }
-                            for ((i, h) in suggestions.withIndex()) SuggestRow(h, i == picked && picked > 0 || (preset.state == "typing" && i == picked)) { graph.open(h.title.id) }
+                            for ((i, h) in suggestions.withIndex()) SuggestRow(h, i == picked && picked > 0 || (preset.state == "typing" && i == picked)) { openHit(h.title.id) }
                         }
                     }
                     // 右栏：结果
                     Column(Modifier.weight(DeskBrowseSpec.SEARCH_RIGHT)) {
-                        val all = titles.size + remote.episodes.size + remote.people.size
-                        DeskSection(null, "影片与剧集", "TITLES") { SectionNote("${titles.size} 部 · 共 $all 条结果") }
+                        val all = titles.size + remote.episodes.size + people.size
                         val rightW = (win.width.value - dimens.margin.value * 2 - dimens.gutter.value * 2) * DeskBrowseSpec.SEARCH_RIGHT / (DeskBrowseSpec.SEARCH_LEFT + DeskBrowseSpec.SEARCH_RIGHT)
                         val cols = if (win.width.value >= DeskSpec.XL_FROM) 8 else if (win.width.value <= 1280f) 4 else 5
                         val cardW = ((rightW - dimens.gutter.value * (cols - 1)) / cols).dp
-                        for (row in titles.chunked(cols)) {
-                            Row(Modifier.padding(bottom = Guga.rem(2.4f)), horizontalArrangement = Arrangement.spacedBy(dimens.gutter)) {
-                                for (h in row) DeskPosterCard(h.title, cardW, wrap = true, highlight = h.range) { graph.open(it.id) }
+                        @Composable
+                        fun PeopleBlock(top: androidx.compose.ui.unit.Dp) {
+                            DeskSection(null, "演员", "PEOPLE", Modifier.padding(top = top).testTag("desktop-search-people")) { SectionNote("${people.size} 位") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(dimens.gutter)) {
+                                for (p in people.take(cols)) PersonCell(p.person, cardW, query) { openHit(p.person.id) }
                             }
+                        }
+                        @Composable
+                        fun Grid(list: List<Title>, highlight: (Title) -> IntRange?) {
+                            for (row in list.chunked(cols)) {
+                                Row(Modifier.padding(bottom = Guga.rem(2.4f)), horizontalArrangement = Arrangement.spacedBy(dimens.gutter)) {
+                                    for (t in row) DeskPosterCard(t, cardW, wrap = true, highlight = highlight(t)) { openHit(it.id) }
+                                }
+                            }
+                        }
+                        val rest = if (star != null) titles.filter { h -> works.none { it.id == h.title.id } } else titles
+                        if (star != null) {
+                            // 打的是演员的名字：演员在前，接着是 ta 在片库里的作品
+                            PeopleBlock(0.dp)
+                            if (works.isNotEmpty()) {
+                                DeskSection(null, "${star.name}的作品", "WORKS", Modifier.padding(top = Guga.rem(3.2f)).testTag("desktop-search-works")) { SectionNote("${works.size} 部") }
+                                Grid(works) { null }
+                            }
+                        }
+                        if (rest.isNotEmpty() || star == null) {
+                            DeskSection(null, "影片与剧集", "TITLES", Modifier.padding(top = if (star != null) Guga.rem(3.2f) else 0.dp)) { SectionNote("${rest.size} 部 · 共 $all 条结果") }
+                            val ranges = rest.associate { it.title.id to it.range }
+                            Grid(rest.map { it.title }) { ranges[it.id] }
                         }
                         if (remote.episodes.isNotEmpty()) {
                             DeskSection(null, "单集", "EPISODES", Modifier.padding(top = Guga.rem(2.4f))) { SectionNote("${remote.episodes.size} 集") }
                             for ((i, e) in remote.episodes.take(8).withIndex()) {
-                                DeskTocRow(Rules.episodeNo(i + 1), e.name, listOfNotNull(e.seriesName, e.episodeNo?.let { "第 $it 集" }).joinToString(" · "), e.art.thumb ?: e.art.backdrop, e.progress, { graph.open(e.id) }, menu = e, highlight = Pinyin.match(e.name, query))
+                                DeskTocRow(Rules.episodeNo(i + 1), e.name, listOfNotNull(e.seriesName, e.episodeNo?.let { "第 $it 集" }).joinToString(" · "), e.art.thumb ?: e.art.backdrop, e.progress, { openHit(e.id) }, menu = e, highlight = Pinyin.match(e.name, query))
                             }
                         }
-                        if (remote.people.isNotEmpty()) {
-                            DeskSection(null, "演员", "PEOPLE", Modifier.padding(top = Guga.rem(4f))) { SectionNote("${remote.people.size} 位") }
-                            Row(horizontalArrangement = Arrangement.spacedBy(dimens.gutter)) {
-                                for (p in remote.people.take(cols)) PersonCell(p, cardW, query) { graph.open(p.id) }
-                            }
-                        }
+                        // 缩写 / 片名：演员排在片子和单集后面
+                        if (star == null && people.isNotEmpty()) PeopleBlock(Guga.rem(4f))
                     }
                 }
             }
@@ -1108,5 +1163,83 @@ private fun ChartRow(rank: Int, t: Title) {
             BasicText(chartLine(t), Modifier.padding(top = Guga.rem(0.4f)), style = Guga.note(rsp(1.25f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         t.rating?.let { BasicText(it, style = Guga.numeral(rsp(2.8f)), maxLines = 1) }
+    }
+}
+
+/**
+ * 电脑搜索页什么都没输入时（设计稿 `p=search` 默认态）：左栏「最近搜过」（词 · 现在能搜到几条，右上「清空」）+ 她举笔；
+ * 右栏词云「随便搜搜」+「按题材翻」（片库里部数最多的 12 个题材）。点哪个都是搜它。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DesktopSearchIdle(titles: List<Title>, peopleIndex: List<com.gugaart.ui.data.Person>, recents: List<com.gugaart.ui.screens.search.RecentSearch>, cloud: List<com.gugaart.ui.screens.search.CloudWord>, seed: Int, onPick: (String) -> Unit, onClear: () -> Unit) {
+    val colors = Guga.colors
+    val dimens = Guga.dimens
+    Row(Modifier.padding(horizontal = dimens.margin).fillMaxWidth().testTag("desktop-search-idle"), horizontalArrangement = Arrangement.spacedBy(dimens.gutter * 2)) {
+        Column(Modifier.weight(DeskBrowseSpec.SEARCH_LEFT)) {
+            if (recents.isNotEmpty()) {
+                DeskSection(null, "最近搜过", "RECENT") { SectionNote("清空", onClear) }
+                for ((i, r) in recents.take(8).withIndex()) {
+                    val press = rememberPressState()
+                    val hover = rememberHover()
+                    val count = remember(titles, peopleIndex, r.term) { searchTitles(titles, r.term).size + com.gugaart.ui.screens.search.searchPeopleLocal(peopleIndex, r.term, 50).size }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(Guga.rem(4.6f))
+                            .hover(hover)
+                            .drawBehind {
+                                if (hover.over) drawRect(colors.ink.copy(alpha = 0.07f))
+                                drawLine(colors.line, Offset(0f, size.height - 0.5.dp.toPx()), Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx())
+                            }
+                            .pressable(press, label = r.term, focusable = false) { onPick(r.term) }
+                            .padding(horizontal = Guga.rem(1f))
+                            .testTag("desktop-recent-$i"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        BasicText(r.term, Modifier.weight(1f), style = Guga.song(rsp(1.8f)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (titles.isNotEmpty()) BasicText(if (count > 0) "$count 条" else "没有", style = Guga.note(rsp(1.25f), colors.faint), maxLines = 1)
+                    }
+                }
+                Spacer(Modifier.height(Guga.rem(2.4f)))
+            }
+            SearchIdleView(seed = seed)
+        }
+        Column(Modifier.weight(DeskBrowseSpec.SEARCH_RIGHT)) {
+            if (cloud.isNotEmpty()) {
+                DeskSection(null, "随便搜搜", "TRY")
+                com.gugaart.ui.screens.search.SearchCloud(cloud, onPick, Triple(rsp(1.5f), rsp(2.2f), rsp(3.0f)), gap = Guga.rem(1.2f))
+                Spacer(Modifier.height(Guga.rem(3.2f)))
+            }
+            val genres = remember(titles) { genreCounts(titles).filter { com.gugaart.ui.screens.search.isRealGenre(it.first) }.take(12) }
+            if (genres.isNotEmpty()) {
+                DeskSection(null, "按题材翻", "BROWSE")
+                for (row in genres.chunked(4)) {
+                    Row(Modifier.fillMaxWidth()) {
+                        for ((name, n) in row) {
+                            val press = rememberPressState()
+                            val hover = rememberHover()
+                            Row(
+                                Modifier
+                                    .weight(1f)
+                                    .height(Guga.rem(4.4f))
+                                    .hover(hover)
+                                    .drawBehind {
+                                        if (hover.over) drawRect(colors.ink.copy(alpha = 0.07f))
+                                        drawLine(colors.line, Offset(0f, size.height - 0.5.dp.toPx()), Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx())
+                                    }
+                                    .pressable(press, label = name, focusable = false) { onPick(name) }
+                                    .padding(horizontal = Guga.rem(0.8f)),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                BasicText(name, Modifier.weight(1f), style = Guga.song(rsp(1.7f), FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                BasicText("$n", style = Guga.numeral(rsp(1.3f), colors.spot), maxLines = 1)
+                            }
+                        }
+                        repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        }
     }
 }

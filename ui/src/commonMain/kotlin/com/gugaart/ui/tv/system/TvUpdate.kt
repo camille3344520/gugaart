@@ -84,7 +84,10 @@ fun TvUpdateSlip() {
     val live by g.update.state.collectAsState()
     val dismissed by g.update.dismissedVersion.collectAsState()
     var background by remember { mutableStateOf(false) }
-    val view = extraView(override ?: live, dismissed, com.gugaart.ui.screens.update.UpdateConsent.ignored)
+    // 设置里点「检查更新」/ 安装卡住了：放到后台的号外重新出来
+    val reshowTick = com.gugaart.ui.screens.update.UpdateConsent.reshowTick
+    LaunchedEffect(reshowTick) { if (reshowTick > 0) background = false }
+    val view = extraView(override ?: live, com.gugaart.ui.screens.update.UpdateConsent.dismissedFor(dismissed), com.gugaart.ui.screens.update.UpdateConsent.ignored)
     if (view == null || (background && (view.phase == ExtraPhase.Downloading || view.phase == ExtraPhase.Installing))) return
     val colors = Guga.colors
     val back = LocalBackDispatcher.current
@@ -99,7 +102,7 @@ fun TvUpdateSlip() {
     LaunchedEffect(view.phase) { groups.enterWhenReady("update", g.focus) }
     DisposableEffect(view.forced, view.phase) {
         val un = back.push {
-            if (!view.forced) close { if (view.phase == ExtraPhase.Downloading) background = true else g.update.dismiss() }
+            if (!view.forced) close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); if (view.phase == ExtraPhase.Downloading) background = true else g.update.dismiss() }
             true
         }
         onDispose { un() }
@@ -174,8 +177,8 @@ fun TvUpdateSlip() {
                                     }
                                     // 忽略这一版：记在本机，这一版不再弹
                                     "upd-skip" -> ((override ?: live) as? com.gugugaga.app.update.UpdateState.Available)?.release?.let { r -> close { com.gugaart.ui.screens.update.UpdateConsent.ignore(g, r.versionCode) } }
-                                    "upd-bg" -> close { background = true }
-                                    else -> close { g.update.dismiss() }
+                                    "upd-bg" -> close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); background = true }
+                                    else -> close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); g.update.dismiss() }
                                 }
                             },
                             if (focusedNow) Modifier else Modifier.border(2.dp, ink.copy(alpha = 0.5f)),

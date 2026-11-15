@@ -132,7 +132,7 @@ fun othersLabel(total: Int, unit: String): String = if (total > 1) "另有 ${tot
  * 读者证（她的署名照 + 订阅号 + 用户名）、三格数字、服务器 / 账号两行——点一行，切换面板在这一行**下面推开**，不盖东西——
  * 再往下是「翻阅」：记录、收藏、合集、设置、关于。
  * 切换账号 / 换服务器 / 退出登录全部是上游 `SessionManager` 的动作；添加服务器 / 添加账号走上游路由 `Servers` / `Login`。
- * [onOpenFavs] / [onOpenSets]：上游没有「收藏」「合集」的独立路由时由根界面接（默认：收藏 = 上游的 `Browse(Favorites)`，合集没有入口就不画这一行）。
+ * [onOpenFavs] / [onOpenSets]：上游没有「收藏」「合集」的独立路由时由根界面接（默认：收藏 = `Route.History("favorites")` 的收藏页，三端同一个路由；合集没有入口就不画这一行）。
  */
 @Composable
 fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> Unit)? = null) {
@@ -283,7 +283,7 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
                 }
             }
             Rule()
-            PageRow(++n, "收藏", data?.favorites?.let { if (it > 0) "$it 部收藏" else "还没有收藏" }) { (onOpenFavs ?: { graph.nav.navigate(Route.Browse(com.gugugaga.app.nav.BrowseKind.Favorites)) })() }
+            PageRow(++n, "收藏", data?.favorites?.let { if (it > 0) "$it 部收藏" else "还没有收藏" }) { (onOpenFavs ?: { graph.nav.navigate(Route.History("favorites")) })() }
             Rule()
             if (onOpenSets != null) {
                 PageRow(++n, "合集", null, onOpenSets)

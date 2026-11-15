@@ -350,6 +350,8 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                                         is Route.Search -> SearchScreen(pageRoute.q)
                                         is Route.Item -> ItemScreen(pageRoute.id, today.day)
                                         is Route.History -> if (pageRoute.tab == "favorites") FavsScreen() else HistoryScreen()
+                                        // 上游有的地方用 Browse(Favorites) 进收藏：同一页
+                                        is Route.Browse -> if (pageRoute.kind == com.gugugaga.app.nav.BrowseKind.Favorites) FavsScreen() else ComingPage(today, "这一页")
                                         is Route.Settings -> SettingsScreen(pageRoute.section)
                                         Route.Discover -> DiscoverScreen(today)
                                         Route.Servers, is Route.Login -> LoginScreen(today)

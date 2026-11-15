@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -40,7 +41,6 @@ import com.gugaart.ui.components.HatchPlate
 import com.gugaart.ui.components.Masthead
 import com.gugaart.ui.components.PersonChip
 import com.gugaart.ui.components.Rule
-import com.gugaart.ui.components.SearchIdleView
 import com.gugaart.ui.components.SearchNoneView
 import com.gugaart.ui.components.SectionHeader
 import com.gugaart.ui.components.TextLink
@@ -90,14 +90,24 @@ suspend fun loadSearchIndex(client: EmbyClient): SearchIndex {
     return SearchIndex(r.items.map { client.titleOf(it) }, maxOf(r.totalRecordCount, r.items.size))
 }
 
-/** 本地匹配：原文命中优先、越靠前越好；全是字母数字的查询词再按拼音首字母匹配（`yxj` → 颜心记）。纯函数，有单测。 */
+/**
+ * 本地匹配：原文命中优先、越靠前越好；全是字母数字的查询词再按拼音首字母匹配（`yxj` → 颜心记）。
+ * 查询词正好是一个题材（「喜剧」）或年份（「2024」）时，片名命中之后再接上这个题材 / 这一年的片子（词云里点的多半是这些），高分在前。纯函数，有单测。
+ */
 fun searchTitles(index: List<Title>, query: String, limit: Int = 30): List<TitleHit> {
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
-    return index.mapNotNull { t -> Pinyin.score(t.name, q)?.let { Triple(t, it, Pinyin.match(t.name, q)) } }
+    val byName = index.mapNotNull { t -> Pinyin.score(t.name, q)?.let { Triple(t, it, Pinyin.match(t.name, q)) } }
         .sortedWith(compareBy<Triple<Title, Int, IntRange?>> { it.second }.thenBy { it.first.name.length }.thenBy { it.first.name })
-        .take(limit)
         .map { TitleHit(it.first, it.third) }
+    val year = q.toIntOrNull()?.takeIf { q.length == 4 && it in 1880..2100 }
+    val byTag = if (year == null && index.none { t -> t.genres.any { it.equals(q, ignoreCase = true) } }) emptyList() else {
+        val named = byName.map { it.title.id }.toSet()
+        index.filter { t -> t.id !in named && (if (year != null) t.year == year else t.genres.any { it.equals(q, ignoreCase = true) }) }
+            .sortedWith(compareByDescending<Title> { it.rating?.toFloatOrNull() ?: 0f }.thenBy { it.name })
+            .map { TitleHit(it, null) }
+    }
+    return (byName + byTag).take(limit)
 }
 
 suspend fun searchRemote(client: EmbyClient, query: String): RemoteHits {
@@ -138,9 +148,33 @@ fun SearchScreen(initial: String?) {
     val index = rememberLoad("search-index") { loadSearchIndex(it) }
     val remote = rememberLoad("search-remote", settled) { searchRemote(it, settled) }
     val hits = remember(index.value, query) { searchTitles(index.value?.titles.orEmpty(), query) }
+    // 演员：本地人名单（名字 / 拼音缩写）+ 服务器的人物搜索；打名字正好是某位演员 → 演员和 ta 的作品排在前面，缩写照旧片子在前
+    val peopleIndex = rememberLoad("search-people") { loadPeopleIndex(it) }
+    val localPeople = remember(peopleIndex.value, query) { searchPeopleLocal(peopleIndex.value.orEmpty(), query) }
+    val remotePeople = remote.value?.people.orEmpty().takeIf { settled == query }.orEmpty()
+    val people = remember(localPeople, remotePeople) { mergePeople(localPeople, remotePeople, query) }
+    val first = peopleFirst(query, hits, people)
+    val star = people.firstOrNull()?.person?.takeIf { first }
+    val worksLoad = rememberLoad("search-works", star?.id) { c -> star?.let { loadPersonWorks(c, it.id) }.orEmpty() }
+    val works = worksLoad.value.orEmpty().takeIf { star != null }.orEmpty()
     val scroll = rememberScrollState(preset.scroll)
     ReportScroll(scroll)
     val q = query.trim()
+    // 找过 + 词云（打开了哪一条 / 按了键盘上的「搜索」/ 点了词云里的词 = 记一笔）
+    val recents = rememberSearchRecents()
+    val cloud = remember(index.value, recents.items) {
+        val day = ((SearchMemory.nowMs() + SearchMemory.offsetMs()) / SearchMemory.DAY_MS).toInt()
+        searchCloud(index.value?.titles.orEmpty(), seed = day, skip = recents.items.take(3).map { it.term }.toSet())
+    }
+    fun openHit(id: String) {
+        recents.add(q)
+        graph.open(id)
+    }
+    fun pick(term: String) {
+        query = term
+        settled = term
+        recents.add(term)
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = dimens.margin).testTag("search")) {
@@ -157,15 +191,15 @@ fun SearchScreen(initial: String?) {
                         singleLine = true,
                         cursorBrush = SolidColor(colors.spot),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { recents.add(query) }),
                     )
                 }
                 if (query.isNotEmpty()) TextLink("清除", { query = "" }, Modifier.padding(start = 12.dp), color = colors.dim)
             }
             Rule(strong = true)
             val episodes = remote.value?.episodes.orEmpty().takeIf { settled == query }.orEmpty()
-            val people = remote.value?.people.orEmpty().takeIf { settled == query }.orEmpty()
             when {
-                q.isEmpty() -> SearchIdleView(seed = 1)
+                q.isEmpty() -> PhoneSearchIdle(recents.items, cloud, ::pick, recents::clear)
                 hits.isEmpty() && episodes.isEmpty() && people.isEmpty() ->
                     if (index.pending || remote.refreshing || settled != query) {
                         BasicText("正在找……", Modifier.padding(top = 16.dp), style = Guga.note(type.caption, colors.faint))
@@ -173,13 +207,38 @@ fun SearchScreen(initial: String?) {
                         SearchNoneView(q, { query = "" })
                     }
                 else -> {
-                    BasicText(searchTally(hits.size, episodes.size, people.size), Modifier.padding(top = 12.dp).testTag("search-tally"), style = Guga.note(type.caption, colors.faint), maxLines = 1)
-                    if (hits.isNotEmpty()) {
+                    BasicText(searchTally((hits.map { it.title.id } + works.map { it.id }).toSet().size, episodes.size, people.size), Modifier.padding(top = 12.dp).testTag("search-tally"), style = Guga.note(type.caption, colors.faint), maxLines = 1)
+                    @Composable
+                    fun PeopleSection(top: androidx.compose.ui.unit.Dp) {
+                        SectionHeader("演员", "PEOPLE", Modifier.padding(top = top), trailing = "${people.size}")
+                        Row(Modifier.padding(top = 14.dp).testTag("search-people"), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            for (p in people.take(3)) PersonChip(p.person, 92.dp, { openHit(p.person.id) })
+                        }
+                    }
+                    if (star != null) {
+                        // 打的是演员的名字：演员在前，接着是 ta 在片库里的作品
+                        PeopleSection(26.dp)
+                        if (works.isNotEmpty()) {
+                            SectionHeader("${star.name}的作品", "WORKS", Modifier.padding(top = dimens.sectionGap).testTag("search-works"), trailing = "${works.size}")
+                            for ((i, w) in works.withIndex()) {
+                                TitleRow(i + 1, TitleHit(w, null)) { openHit(w.id) }
+                                Rule()
+                            }
+                        }
+                        val rest = hits.filter { h -> works.none { it.id == h.title.id } }
+                        if (rest.isNotEmpty()) {
+                            SectionHeader("片", "TITLES", Modifier.padding(top = dimens.sectionGap), trailing = "${rest.size}")
+                            for ((i, h) in rest.withIndex()) {
+                                TitleRow(i + 1, h) { openHit(h.title.id) }
+                                Rule()
+                            }
+                        }
+                    } else if (hits.isNotEmpty()) {
                         SectionHeader("片", "TITLES", Modifier.padding(top = 26.dp), trailing = "${hits.size}")
-                        BestMatch(hits.first()) { graph.open(hits.first().title.id) }
+                        BestMatch(hits.first()) { openHit(hits.first().title.id) }
                         Rule()
                         for ((i, h) in hits.drop(1).withIndex()) {
-                            TitleRow(i + 2, h) { graph.open(h.title.id) }
+                            TitleRow(i + 2, h) { openHit(h.title.id) }
                             Rule()
                         }
                     }
@@ -187,7 +246,7 @@ fun SearchScreen(initial: String?) {
                         SectionHeader("单集", "EPISODES", Modifier.padding(top = dimens.sectionGap), trailing = "${episodes.size}")
                         for (e in episodes) {
                             val press = rememberPressState()
-                            Row(Modifier.fillMaxWidth().heightIn(min = 86.dp).pressGraphics(press).pressable(press, label = e.name) { graph.open(e.seriesId ?: e.id) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 86.dp).pressGraphics(press).pressable(press, label = e.name) { openHit(e.seriesId ?: e.id) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 BasicText("E${e.episodeNo ?: ""}", Modifier.width(66.dp), style = Guga.numeral(if ((e.episodeNo ?: 0) >= 1000) 15.sp else type.row * 1.1f, colors.spot), maxLines = 1)
                                 Column(Modifier.weight(1f).padding(end = 12.dp)) {
                                     BasicText(highlighted(e.name, Pinyin.match(e.name, q), colors.spot), style = Guga.song(type.row, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -204,12 +263,8 @@ fun SearchScreen(initial: String?) {
                             Rule()
                         }
                     }
-                    if (people.isNotEmpty()) {
-                        SectionHeader("演员", "PEOPLE", Modifier.padding(top = dimens.sectionGap), trailing = "${people.size}")
-                        Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            for (p in people.take(3)) PersonChip(p, 92.dp, { graph.open(p.id) })
-                        }
-                    }
+                    // 缩写 / 片名：演员排在片子和单集后面
+                    if (star == null && people.isNotEmpty()) PeopleSection(dimens.sectionGap)
                 }
             }
             Spacer(Modifier.height(150.dp))

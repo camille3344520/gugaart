@@ -346,6 +346,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // 应用内更新：从系统的「安装未知应用」设置页回来，接着装等着的那个更新（和上游壳一样）
         appGraph?.update?.onAppResumed()
+        // 安装确认被放到后台（或下完时应用在后台、确认没弹出来）：回来时把卡住的「正在安装……」报掉，号外变成「再试一次」
+        appGraph?.let { com.gugaart.ui.update.UpdateStall.check(it) }
     }
 
     override fun onStop() {

@@ -25,7 +25,13 @@ import kotlin.random.Random
  * 取这部作品的图片清单（只读 GET /Items/{id}/Images，每张带宽高），按清晰度分档（4K / 2K / 1080 / 720 / 更低），
  * 在最高的那一档里随机挑一张；同一波里回到首页的静默刷新不换（不闪）。取不到清单、只有一张 = 照旧用第一张。
  * 单集（继续观看）的剧照用整部剧的。请求的尺寸 [COVER_BACKDROP_W]：电视上整屏清晰显示，手机 / 电脑本来就虚化。
+ *
+ * 海报也一样（用户 2026-11-16：「有多张封面海报的时候，也可以随机的显示」）：同一份图片清单里海报（Primary）有两张以上时，
+ * 封面卡上的海报也在最清晰的一档里随机挑一张（[COVER_POSTER_W] 宽）；只有一张 = 照旧。
  */
+
+/** 封面卡上的海报要多宽（和片子卡片的海报一样）。 */
+const val COVER_POSTER_W = 600
 
 /** 封面剧照要多宽。 */
 const val COVER_BACKDROP_W = 1920
@@ -53,44 +59,61 @@ fun pickBackdrop(list: List<BackdropInfo>, random: Random): BackdropInfo? {
 }
 
 /** `/Items/{id}/Images` 的回应 → 剧照清单（别的类型不要）。纯函数，有单测。 */
-fun parseBackdrops(json: JsonElement): List<BackdropInfo> = (json as? JsonArray).orEmpty().mapNotNull { e ->
+fun parseBackdrops(json: JsonElement): List<BackdropInfo> = parseImages(json, "Backdrop")
+
+/** `/Items/{id}/Images` 的回应 → 某一类图（Backdrop / Primary …）的清单。纯函数，有单测。 */
+fun parseImages(json: JsonElement, type: String): List<BackdropInfo> = (json as? JsonArray).orEmpty().mapNotNull { e ->
     val o = e as? JsonObject ?: return@mapNotNull null
     fun str(k: String) = (o[k] as? JsonPrimitive)?.contentOrNull
     fun int(k: String) = (o[k] as? JsonPrimitive)?.intOrNull
-    if (str("ImageType") != "Backdrop") return@mapNotNull null
+    if (str("ImageType") != type) return@mapNotNull null
     BackdropInfo(index = int("ImageIndex") ?: 0, tag = str("ImageTag"), width = int("Width") ?: 0, height = int("Height") ?: 0)
 }
 
 /** 这一波封面挑中的剧照（按 [coverKey] 记；发新的一波时重挑）。 */
 object CoverBackdrops {
     private val chosen = HashMap<String, String>()
+    private val posters = HashMap<String, String>()
 
     /** [fresh] = 这是新发的一波（重挑）；否则沿用这一波挑好的。 */
     suspend fun apply(client: EmbyClient, covers: List<Title>, fresh: Boolean, random: Random = Random.Default): List<Title> {
         if (fresh) {
             val picks = coroutineScope { covers.map { t -> async { coverKey(t) to pickFor(client, t, random) } }.awaitAll() }
             chosen.clear()
-            for ((key, url) in picks) if (url != null) chosen[key] = url
+            posters.clear()
+            for ((key, pick) in picks) {
+                pick.first?.let { chosen[key] = it }
+                pick.second?.let { posters[key] = it }
+            }
         }
-        return covers.map { t -> chosen[coverKey(t)]?.let { url -> t.copy(art = t.art.copy(backdrop = url)) } ?: t }
+        return covers.map { t ->
+            val key = coverKey(t)
+            val backdrop = chosen[key]
+            val poster = posters[key]
+            if (backdrop == null && poster == null) t else t.copy(art = t.art.copy(backdrop = backdrop ?: t.art.backdrop, poster = poster ?: t.art.poster))
+        }
     }
 
-    private suspend fun pickFor(client: EmbyClient, t: Title, random: Random): String? {
+    /** (剧照, 海报)：各自有两张以上才挑，否则 null = 照旧。 */
+    private suspend fun pickFor(client: EmbyClient, t: Title, random: Random): Pair<String?, String?> {
         val id = t.seriesId ?: t.id
         return try {
-            val list = withTimeoutOrNull(LIST_TIMEOUT_MS) { parseBackdrops(client.getJson("/Items/$id/Images")) } ?: return null
-            if (list.size < 2) return null
-            val p = pickBackdrop(list, random) ?: return null
-            client.imageUrl(id, ImageType.Backdrop, ImageUrlOptions(tag = p.tag, index = p.index, maxWidth = COVER_BACKDROP_W))
+            val json = withTimeoutOrNull(LIST_TIMEOUT_MS) { client.getJson("/Items/$id/Images") } ?: return null to null
+            val backdrop = parseImages(json, "Backdrop").takeIf { it.size >= 2 }?.let { pickBackdrop(it, random) }
+                ?.let { p -> client.imageUrl(id, ImageType.Backdrop, ImageUrlOptions(tag = p.tag, index = p.index, maxWidth = COVER_BACKDROP_W)) }
+            val poster = parseImages(json, "Primary").takeIf { it.size >= 2 }?.let { pickBackdrop(it, random) }
+                ?.let { p -> client.imageUrl(id, ImageType.Primary, ImageUrlOptions(tag = p.tag, index = p.index, maxWidth = COVER_POSTER_W)) }
+            backdrop to poster
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            null
+            null to null
         }
     }
 
     /** 测试用。 */
     fun reset() {
         chosen.clear()
+        posters.clear()
     }
 }

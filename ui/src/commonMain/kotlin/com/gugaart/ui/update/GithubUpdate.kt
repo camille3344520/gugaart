@@ -1,6 +1,9 @@
 package com.gugaart.ui.update
 
+import com.gugugaga.app.update.DownloadTarget
+import com.gugugaga.app.update.InstallOutcome
 import com.gugugaga.app.update.RangeSource
+import com.gugugaga.app.update.ReleaseAsset
 import com.gugugaga.app.update.UpdateConfig
 import com.gugugaga.app.update.UpdateHost
 
@@ -39,8 +42,23 @@ object GithubUpdate {
         versionCode = versionCode,
     )
 
-    /** 把平台的安装宿主包一层：下载时换成 GitHub 的地址，别的（下载到哪、怎么装）都是上游原来的。 */
+    /**
+     * 把平台的安装宿主包一层：下载时换成 GitHub 的地址，别的（下载到哪、怎么装）都是上游原来的。
+     * 另外记下「什么时候交给了系统安装器」和上游听安装结果的回调——安装确认被放到后台时由 [UpdateStall] 把卡住的状态报掉。
+     */
     fun wrap(host: UpdateHost): UpdateHost = object : UpdateHost by host {
         override val rangeSource: RangeSource = RangeSource { url, from, to -> host.rangeSource.get(rewrite(url), from, to) }
+
+        override fun setInstallListener(listener: ((InstallOutcome) -> Unit)?) {
+            UpdateStall.listen(listener)
+            host.setInstallListener(listener?.let { l -> { outcome: InstallOutcome -> UpdateStall.answered(); l(outcome) } })
+        }
+
+        override suspend fun install(asset: ReleaseAsset, target: DownloadTarget): InstallOutcome {
+            UpdateStall.answered()
+            val r = host.install(asset, target)
+            if (r is InstallOutcome.Started) UpdateStall.handedOver(com.gugaart.ui.screens.update.UpdateNudge.nowMs())
+            return r
+        }
     }
 }

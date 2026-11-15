@@ -126,7 +126,7 @@ fun RankHost(live: Boolean, tv: Boolean) {
     val override = LocalUpdateStateOverride.current
     val update by g.update.state.collectAsState()
     val dismissed by g.update.dismissedVersion.collectAsState()
-    if (extraView(override ?: update, dismissed, com.gugaart.ui.screens.update.UpdateConsent.ignored) != null) return
+    if (extraView(override ?: update, com.gugaart.ui.screens.update.UpdateConsent.dismissedFor(dismissed), com.gugaart.ui.screens.update.UpdateConsent.ignored) != null) return
     // 等级的先出，收起后再出特别称号
     when {
         news != null -> if (tv) com.gugaart.ui.tv.system.TvRankSlip(news) else RankSlip(news)

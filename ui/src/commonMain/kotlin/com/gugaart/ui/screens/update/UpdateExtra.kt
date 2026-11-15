@@ -126,7 +126,7 @@ fun UpdateExtra() {
     }
     val live by graph.update.state.collectAsState()
     val dismissed by graph.update.dismissedVersion.collectAsState()
-    val view = extraView(override ?: live, dismissed, UpdateConsent.ignored) ?: return
+    val view = extraView(override ?: live, UpdateConsent.dismissedFor(dismissed), UpdateConsent.ignored) ?: return
     var permissionHint by remember { mutableStateOf(false) }
     val release = ((override ?: live) as? UpdateState.Available)?.release
     ExtraSlip(
@@ -141,7 +141,7 @@ fun UpdateExtra() {
                 else -> UpdateConsent.downloadAndInstall(graph)
             }
         },
-        onLater = { graph.update.dismiss() },
+        onLater = { UpdateConsent.hideAgain(); graph.update.dismiss() },
         onIgnore = release?.let { r -> { UpdateConsent.ignore(graph, r.versionCode) } },
     )
 }

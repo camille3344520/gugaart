@@ -7,6 +7,8 @@ import com.gugugaga.app.AppGraph
 import com.gugugaga.app.platform.LocalStore
 import com.gugugaga.app.settings.UPDATE_AUTO_DOWNLOAD_KEY
 import com.gugugaga.app.settings.updateAutoDownload
+import com.gugugaga.app.update.ReleaseInfo
+import com.gugugaga.app.update.UpdateState
 import kotlinx.serialization.json.JsonPrimitive
 
 /*
@@ -35,14 +37,54 @@ object UpdateConsent {
     fun ignore(graph: AppGraph, versionCode: Int) {
         ignored = versionCode
         graph.deps.local.set(IGNORE_KEY, versionCode.toString())
+        hideAgain()
         graph.update.dismiss()
     }
 
-    /** 手动「检查更新」：用户想知道，忽略的那一版也解除。 */
+    /**
+     * 「放到后台」/「稍后」之后又叫回来的那一版（versionCode；0 = 没有）：号外照常显示（[dismissedFor]）。
+     * 用户 2026-11-16：「安卓更新的时候点后台，再次点击没反应」——上游在下载 / 安装中途不理「检查更新」，号外又被收着，看起来就是点了没反应。
+     */
+    var reshown by mutableIntStateOf(0)
+        private set
+
+    /** 每叫回来一次加一（电视的「放到后台」是号外自己的开关，看到它变就重新打开）。 */
+    var reshowTick by mutableIntStateOf(0)
+        private set
+
+    fun reshow(versionCode: Int) {
+        reshown = versionCode
+        reshowTick++
+    }
+
+    /** 又点了「稍后」/「放到后台」：不再硬叫出来。 */
+    fun hideAgain() {
+        reshown = 0
+    }
+
+    /** 号外判断收不收用的「按过稍后的那一版」：叫回来的那一版不算。纯函数，有单测。 */
+    fun dismissedFor(dismissed: Int, reshown: Int = this.reshown): Int = if (dismissed != 0 && dismissed == reshown) 0 else dismissed
+
+    /** 正在进行中的那一版（下载中 / 下好了 / 安装中 / 等安装权限）；这时上游的「检查更新」什么都不做。纯函数，有单测。 */
+    fun busyRelease(state: UpdateState): ReleaseInfo? = when (state) {
+        is UpdateState.Downloading -> state.release
+        is UpdateState.Downloaded -> state.release
+        is UpdateState.Installing -> state.release
+        is UpdateState.NeedsPermission -> state.release
+        else -> null
+    }
+
+    /** 手动「检查更新」：用户想知道，忽略的那一版也解除。正在下 / 装的那一版：把号外叫回来（安装卡住了就报掉，变成「再试一次」）。 */
     fun checkByHand(graph: AppGraph) {
         if (ignored != 0) {
             ignored = 0
             graph.deps.local.remove(IGNORE_KEY)
+        }
+        val busy = busyRelease(graph.update.state.value)
+        if (busy != null) {
+            reshow(busy.versionCode)
+            com.gugaart.ui.update.UpdateStall.check(graph)
+            return
         }
         graph.update.checkNow()
     }
