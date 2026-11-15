@@ -1,0 +1,52 @@
+/* ============ B1 · 头版 ============ 平的纸面：细线、斜体期号、每期一个专色；她是主编（圆形署名照、手记、印章） */
+.v1 .b1-cover{position:relative;height:664px}
+.v1 .b1-cover .b-mast{position:absolute;left:0;right:0;top:0}
+.v1 .b-glow{position:absolute;left:0;top:26px;width:412px;height:400px;background:radial-gradient(ellipse 62% 52% at 50% 46%,var(--spot),rgba(16,14,11,0) 72%);opacity:.3;pointer-events:none}
+.v1 .b-stage{top:56px;height:312px}
+.v1 .cv{left:97px;top:8px;width:196px;height:294px;box-shadow:0 0 0 1px rgba(239,230,212,.22)}
+.v1 .cv.f{box-shadow:0 0 0 1px rgba(239,230,212,.4),0 34px 54px -22px var(--spot),0 20px 40px rgba(0,0,0,.55)}
+.v1 .b-logo{left:66px;top:336px;width:258px;height:76px}
+.v1 .b-iss{position:absolute;left:24px;right:24px;top:432px;display:grid;grid-template-columns:104px 1fr;align-items:start}
+.v1 .b-iss .b-no{border-right:1px solid var(--line);height:90px;align-items:flex-start}
+.v1 .b-no b{font-size:62px;line-height:62px;height:62px}
+.v1 .b-no em{margin-top:36px}
+.v1 .b-iss .b-txt{padding-left:16px}
+.v1 .b-iss .b-stand{font-size:14.5px;line-height:1.62;margin-top:6px;height:70px;overflow:hidden}
+.v1 .b-ticks{position:absolute;left:24px;right:24px;top:422px;height:1px;background-color:var(--line);display:flex;justify-content:center;gap:10px}
+.v1 .b-ticks i{display:block;width:16px;height:3px;margin-top:-1px;background-color:var(--faint);cursor:pointer;transition:background-color .3s,width .3s}
+.v1 .b-ticks i.on{background-color:var(--red);width:30px}
+.v1 .b-cta{position:absolute;left:24px;right:24px;top:534px;display:flex;align-items:center;gap:14px}
+.v1 .b-cta .r{margin-left:auto;font-size:12px;font-style:italic;color:var(--dim);font-family:var(--cn);white-space:nowrap}
+.v1 .b-note{display:flex;align-items:center;gap:14px;height:66px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.v1 .b1-cover .b-note{position:absolute;left:24px;right:24px;top:592px}
+.v1 .b-note em{display:block;font-size:10px;letter-spacing:.24em;color:var(--red);font-style:italic}
+.v1 .b-note p{font-family:var(--cn);font-size:13.5px;line-height:1.5;color:var(--dim);margin-top:4px;font-style:italic}
+.v1 .b-note.inl{margin:-8px 0 34px}
+.v1 .b-end{margin:0 24px 130px;padding-top:18px;border-top:1px solid var(--ink)}
+
+/* her: the editor's byline photo (a round frame; the sprite's bust fills it) */
+.v1 .msc.round{border-radius:50%;overflow:hidden;background-color:#1d1a15;box-shadow:0 0 0 1px var(--ink)}
+.v1 .msc.round img,.v1 .msc.round canvas{width:142%;height:142%;left:-21%;top:-11%}
+.v1 .msc{width:50px;height:50px}
+.v1 .msc[data-size="76"]{width:76px;height:76px}
+.v1 .msc[data-size="38"]{width:38px;height:38px}
+.v1 .msc[data-size="46"]{width:46px;height:46px}
+
+/* 收藏 = 主编盖章: a red seal lands in the slot reserved next to the link */
+.v1 .fav-slot{border:1px dashed var(--line)}
+.v1 .fav-slot u{display:none}
+.v1 .fav-slot b{position:absolute;inset:2px;background-color:#D8432A;color:#fff;font-family:var(--cn);font-weight:900;font-size:17px;display:grid;place-items:center;transform:rotate(-7deg) scale(2.4);opacity:0;box-shadow:inset 0 0 0 2px #D8432A,inset 0 0 0 3px rgba(255,255,255,.55)}
+.v1 .fav-slot.on{border-color:transparent}
+.v1 .fav-slot.on b{opacity:1;transform:rotate(-7deg) scale(1);animation:seal .42s cubic-bezier(.2,1.5,.4,1)}
+.v1 .fav-slot.off b{animation:unseal .35s ease both}
+@keyframes seal{0%{opacity:0;transform:rotate(8deg) scale(2.6)}55%{opacity:1;transform:rotate(-9deg) scale(.9)}100%{transform:rotate(-7deg) scale(1)}}
+@keyframes unseal{from{opacity:1;transform:rotate(-7deg) scale(1)}to{opacity:0;transform:rotate(-7deg) scale(1)}}
+
+/* 已看 = 校对勾: a proof-reader's tick is drawn across the slot at the end of the row, the number is struck out */
+.v1 .mk u{position:absolute;left:5px;top:5px;width:14px;height:14px;border:1px solid var(--faint);display:block}
+.v1 .mk svg{position:absolute;left:-3px;top:-6px;width:30px;height:30px;color:#EA4E30;overflow:visible}
+.v1 .mk svg{opacity:0;transition:opacity .1s}
+.v1 .seen .mk svg{opacity:1}
+.v1 .mk svg path{stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset .38s cubic-bezier(.5,0,.3,1)}
+.v1 .seen .mk svg path{stroke-dashoffset:0}
+.v1 .b-li.ep.seen em{text-decoration:line-through;text-decoration-thickness:1.5px;text-decoration-color:#EA4E30}

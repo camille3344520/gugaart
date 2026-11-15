@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext (N8):
+  * the loopback (127.0.0.1 / `localhost`): local tools and test servers (the strm / 302 accelerator that served ExoPlayer / mpv
+    from there was removed on 2026-11-13);
+  * the user's own Emby servers: most LAN Emby servers are plain http and their address is typed in at run time, so they cannot be
+    listed here (the web build's config, apps/android/.../network_security_config.xml, makes the same choice). The debug mock
+    (tools/mock-emby via 10.0.2.2 / 172.16.x.2) is plain http too.
+  User-installed CAs are trusted so that self-signed / private-CA HTTPS Emby servers work once the user installed their certificate.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

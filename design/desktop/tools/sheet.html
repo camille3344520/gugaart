@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>contact sheet</title>
+<style>body{margin:0;background:#333;display:grid;grid-template-columns:1fr 1fr;gap:4px;font:12px monospace;color:#fff}figure{margin:0;position:relative}img{width:100%;display:block}figcaption{position:absolute;left:0;top:0;background:#c00;padding:1px 6px}</style>
+<script>
+// tools/sheet.html?f=a,b,c,d : four screenshots on one sheet (a quick second look; first looks are done at full size)
+const f = new URLSearchParams(location.search).get('f').split(',');
+document.write(f.map((n) => `<figure><img src="../shots/${n}.png"><figcaption>${n}</figcaption></figure>`).join(''));
+Promise.all([...document.images].map((i) => i.decode().catch(() => 0))).then(() => { document.body.dataset.ready = '1'; });
+</script>

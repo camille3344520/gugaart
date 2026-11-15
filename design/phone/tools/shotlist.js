@@ -1,0 +1,27 @@
+// every screen and state: [file name, screen, query, async steps(page)?]
+const st = (p, list) => list.map((s) => [p + (s ? '-' + s : ''), p, s ? 'st=' + s : '']);
+module.exports = [
+  ...st('home', ['', 'mid', 'hard', 'fav', 'toc', 'new', 'end', 'pull', 'first', 'exit', 'offline']),
+  ['home-drag', 'home', 'anim=1', async (p) => { await p.wait(300); await p.dragTo(260, 280, 160, 282, 10); await p.wait(250); }],
+  ['home-lens', 'home', 'lift=1'],
+  ['home-away', 'home', 'scroll=430'],
+  ...st('discover', ['', 'top', 'mid', 'dice']),
+  ...st('libs', ['']),
+  ...st('wall', ['', 'tv', 'anime', 'filter', 'sort', 'az', 'loading', 'empty']),
+  ...st('sets', ['']), ['sets-2', 'sets', 'scroll=900'],
+  ...st('set', ['', 'list', 'school', 'avengers', 'fav']),
+  ...st('search', ['empty', 'typing', 'results', 'results2', 'long', 'none']),
+  ...st('series', ['', 'eps', 'mark', 'fav', 'cast', 'one', 'season', 's22', 'nodata', 'daima', 'tennis', 'initiald']),
+  ['series-mid', 'series', 'scroll=330'], ['series-end', 'series', 'scroll=99999'],
+  ...st('episode', ['', 'hard', 'fav']), ['episode-2', 'episode', 'scroll=560'],
+  ...st('movie', ['', 'ver', 'tracks', 'cast', 'fav', 'nologo', 'short', 'dahua', 'avatar']),
+  ['movie-mid', 'movie', 'scroll=380'], ['movie-short-2', 'movie', 'st=short&scroll=420'],
+  ...st('person', ['', 'works', 'dir', 'one', 'three']), ['person-one-2', 'person', 'st=one&scroll=470'], ['person-end', 'person', 'scroll=99999'],
+  ...st('hist', ['', 'un', 'end', 'empty']),
+  ...st('favs', ['', 'ep', 'people', 'empty']),
+  ...st('me', ['', 'server', 'account', 'end']),
+  ...st('settings', ['', 'look', 'ui', 'play', 'strm', 'sub', 'dm', 'cache', 'acct', 'about', 'pick', 'dm2']),
+  ...st('servers', ['', 'add', 'found', 'login', 'busy', 'fail']),
+  ...st('update', ['', 'dl', 'done', 'force']),
+  ...st('player', ['ctl', 'idle', 'pause', 'eps', 'sub', 'audio', 'speed', 'quality', 'dm', 'skip', 'next', 'ended', 'buffer', 'error', 'lock', 'bright', 'vol', 'seek', 'long']),
+];

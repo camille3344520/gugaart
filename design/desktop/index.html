@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>咕咕嘎嘎 · B1「头版」· 电脑端</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0b0a08;color:#EFE6D4;font-family:Georgia,"Noto Serif SC","Source Han Serif SC","Songti SC","SimSun",serif}
+body{display:grid;grid-template-columns:300px 1fr}
+aside{height:100vh;overflow-y:auto;padding:26px 22px 40px;border-right:1px solid rgba(239,230,212,.18)}
+aside h1{font-size:24px;font-weight:900;letter-spacing:.3em}aside h1 small{display:block;font-size:12px;font-weight:400;letter-spacing:0;line-height:1.7;color:rgba(239,230,212,.64);margin-top:10px}
+aside h2{font-size:11px;font-style:italic;font-weight:400;letter-spacing:.24em;color:#EA4E30;margin:26px 0 8px;padding-bottom:6px;border-bottom:1px solid #EFE6D4}
+nav#toc a{display:grid;grid-template-columns:30px 1fr auto;padding:8px 0;border-bottom:1px solid rgba(239,230,212,.14);font-size:14.5px;font-weight:700;cursor:pointer;color:inherit;text-decoration:none}
+nav#toc a em{font-style:italic;font-weight:400;color:rgba(239,230,212,.4)}nav#toc a small{font-weight:400;font-size:11px;color:rgba(239,230,212,.4);font-style:italic}
+nav#toc a.on,nav#toc a:hover{color:#EA4E30}
+ul{list-style:none}ul li{font-size:12.5px;line-height:1.7;color:rgba(239,230,212,.64);padding:8px 0;border-bottom:1px solid rgba(239,230,212,.1)}ul li b{display:block;color:#EFE6D4;font-size:13.5px}
+main{height:100vh;overflow-y:auto;padding:26px 30px 80px}
+figure{margin-bottom:44px}
+figcaption{display:flex;align-items:baseline;gap:14px;margin-bottom:10px}figcaption b{font-size:20px;font-weight:900;letter-spacing:.1em;white-space:nowrap}figcaption span{font-size:12.5px;color:rgba(239,230,212,.6);line-height:1.6}
+.fit{position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(239,230,212,.3);background:#100E0B}
+.fit iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.bar a{font-size:12.5px;padding:5px 10px;box-shadow:inset 0 0 0 1px rgba(239,230,212,.3);cursor:pointer;white-space:nowrap}
+.bar a.on{background:#EFE6D4;color:#141109;font-weight:700}.bar i{font-size:11px;color:rgba(239,230,212,.4);margin:0 6px 0 10px;letter-spacing:.2em}
+.bar a.open{margin-left:auto;font-style:italic;box-shadow:none;border-bottom:1px solid}
+</style>
+</head>
+<body>
+<aside>
+  <h1>咕咕嘎嘎<small>B1「头版」电脑端（Windows）的全部界面。每块画板都是活的窗口：能滚、能点、能拖、能右键，点导航会真的跳到别的界面。报头下那一排（导航、搜索、账号、返回）是液态玻璃引擎实时渲染的。需要支持 WebGL2 的 Chromium 内核浏览器。</small></h1>
+  <h2>CONTENTS　界面</h2>
+  <nav id="toc"></nav>
+  <h2>PLAY　可以玩的</h2>
+  <ul id="plays"></ul>
+</aside>
+<main id="main"></main>
+<script src="js/lib.js"></script>
+<script src="js/sprite.js"></script>
+<script src="js/app.js"></script>
+<script src="js/blur.js"></script>
+<script src="js/mascot.js"></script>
+<script src="js/poses.js"></script>
+<script src="js/screens-a.js"></script>
+<script src="js/screens-a2.js"></script>
+<script src="js/screens-b.js"></script>
+<script src="js/screens-c.js"></script>
+<script>
+(function () {
+const S = APP.S, ids = Object.keys(S), groups = []; ids.forEach((id) => { let g = groups.find((x) => x.n === S[id].g); if (!g) groups.push(g = { n: S[id].g, ids: [] }); g.ids.push(id); });
+const PLAYS = [
+  ['翻封面', '首页：按住海报流左右拖，或按 ← →、横向滚轮 / Shift + 滚轮。期号像里程表跟着滚，背后的整幅剧照、专色、导语、主编手记一起换；鼠标在海报上移动，正中那张朝鼠标倾，logo 反向视差。'],
+  ['滚轮翻页', '首页封面跨页和目录区之间有吸附：滚一下翻到「目录」，像翻过一页。'],
+  ['悬停一张海报', '海报朝鼠标倾斜、出高光和专色投影；片名下面那行换成快捷操作（播放 / 盖章 / 校对勾 / 更多），海报本身不被盖。'],
+  ['收藏 = 主编盖章', '点「收藏」或卡片上的虚线印章位：朱红「藏」字章“咚”地落下，她举翅膀，手记里说一句。首页、详情、合集、播放器顶栏都有。'],
+  ['标记已看 = 校对勾', '分集目录每行行尾的小方格：一笔红色校对勾划出来，集号被划掉；再点擦掉。'],
+  ['右键菜单', '在任何海报 / 目录行上点右键：日常操作在上；「管理」是单独一组，里面的「删除媒体…」点了以后在原地变成二次确认。'],
+  ['换集 / 选季', '剧集详情点任意一集：下面展开单集详情，续看按钮跟着改，主编按里她报一声。航海王那一屏：点标尺上的一格换季，[ ] 键也行；每 50 集一页。'],
+  ['筛选 / 排序 / 字母', '海报墙：按 F 或点「筛选」，筛选条把墙往下推；点题材 / 年代真的会筛。排序选「片名」后右缘出现字母索引。'],
+  ['搜索', 'Ctrl K 或 /：直接打字，左边联想（↑↓ 选），右边出结果；真的在这份片库数据里搜（试试「王」「2024」「悬疑」「周」）。'],
+  ['账号菜单', '点右上角的「影」：菜单从玻璃圆钮里长出来（引擎的变形）。'],
+  ['付印新刊', '点报头左边的 VOL. 318：期号滚成 319，首页封面回到第一期（电脑上的「下拉刷新」，也可以按 F5）。'],
+  ['播放器', '动一下鼠标控件出现、画面退一步；空格暂停（她坐进顶栏那一格）；点字幕 / 选集等，画面往左让、面板排在右边；鼠标移到时间轴上有预览。S / A / D 开字幕、音轨、弹幕面板，F 全屏。'],
+  ['输密码时她闭眼', '登录页点一下密码框。'],
+];
+const SIZES = { '': [1440, 900, '1440 × 900'], xl: [3168, 1440, '3168 × 1440 大窗口'], sm: [1100, 720, '1100 × 720 小窗口'], full: [1920, 1080, '全屏 1920 × 1080'], narrow: [640, 420, '很窄 640 × 420'] };
+const main = document.getElementById('main'), Q = new URLSearchParams(location.search);
+document.getElementById('plays').innerHTML = PLAYS.map((p) => `<li><b>${p[0]}</b>${p[1]}</li>`).join('');
+const show = (gn) => {
+  const g = groups.find((x) => x.n === gn) || groups[0];
+  document.getElementById('toc').innerHTML = groups.map((x, i) => `<a data-g="${x.n}" class="${x === g ? 'on' : ''}"><em>${APP.pad(i + 1)}</em>${x.n}<small>${x.ids.reduce((a, id) => a + (S[id].states || [1]).length, 0)} 个状态</small></a>`).join('');
+  main.innerHTML = g.ids.map((id) => { const s = S[id], sz = s.sizes ? (id === 'player' ? ['', 'xl', 'sm', 'full', 'narrow'] : ['', 'xl', 'sm']) : [''];
+    return `<figure data-id="${id}" data-st="" data-sz=""><figcaption><b>${s.title}</b><span>${s.note || ''}</span></figcaption><div class="fit"><iframe loading="lazy"></iframe></div>
+      <div class="bar">${(s.states || [['', '默认']]).map((st, i) => `<a data-st="${st[0]}" class="${i === 0 ? 'on' : ''}">${st[1]}</a>`).join('')}${sz.length > 1 ? '<i>窗口</i>' + sz.map((z, i) => `<a data-sz="${z}" class="${i === 0 ? 'on' : ''}">${SIZES[z][2]}</a>`).join('') : ''}<a class="open" data-open>单独打开 ↗</a></div></figure>`; }).join('');
+  main.querySelectorAll('figure').forEach(load); main.scrollTop = 0;
+};
+const urlOf = (f) => `board.html?p=${f.dataset.id}${f.dataset.st ? '&st=' + f.dataset.st : ''}${f.dataset.sz === 'full' ? '&full=1' : ''}`;
+function load(f) { const [w, h] = SIZES[f.dataset.sz], fit = f.querySelector('.fit'), fr = f.querySelector('iframe'), k = Math.min(1, (main.clientWidth - 60) / w);
+  fit.style.width = w * k + 'px'; fit.style.height = h * k + 'px'; fr.width = w; fr.height = h; fr.style.transform = `scale(${k})`; if (fr.dataset.u !== urlOf(f) + w) { fr.dataset.u = urlOf(f) + w; fr.src = urlOf(f); } }
+main.addEventListener('click', (e) => { const a = e.target.closest('a'); if (!a) return; const f = a.closest('figure');
+  if (a.dataset.open !== undefined) { window.open(urlOf(f)); return; }
+  if (a.dataset.st !== undefined) { f.dataset.st = a.dataset.st; f.querySelectorAll('[data-st]').forEach((x) => x.classList.toggle('on', x === a)); }
+  if (a.dataset.sz !== undefined) { f.dataset.sz = a.dataset.sz; f.querySelectorAll('[data-sz]').forEach((x) => x.classList.toggle('on', x === a)); }
+  load(f); });
+document.getElementById('toc').addEventListener('click', (e) => { const a = e.target.closest('a'); if (a) { history.replaceState(null, '', '?g=' + encodeURIComponent(a.dataset.g)); show(a.dataset.g); } });
+addEventListener('resize', () => main.querySelectorAll('figure').forEach(load));
+show(Q.get('g'));
+let n = 0; const t = setInterval(() => { const fr = main.querySelector('iframe'); try { if (fr && fr.contentDocument && fr.contentDocument.body && fr.contentDocument.body.dataset.ready === '1') { document.body.dataset.ready = '1'; clearInterval(t); } } catch (e) { document.body.dataset.ready = '1'; clearInterval(t); } if (++n > 80) { document.body.dataset.ready = '1'; clearInterval(t); } }, 250);
+})();
+</script>
+</body>
+</html>

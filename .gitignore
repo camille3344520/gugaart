@@ -1,0 +1,66 @@
+# ---- 密钥：绝不入库（AGENTS.md §2） ----
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+keystore.properties
+local.properties
+
+# ---- 构建输出 ----
+build/
+.gradle/
+.kotlin/
+out/
+*.hprof
+hs_err_*.log
+gugaart-hs_err_*.log
+*.apk
+*.aab
+*.msi
+*.exe
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---- IDE / 系统 ----
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+node_modules/
+.tmp/
+
+# ---- 设计稿里的大体积生成物（scripts/restore-design.mjs 从原路径还原，见 design/README.md） ----
+# 真实数据包（来自用户服务器的只读导出，只用于本地）
+design/data/
+# 由数据包打出来的图片包 / 数据包（base64，几十 MB）
+design/phone/js/assets.js
+design/phone/js/data.js
+design/desktop/js/lib.js
+design/desktop/pack/
+design/tv/js/data.js
+design/tv/assets/
+design/tv/img/
+# 全量截图（每端 100+ 张原尺寸 PNG）与缩小版样张：画面是用户片库的真实海报和观看进度，仓库公开后都不入库
+design/*/shots/
+design/*/shots-sample/
+
+# ---- 字体（docs/decisions.md Q3）：24 MB 的全量可变字体不入库；入库的是 subset/ 下的三个子集 ----
+third_party/fonts/**/*.ttf
+third_party/fonts/**/*.otf
+!third_party/fonts/noto-serif-sc/subset/*.ttf
+
+# 生图原图（1024，体积大，只提交 512 透明版）
+design/generated/raw/
+
+# 用户放生图原件的临时文件夹
+pic/
+
+# ---- 发版产物（scripts/release.mjs）----
+dist/
+.public-check.txt
+
+# ---- 第三版立绘的工作文件（2026-11-15）：原图、1024 抠图、对比图都很大，只留在本地；应用用的是 composeResources 里的 512 图，图标源是 design/brand/icon-guga-tv.png ----
+design/generated/v3/
+# 用户给的原型参考图：来源不明，不放进公开仓库
+design/brand/proto-3d.png
