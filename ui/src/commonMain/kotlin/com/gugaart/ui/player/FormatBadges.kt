@@ -182,9 +182,14 @@ fun FormatFlash(snap: PlayerSnapshot, scale: Float, modifier: Modifier = Modifie
     val started = snap.phase == PlayPhase.Ready && !snap.buffering
     var visible by remember(snap.itemId, snap.sourceId) { mutableStateOf(false) }
     var shown by remember(snap.itemId, snap.sourceId) { mutableStateOf(false) }
+    // 第一次真的开始放：记一下「该亮了」
     LaunchedEffect(started, snap.itemId, snap.sourceId) {
-        if (started && !shown) {
-            shown = true
+        if (started && !shown) shown = true
+    }
+    // 亮 [showMs] 再淡出——单独计时，不挂在 started 上：开播头几秒常常再缓冲一下，以前这一下把计时取消了，
+    // 徽章已经亮出来、又记成展示过，就再也不隐去（用户 2026-11-17：「4k hdr这种角标不消失？只在起播的时候显示5s就行了」）
+    LaunchedEffect(shown, snap.itemId, snap.sourceId) {
+        if (shown) {
             visible = true
             delay(showMs)
             visible = false

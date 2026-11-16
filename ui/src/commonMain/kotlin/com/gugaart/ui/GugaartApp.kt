@@ -396,6 +396,7 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                 // 纸片菜单（不是玻璃）：电脑的右键菜单、电视的长按确定菜单，各画一次
                 if (mode == UiMode.Desktop) DesktopContextMenu.Host()
                 if (mode == UiMode.Tv) TvLongPressMenu.Host()
+                if (mode == UiMode.Phone) com.gugaart.ui.screens.PhoneItemMenu.Host()
                 // 看剧照的大图（电脑 / 电视的详情页打开；手机在页里自己画）
                 if (!playing && !phone) com.gugaart.ui.screens.detail.StillsOverlay.Host()
             }

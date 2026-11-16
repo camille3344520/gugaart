@@ -1,5 +1,6 @@
 package com.gugaart.ui.data
 
+import androidx.compose.runtime.currentCompositeKeyHash
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -49,6 +50,31 @@ class Load<T> internal constructor() {
     }
 }
 
+/**
+ * 页面数据的近期缓存（最多 [MAX] 份，最久没用的先丢）：回到一页时第一帧就是上次的内容，随后照常重新取。
+ * 用户 2026-11-17：「片库返回：进详情再返回，回到原来的位置…三端都要实现」——手机 / 电脑的片库列表在数据到之前只有几行骨架，
+ * 列表一短，存着的滚动位置就被压回顶部；第一帧有数据，位置才还原得了（电视的墙是数据到了才排，所以没这个问题）。
+ * 键 = 账号 + 调用处在组合里的位置（同一页同一处 rememberLoad）+ 参数；换了账号不会拿到别的服务器的内容。都在主线程上读写。
+ */
+internal object LoadCache {
+    private const val MAX = 48
+    private val map = LinkedHashMap<List<Any?>, Any?>()
+
+    fun get(key: List<Any?>): Any? {
+        val v = map.remove(key) ?: return null
+        map[key] = v
+        return v
+    }
+
+    fun put(key: List<Any?>, value: Any?) {
+        map.remove(key)
+        map[key] = value
+        while (map.size > MAX) map.remove(map.keys.first())
+    }
+
+    fun clear() = map.clear()
+}
+
 /** 骨架出现之前等的时间。 */
 const val SKELETON_DELAY_MS = 150L
 
@@ -93,8 +119,12 @@ fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load
     val graph = LocalGraph.current
     val session by graph.session.session.collectAsState()
     val client = session?.client
-    val load = remember { Load<T>() }
     val account = session?.let { "${it.serverId}/${it.userId}" }
+    val site = currentCompositeKeyHash
+    val keyList = keys.toList()
+    // 回到这一页：先拿上次的内容（LoadCache），随后照常重新取
+    @Suppress("UNCHECKED_CAST")
+    val load = remember { Load<T>().also { l -> (LoadCache.get(listOf(account, site) + keyList) as T?)?.let { l.value = it; l.account = account } } }
     LaunchedEffect(client, load.generation, *keys) {
         if (client == null) return@LaunchedEffect
         if (accountSwitched(load.account, account)) {
@@ -107,6 +137,7 @@ fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load
             val v = loader(client)
             load.value = v
             load.error = null
+            LoadCache.put(listOf(account, site) + keyList, v)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

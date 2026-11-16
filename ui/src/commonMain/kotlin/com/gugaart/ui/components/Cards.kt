@@ -64,6 +64,7 @@ fun episodeNoSize(n: Int): TextUnit {
  * 海报墙（[evenTitle]）：片名占满两行的高度；片名只有一行时，空着的第二行放评分（用户 2026-11-17：「中间有一行是空的，可以用来显示评分」），
  * 两行时评分并进年份那一行的最前面。
  * 没有海报 → 斜纹空版 + 片名。已收藏 → 海报右下压一枚小印；已看 → 右上一笔校对勾。[skeleton]：加载骨架（形状 = 要出现的内容）。
+ * 手机上长按 = 这一部的菜单（PhoneItemMenu：播放、收藏、已看；管理员多刷新 / 扫描 / 删除）。
  */
 @Composable
 fun PosterCard(
@@ -79,7 +80,8 @@ fun PosterCard(
     val colors = Guga.colors
     val type = Guga.type
     val press = rememberPressState()
-    Column(modifier.width(width).then(if (title != null) Modifier.pressable(press, label = title.name, onClick = onClick) else Modifier).testTag("poster-card")) {
+    val longPress: (() -> Unit)? = if (title != null && Guga.uiMode == UiMode.Phone) ({ com.gugaart.ui.screens.PhoneItemMenu.open(title) }) else null
+    Column(modifier.width(width).then(if (title != null) Modifier.pressable(press, label = title.name, onLongClick = longPress, onClick = onClick) else Modifier).testTag("poster-card")) {
         Box(Modifier.pressGraphics(press).fillMaxWidth().aspectRatio(2f / 3f)) {
             if (title == null) {
                 Skeleton(Modifier.fillMaxSize())
@@ -118,9 +120,13 @@ fun PosterCard(
                     if (rating != null) BasicText(ratingLine(rating, colors.spot), Modifier.testTag("poster-rating"), style = Guga.numeral(type.caption * 1.05f, colors.dim), maxLines = 1)
                 }
             }
-            val sub = if (rating != null && !oneLine) listOfNotNull("★ $rating", subtitle?.takeIf { it.isNotEmpty() }).joinToString(" · ") else subtitle
-            if (!sub.isNullOrEmpty()) {
-                BasicText(sub, Modifier.padding(top = 3.dp), style = Guga.note(type.fine * 1.1f, colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // 片名两行：评分并进年份那一行的最前面，星号同样是红的（用户 2026-11-17：「两行的时候星星也要是红色的啊」）
+            val sub: AnnotatedString? = if (rating != null && !oneLine) buildAnnotatedString {
+                append(ratingLine(rating, colors.spot))
+                subtitle?.takeIf { it.isNotEmpty() }?.let { s -> append(" · "); append(s) }
+            } else subtitle?.takeIf { it.isNotEmpty() }?.let { AnnotatedString(it) }
+            if (sub != null) {
+                BasicText(sub, Modifier.padding(top = 3.dp).testTag("poster-sub"), style = Guga.note(type.fine * 1.1f, colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

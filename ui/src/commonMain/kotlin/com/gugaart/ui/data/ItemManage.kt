@@ -62,6 +62,7 @@ object ItemManage {
             client.deleteItem(t.id)
             deleted[t.id] = true
             g.queries.clear()
+            LoadCache.clear()
             if ((g.nav.route as? Route.Item)?.id == t.id) g.nav.pop()
             null
         } catch (e: CancellationException) {

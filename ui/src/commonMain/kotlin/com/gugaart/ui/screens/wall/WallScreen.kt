@@ -178,7 +178,9 @@ fun WallScreen(libraryId: String?) {
     val all = wall.value?.first
     // 总数 = 这次查询的 TotalRecordCount（一次最多取 600 部；库更大时墙上先是前 600 部）；还没取到时先用库名上的那个数
     val total = wall.value?.second ?: library?.titles
-    val shown = remember(all, filter) { all?.filter { filter.accepts(it) } }
+    // 长按菜单里删掉的先藏起来（ItemManage）
+    val deletedCount = com.gugaart.ui.data.ItemManage.deleted.size
+    val shown = remember(all, filter, deletedCount) { all?.filter { !com.gugaart.ui.data.ItemManage.isDeleted(it.id) && filter.accepts(it) } }
     val list = rememberLazyListState()
     val returnPx = with(LocalDensity.current) { PhoneTabBarSpec.RETURN_DP.toPx() }
     LaunchedEffect(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) {
