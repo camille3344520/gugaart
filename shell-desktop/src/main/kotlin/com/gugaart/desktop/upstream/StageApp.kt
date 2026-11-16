@@ -295,6 +295,8 @@ class StageSession private constructor(val options: StageOptions) {
             StageContent(st, graph, controls, mpv, options.wrap)
         }
         stage = s
+        // 任务栏 / 标题栏 / Alt+Tab 用应用自己的图标（不设就是 Java 的 Duke）
+        com.gugaart.desktop.AppIcon.apply(s.frame, s.ui)
         s.onStateChange = { controls.sync() }
         s.show()
         if (options.bounds == null && saved?.maximized == true) s.setMaximized(true)

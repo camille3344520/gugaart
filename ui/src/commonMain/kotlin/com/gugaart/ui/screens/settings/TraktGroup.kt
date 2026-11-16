@@ -54,6 +54,14 @@ internal fun TraktGroup() {
         } catch (_: Exception) {
         }
     }
+    // 码先放进剪贴板再开网页（用户 2026-11-16：「trakt的码出来的时候给一下复制的按钮，不然用户还要手动输入很麻烦」）：
+    // 网页一开就离开了应用，来不及点按钮——所以自动复制一次，码旁边再放一个「复制」
+    @Suppress("DEPRECATION")
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var copied by remember { mutableStateOf<String?>(null) }
+    fun copy(code: String) {
+        runCatching { clipboard.setText(androidx.compose.ui.text.AnnotatedString(code)) }.onSuccess { copied = code }
+    }
 
     SettingGroup("Trakt", "TRAKT")
     when (val s = state) {
@@ -68,17 +76,31 @@ internal fun TraktGroup() {
                 ActionWord(if (expired != null) "重新连接" else "连接", {
                     message = null
                     // 手机 / 电脑：顺手在浏览器里打开授权页（电视上照旧只显示短码）
-                    job = scope.launch { message = TraktService.connect { url -> openUrl(url) } }
+                    job = scope.launch {
+                        message = TraktService.connect { url ->
+                            (TraktService.state.value as? TraktState.Waiting)?.let { copy(it.code.userCode) }
+                            openUrl(url)
+                        }
+                    }
                 })
             }
         }
         is TraktState.Waiting -> {
-            SettingRow("在浏览器打开 ${s.code.verificationUrl.removePrefix("https://")}", note = "用手机或电脑打开这个网址，登录 Trakt，输入下面这串码；输好了这里会自己连上", tag = "trakt-waiting") {
+            val isCopied = copied == s.code.userCode
+            SettingRow(
+                "在浏览器打开 ${s.code.verificationUrl.removePrefix("https://")}",
+                note = if (isCopied) "下面这串码已经复制好了：在网页里登录 Trakt，粘贴进去；输好了这里会自己连上" else "用手机或电脑打开这个网址，登录 Trakt，输入下面这串码；输好了这里会自己连上",
+                tag = "trakt-waiting",
+            ) {
                 ActionWord("取消", { job?.cancel(); job = null })
             }
-            Column(Modifier.fillMaxWidth().padding(start = 20.dp, top = 6.dp, bottom = 10.dp)) {
-                BasicText(s.code.userCode, Modifier.testTag("trakt-code"), style = Guga.numeral(34.sp, colors.ink).copy(fontWeight = FontWeight.Bold, letterSpacing = 0.12.em), maxLines = 1)
-                BasicText("${s.code.expiresInSec / 60} 分钟内有效", style = Guga.note(Guga.type.caption, colors.faint), maxLines = 1)
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, top = 6.dp, bottom = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                Column {
+                    BasicText(s.code.userCode, Modifier.testTag("trakt-code"), style = Guga.numeral(34.sp, colors.ink).copy(fontWeight = FontWeight.Bold, letterSpacing = 0.12.em), maxLines = 1)
+                    BasicText("${s.code.expiresInSec / 60} 分钟内有效", style = Guga.note(Guga.type.caption, colors.faint), maxLines = 1)
+                }
+                ActionWord(if (isCopied) "已复制" else "复制", { copy(s.code.userCode) })
+                ActionWord("打开网页", { openUrl(s.code.verificationUrl) })
             }
         }
         is TraktState.Connected -> {
