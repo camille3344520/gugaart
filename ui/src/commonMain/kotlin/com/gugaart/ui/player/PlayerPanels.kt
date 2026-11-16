@@ -60,7 +60,8 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
         PlayerPanel.Sub -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-sub")) {
             PanelHeader(panel)
             PanelOption("关", snap.subtitleIndex == null, { play.chooseSubtitle(null) })
-            for (t in snap.subtitles.filter { it.index != null }) {
+            // 中文字幕排前面（简体 → 中文 → 繁体 → 其他）
+            for (t in orderedSubtitles(snap)) {
                 // 没名字的字幕上游已经给了「未命名」这类标签；同名的靠徽标区分
                 PanelOption(t.label, t.index == snap.subtitleIndex, { play.chooseSubtitle(t.index) }, note = t.badge)
             }
@@ -83,8 +84,15 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 PanelSection("版本")
                 for (v in snap.versions) PanelOption(v.name?.takeIf { it.isNotBlank() } ?: "未命名", v.id == snap.sourceId, { v.id?.let(controller::setSource) }, note = specLine(v)?.substringBefore(" · "))
             }
-            // 换播放内核（上游的回退链上还有下一个时才有这一行）
-            controller.coreAlternative()?.let { PanelLink("换内核：$it") { controller.switchCore() } }
+        }
+        PlayerPanel.Core -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-core")) {
+            PanelHeader(panel)
+            // 自动 · EXO · VLC · MPV（只列这台设备上真有的）；选了 = 存成首选引擎，在当前位置用它接着放
+            val pref = currentEnginePref(g)
+            val running = engineShort(snap.engineId)
+            for (o in remember(play) { coreOptionsFor(play, g) }) {
+                PanelOption(o.label, o.pref == pref, { PlayerRestart.switchEngine(play, g, o.pref) }, note = if (o.pref == com.gugugaga.app.player.EnginePref.Auto) "现在 $running" else o.note)
+            }
         }
         PlayerPanel.Dm -> {
             val settings by danmaku.settingsState.collectAsState()
@@ -115,7 +123,7 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 for (w in DanmakuWeight.entries) PanelOption(w.label, s.weight == w, { danmaku.updateRender("weight" to JsonPrimitive(w.id)) })
                 PanelSection("弹幕源")
                 // 匹配状态（上游的徽标文字：「赘婿 (2021) · 第5集 · 1,234 条」/ 没配置 / 没匹配到）；点它 = 左边滑出弹幕来源（候选 + 手动搜索）
-                PanelLink(slots.danmakuStatus?.invoke() ?: "还没有匹配") {
+                PanelLink(DanmakuSeasonGuard.status(snap.itemId) ?: slots.danmakuStatus?.invoke() ?: "还没有匹配") {
                     close()
                     DanmakuPickerBoard.open = true
                 }

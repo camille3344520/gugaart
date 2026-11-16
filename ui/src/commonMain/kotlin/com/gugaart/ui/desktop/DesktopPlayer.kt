@@ -166,6 +166,7 @@ private val WORD_ICONS = mapOf(
     PlayerPanel.Audio to GuguIcon.AudioLines,
     PlayerPanel.Speed to GuguIcon.Gauge,
     PlayerPanel.Quality to GuguIcon.Monitor,
+    PlayerPanel.Core to GuguIcon.Clapperboard,
     PlayerPanel.Dm to GuguIcon.MessageSquareText,
 )
 
@@ -474,6 +475,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                                 PlayerPanel.Audio -> snap.audio.firstOrNull { it.selected }?.label
                                 PlayerPanel.Speed -> rateLabel(snap.rate)
                                 PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"
+                                PlayerPanel.Core -> com.gugaart.ui.player.engineShort(snap.engineId)
                                 PlayerPanel.Dm -> if (render.enabled) "开" else "关"
                                 PlayerPanel.Next -> null
                             }
@@ -624,9 +626,10 @@ private fun DockWord(panel: PlayerPanel, value: String?, active: Boolean, compac
     val ink = if (on) colors.onInk else colors.ink
     Row(
         Modifier.height(Guga.rem(4f)).hover(hover).pressGraphics(press).then(if (on) Modifier.background(colors.ink) else Modifier)
-            .deskFocusRing(press).pressable(press, label = panel.word + (value?.let { " $it" } ?: ""), onClick = onClick).padding(horizontal = Guga.rem(if (iconOnly) 0.8f else 1.2f)).testTag(if (active) "word-on" else "word"),
+            .deskFocusRing(press).pressable(press, label = panel.word + (value?.let { " $it" } ?: ""), onClick = onClick).padding(horizontal = Guga.rem(if (iconOnly) 0.8f else if (compact) 0.7f else 1.2f)).testTag(if (active) "word-on" else "word"),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Guga.rem(0.7f)),
+        // 七个功能词（多了「内核」）：窄一点的窗口里字和图标挨近些，免得最后一个被挤掉
+        horizontalArrangement = Arrangement.spacedBy(Guga.rem(if (compact) 0.45f else 0.7f)),
     ) {
         Icon(WORD_ICONS.getValue(panel), ink, Guga.rem(2f))
         if (!iconOnly) BasicText(panel.word, style = Guga.song(Guga.player.dock, FontWeight.SemiBold, ink), maxLines = 1)

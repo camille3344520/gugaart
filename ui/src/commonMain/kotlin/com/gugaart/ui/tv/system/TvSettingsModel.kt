@@ -362,7 +362,6 @@ fun tvSettingRows(
         TvHead("更新", "UPDATE"),
         if (g.update.enabled) TvAction("about-check", "检查更新", g.update.status.value.lastResult.ifEmpty { "还没有检查过" }, "检查") { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) } else TvInfo("about-check", "检查更新", "未开启", "这一版不检查更新"),
         // 不自动下载、不自动安装（用户 2026-11-15）：没有「自动下载更新」开关了
-        if (g.update.enabled) TvInfo("update-how", "怎么更新", "点了才下，确认了才装", "有新版时出号外：按「立即更新」才下载，下好了按「现在安装」才装") else null,
         TvInfo("channel", "更新通道", g.update.channelLabel),
         TvHead("这台设备", "DEVICE"),
         TvInfo("version", "版本", g.deps.appVersion),

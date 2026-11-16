@@ -138,7 +138,7 @@ fun TvMovie(movie: Title, today: Today) {
     var sourceIndex by remember(movie.id) { mutableStateOf(0) }
     val source = movie.sources.getOrNull(sourceIndex)
     val audios = source?.mediaStreams.orEmpty().filter { it.type == "Audio" }
-    val subs = source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }
+    val subs = com.gugaart.ui.player.chineseSubtitlesFirst(source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" })
     var audio by remember(movie.id, sourceIndex) { mutableStateOf((audios.firstOrNull { it.isDefault == true } ?: audios.firstOrNull())?.index) }
     var sub by remember(movie.id, sourceIndex) { mutableStateOf(subs.firstOrNull { it.isDefault == true }?.index) }
     // 页边选项栏：ver / tracks / null

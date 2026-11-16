@@ -111,8 +111,11 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
     val scope = rememberCoroutineScope()
     val prefs = remember { PlayerPrefsStore(g.deps.local) }
     val clientOverride = LocalPlayerClientOverride.current
-    val play = remember(s.client) {
+    // 播放器里换内核：存好首选引擎后 tick 加一，这里换一个控制器（在原来的位置 / 版本 / 音轨 / 字幕接着放）
+    val restartTick = PlayerRestart.tick
+    val play = remember(s.client, restartTick) {
         var holder: PlaySession? = null
+        val restart = if (restartTick > 0) PlayerRestart.take() else null
         val controller = PlayController(
             PlayerDeps(
                 client = clientOverride?.invoke(s) ?: EmbyPlayerClient(s.client),
@@ -142,7 +145,7 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
                 log = { level, message -> g.log.add(level, message) },
                 scrubDwellMs = { g.scrubDwellMs },
             ),
-            PlayRequest(route.id, route.mediaSourceId, route.startMs, route.audio, route.subtitle),
+            restart ?: PlayRequest(route.id, route.mediaSourceId, route.startMs, route.audio, route.subtitle),
         )
         PlaySession(controller, platform, prefs, exit = {
             // 屏幕上的返回键 / 停止 / 出错页的「退出」：和返回键同一个去处——下面不是详情页就先到这部剧的详情页
@@ -223,7 +226,7 @@ fun rememberGugaDanmaku(play: PlaySession): PlayerDanmaku {
     val d = remember(controller) {
         PlayerDanmaku(
             scope, g.settings, play.prefs, g.danmaku,
-            matchInput = { id -> g.session.session.value?.client?.getDanmakuMatchInput(id) ?: error("没有会话") },
+            matchInput = { id -> (g.session.session.value?.client?.getDanmakuMatchInput(id) ?: error("没有会话")).also { DanmakuSeasonGuard.record(id, it) } },
             mode = mode,
             tier = gugaDanmakuTier(g.settings.value.uiSettings.perf, mode),
             dprCap = if (mode == UiMode.Tv) 1.0 else 3.0,

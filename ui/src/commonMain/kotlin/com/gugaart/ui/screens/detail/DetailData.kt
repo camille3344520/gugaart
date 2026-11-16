@@ -210,7 +210,8 @@ fun streamRow(s: MediaStream): StreamRow {
     return StreamRow(name, notes.joinToString(" · "))
 }
 
-fun streamsOf(source: MediaSourceInfo?, type: String): List<StreamRow> = source?.mediaStreams.orEmpty().filter { it.type == type }.map { streamRow(it) }
+fun streamsOf(source: MediaSourceInfo?, type: String): List<StreamRow> = source?.mediaStreams.orEmpty().filter { it.type == type }
+    .let { if (type == "Subtitle") com.gugaart.ui.player.chineseSubtitlesFirst(it) else it }.map { streamRow(it) }
 
 /** 「主演 A   联合主演 B」：前两位演员；导演另算。 */
 fun leads(t: Title): List<String> = t.people.filter { it.type == "Actor" || it.type == null }.take(2).map { it.name }

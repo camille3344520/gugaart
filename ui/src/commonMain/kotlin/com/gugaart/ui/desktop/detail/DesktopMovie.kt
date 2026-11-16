@@ -125,7 +125,7 @@ fun DesktopMovie(movie: Title, today: Today) {
     var version by remember(movie.id) { mutableIntStateOf(0) }
     val source = movie.sources.getOrNull(version) ?: movie.sources.firstOrNull()
     val audios = remember(source) { source?.mediaStreams.orEmpty().filter { it.type == "Audio" }.map(::audioOption) }
-    val subs = remember(source) { listOf(PickOption("关闭", "")) + source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }.map(::subtitleOption) }
+    val subs = remember(source) { listOf(PickOption("关闭", "")) + com.gugaart.ui.player.chineseSubtitlesFirst(source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }).map(::subtitleOption) }
     var audio by remember(source) { mutableIntStateOf(0) }
     // 字幕默认 = 第一条（有的话）；「关闭」排在最前
     var sub by remember(source) { mutableIntStateOf(if (subs.size > 1) 1 else 0) }

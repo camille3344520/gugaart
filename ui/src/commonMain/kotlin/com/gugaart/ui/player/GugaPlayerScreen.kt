@@ -273,6 +273,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                         PlayerPanel.Audio -> snap.audio.firstOrNull { it.selected }?.label
                         PlayerPanel.Speed -> rateLabel(snap.rate)
                         PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"
+                        PlayerPanel.Core -> engineShort(snap.engineId)
                         PlayerPanel.Dm -> if (render.enabled) "开" else "关"
                         PlayerPanel.Next -> null
                     }

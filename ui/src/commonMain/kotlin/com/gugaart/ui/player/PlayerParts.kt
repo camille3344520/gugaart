@@ -58,12 +58,13 @@ enum class PlayerPanel(val id: String, val word: String, val english: String) {
     Audio("audio", "音轨", "AUDIO"),
     Speed("speed", "倍速", "SPEED"),
     Quality("quality", "画质", "QUALITY"),
+    Core("core", "内核", "ENGINE"),
     Dm("dm", "弹幕", "DANMAKU"),
     Next("next", "下一集", "NEXT");
 
     companion object {
-        /** 排在底下的六个功能词（「下一集」不是功能词，是片尾自己出现的）。 */
-        val WORDS = listOf(Eps, Sub, Audio, Speed, Quality, Dm)
+        /** 排在底下的七个功能词（「下一集」不是功能词，是片尾自己出现的）。「内核」= 播放器里直接选 EXO / VLC / MPV（用户 2026-11-16）。 */
+        val WORDS = listOf(Eps, Sub, Audio, Speed, Quality, Core, Dm)
         fun of(id: String?): PlayerPanel? = entries.firstOrNull { it.id == id }
     }
 }

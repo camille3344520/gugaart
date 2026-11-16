@@ -178,7 +178,7 @@ val LocalTvPlayerClock = staticCompositionLocalOf<Pair<Int, Int>?> { null }
 val LocalTvPlayerFocus = staticCompositionLocalOf<String?> { null }
 
 /** 页边面板的六行。 */
-private val ROWS = listOf(PlayerPanel.Eps, PlayerPanel.Sub, PlayerPanel.Audio, PlayerPanel.Speed, PlayerPanel.Quality, PlayerPanel.Dm)
+private val ROWS = listOf(PlayerPanel.Eps, PlayerPanel.Sub, PlayerPanel.Audio, PlayerPanel.Speed, PlayerPanel.Quality, PlayerPanel.Core, PlayerPanel.Dm)
 
 /** 一行的值：有哪些、现在是第几个、选第 i 个时做什么。[deferred] = 左右只是挑，按确定才换（选集、画质：一换就要重新起播）。 */
 private class RowModel(val values: List<String>, val index: Int, val detail: (Int) -> String?, val deferred: Boolean, val apply: (Int) -> Unit)
@@ -264,7 +264,8 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     val credits = snap.autoNext != AutoNextState.Idle && snap.next != null && !dismissedNext && snap.phase == PlayPhase.Ready
     val stripOpen = strip && eps != null
     // 弹幕来源（左边一栏）：有歧义时自己出来一次；页边面板「弹幕」一行按确定也打开（tv/player/TvDanmakuPicker.kt）
-    LaunchedEffect(danmaku.asksChoice, snap.itemId) { com.gugaart.ui.player.DanmakuPickerBoard.autoOpen(danmaku.asksChoice, snap.itemId) }
+    LaunchedEffect(danmaku.asksChoice, snap.itemId) { com.gugaart.ui.player.DanmakuPickerBoard.settle(danmaku, snap.itemId) }
+    LaunchedEffect(danmaku.state.phase, danmaku.state.title, snap.itemId) { com.gugaart.ui.player.DanmakuSeasonGuard.check(danmaku, snap.itemId) }
     DisposableEffect(Unit) { onDispose { com.gugaart.ui.player.DanmakuPickerBoard.open = false } }
     val pickOpen = com.gugaart.ui.player.DanmakuPickerBoard.open && snap.phase != PlayPhase.Error
     var pickEditing by remember { mutableStateOf(false) }
@@ -274,6 +275,9 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     // ---- 页边面板每一行的值（都是上游已有的命令）----
     var pendingEp by remember(snap.itemId, snap.episodes.size) { mutableIntStateOf(snap.episodes.indexOfFirst { it.id == snap.itemId }.coerceAtLeast(0)) }
     var pendingQuality by remember(snap.maxBitrateMbps) { mutableIntStateOf(BITRATES.indexOf(snap.maxBitrateMbps).coerceAtLeast(0)) }
+    val coreOpts = remember(play) { com.gugaart.ui.player.coreOptionsFor(play, g) }
+    val corePref = com.gugaart.ui.player.currentEnginePref(g)
+    var pendingCore by remember(corePref) { mutableIntStateOf(coreOpts.indexOfFirst { it.pref == corePref }.coerceAtLeast(0)) }
     fun rowOf(p: PlayerPanel): RowModel = when (p) {
         PlayerPanel.Eps -> if (eps != null) RowModel(
             listOf(listOfNotNull(eps.season?.let { com.gugaart.ui.player.seasonWord(it) }, snap.item?.indexNumber?.let { "第 $it 集" }).joinToString(" · ").ifEmpty { "选集" }),
@@ -287,7 +291,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
             }
         }
         PlayerPanel.Sub -> {
-            val subs = snap.subtitles.filter { it.index != null }
+            val subs = com.gugaart.ui.player.orderedSubtitles(snap)
             RowModel(listOf("关") + subs.map { listOfNotNull(it.label, it.badge).joinToString(" · ") }, if (snap.subtitleIndex == null) 0 else subs.indexOfFirst { it.index == snap.subtitleIndex } + 1, { null }, deferred = false) { i ->
                 play.chooseSubtitle(if (i == 0) null else subs.getOrNull(i - 1)?.index)
             }
@@ -300,7 +304,12 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
             BITRATES.map { b -> if (b == 0.0) listOfNotNull("原画", specLine(snap.resolved?.mediaSource)?.substringBefore(" · ")).joinToString(" · ") else "${b.toInt()} Mbps · 转码" },
             pendingQuality, { null }, deferred = true,
         ) { i -> controller.setMaxBitrate(BITRATES[i]) }
-        else -> RowModel(listOf("关", "开"), if (render.enabled) 1 else 0, { listOfNotNull(slots.danmakuStatus?.invoke(), "确定 = 换弹幕 / 手动搜").joinToString(" · ") }, deferred = false) { i -> danmaku.updateRender("enabled" to JsonPrimitive(i == 1)) }
+        // 内核：自动 · EXO · VLC · MPV（先挑、确定才换：换内核要重开一次）
+        PlayerPanel.Core -> RowModel(
+            coreOpts.map { it.label },
+            pendingCore, { i -> coreOpts.getOrNull(i)?.let { o -> if (o.pref == com.gugugaga.app.player.EnginePref.Auto) "现在 ${com.gugaart.ui.player.engineShort(snap.engineId)} · ${o.note}" else o.note } }, deferred = true,
+        ) { i -> coreOpts.getOrNull(i)?.let { com.gugaart.ui.player.PlayerRestart.switchEngine(play, g, it.pref) } }
+        else -> RowModel(listOf("关", "开"), if (render.enabled) 1 else 0, { listOfNotNull(com.gugaart.ui.player.DanmakuSeasonGuard.status(snap.itemId) ?: slots.danmakuStatus?.invoke(), "确定 = 换弹幕 / 手动搜").joinToString(" · ") }, deferred = false) { i -> danmaku.updateRender("enabled" to JsonPrimitive(i == 1)) }
     }
     val rows = ROWS.filter { it != PlayerPanel.Eps || eps != null || snap.episodes.isNotEmpty() }
 
@@ -466,6 +475,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                             when {
                                 p == PlayerPanel.Eps -> pendingEp = next
                                 p == PlayerPanel.Quality -> pendingQuality = next
+                                p == PlayerPanel.Core -> pendingCore = next
                                 next != row.index -> row.apply(next)
                             }
                         }
@@ -581,7 +591,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                         TvGroup("panel", rows.map { "pr-${it.id}" }, horizontal = false, default = "pr-${panel!!.id}")
                         for (p in rows) {
                             val row = rowOf(p)
-                            TvPanelRow(p, row.values, row.index, row.detail(row.index), deferred = row.deferred && row.index != currentIndexOf(p, snap), onOk = {
+                            TvPanelRow(p, row.values, row.index, row.detail(row.index), deferred = row.deferred && row.index != (if (p == PlayerPanel.Core) coreOpts.indexOfFirst { it.pref == corePref } else currentIndexOf(p, snap)), onOk = {
                                 when {
                                     p == PlayerPanel.Eps && eps != null -> strip = true
                                     // 弹幕一行按确定 = 左边出弹幕来源（候选 + 手动搜索）
@@ -809,6 +819,7 @@ private fun BoxScope.TvOsdButtons(
                     PlayerPanel.Audio -> snap.audio.firstOrNull { it.selected }?.label
                     PlayerPanel.Speed -> rateLabel(snap.rate)
                     PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else "原画"
+                    PlayerPanel.Core -> com.gugaart.ui.player.engineShort(snap.engineId)
                     else -> if (danmakuOn) "开" else "关"
                 }
                 TvBlockFocus("fn-${p.id}", { open(p) }, Modifier.drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 2.dp.toPx()) }, label = p.word) { focused ->

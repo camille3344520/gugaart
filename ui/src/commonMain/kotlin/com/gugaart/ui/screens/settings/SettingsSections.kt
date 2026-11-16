@@ -826,8 +826,6 @@ internal fun AboutSection() {
     SettingGroup("更新", "UPDATE")
     if (g.update.enabled) {
         SettingRow("检查更新", note = status.lastResult.ifEmpty { "还没有检查过" }, tag = "about-check") { ActionWord("检查", { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) }) }
-        // 不自动下载、不自动安装（用户 2026-11-15）：没有「自动下载更新」开关了，这里说清楚怎么更新
-        InfoRow("怎么更新", "点了才下，确认了才装", note = "有新版时出一张「号外」：点「现在更新」才下载，下好了点「现在安装」才装")
         InfoRow("更新通道", g.update.channelLabel)
     } else {
         SettingRow("检查更新", note = "这一版不检查更新", tag = "about-check") { ValueText("未开启") }

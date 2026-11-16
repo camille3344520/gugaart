@@ -84,6 +84,58 @@ object DanmakuPickerBoard {
         open = true
         return true
     }
+
+    /** 用户自己点了「重新自动匹配」的那一集：候选照样摆出来让 ta 挑，不替 ta 选。 */
+    var manualFor: String? = null
+
+    /** 现在放的是哪一集（[settle] 每换一集记一下；「重新自动匹配」用它）。 */
+    var currentItem: String? = null
+
+    /** 用户点了「重新自动匹配」。 */
+    fun repickByHand(d: com.gugugaga.app.player.PlayerDanmaku) {
+        manualFor = currentItem
+        d.repick()
+    }
+
+    /**
+     * 上游等用户挑的时候先看一眼（用户 2026-11-16：「弹幕能直接匹配好的就不要弹出来，不确定的再弹出来」）：
+     * 其实很确定（[confidentCandidate]）就直接用它、不弹；不确定才像以前一样从左边出来。返回自动用了哪一个（null = 弹了或者不用管）。
+     */
+    fun settle(d: com.gugugaga.app.player.PlayerDanmaku, itemId: String?): MatchCandidate? {
+        currentItem = itemId
+        if (!d.asksChoice || itemId == null) return null
+        if (manualFor != itemId) confidentCandidate(d.state, DanmakuSeasonGuard.targetSeason(itemId))?.let { c ->
+            autoFor = itemId
+            d.pick(c)
+            return c
+        }
+        autoOpen(true, itemId)
+        return null
+    }
+}
+
+/**
+ * 上游标成「有歧义」、其实很确定的那一个；拿不准 = null（弹出来让用户挑）。纯函数，有单测。
+ * - 弹幕服务器按文件名直接配上了（上游 /match 回退：本引擎打分不够，标成有歧义「需用户确认」）→ 用服务器配上的那一部；
+ * - 只剩一个像样的候选（没被淘汰、匹配 ≥ 50）→ 用它；
+ * - 第一名明显领先：匹配 ≥ 65 且领先第二名 ≥ 12，或者匹配 ≥ 75 且领先 ≥ 6（上游自己的门槛是 70 分、领先 10）。
+ */
+fun confidentCandidate(st: com.gugugaga.danmaku.match.DanmakuState, season: Int? = null): MatchCandidate? {
+    if (st.phase != DanmakuPhase.Ambiguous || st.candidates.isEmpty()) return null
+    // 第 2 季起：有对得上季号的就用它；第一名不是这一季的 → 拿不准，弹出来（不拿别的季顶替）
+    if (season != null && season >= 2) {
+        st.candidates.firstOrNull { !it.eliminated && danmakuSeasonOf(it.title) == season }?.let { return it }
+        if (st.candidates.firstOrNull { !it.eliminated }?.let { danmakuSeasonOf(it.title) != season } == true) return null
+    }
+    st.explain.firstOrNull { it.startsWith("回退：服务器 /match") }?.let { line ->
+        val title = Regex("返回 “([^”]+)”").find(line)?.groupValues?.get(1)
+        st.candidates.firstOrNull { it.title == title }?.let { return it }
+    }
+    val viable = st.candidates.filter { !it.eliminated }
+    val top = viable.firstOrNull() ?: return null
+    val second = viable.getOrNull(1) ?: return top.takeIf { it.score >= 50.0 }
+    val lead = top.score - second.score
+    return top.takeIf { (it.score >= 65.0 && lead >= 12.0) || (it.score >= 75.0 && lead >= 6.0) }
 }
 
 /** 弹幕来源的名字（服务器给的是英文标记）。 */
@@ -155,7 +207,9 @@ class DanmakuSearch {
  */
 @Composable
 fun BoxScope.DanmakuPickerHost(d: PlayerDanmaku, itemId: String?, width: Dp) {
-    LaunchedEffect(d.asksChoice, itemId) { DanmakuPickerBoard.autoOpen(d.asksChoice, itemId) }
+    LaunchedEffect(d.asksChoice, itemId) { DanmakuPickerBoard.settle(d, itemId) }
+    // 分季的剧：配到了别的季就换成这一季的条目，没有就不放错的弹幕
+    LaunchedEffect(d.state.phase, d.state.title, itemId) { DanmakuSeasonGuard.check(d, itemId) }
     DisposableEffect(Unit) { onDispose { DanmakuPickerBoard.open = false } }
     if (!DanmakuPickerBoard.open) return
     DanmakuPickerDrawer(d, width, onClose = { DanmakuPickerBoard.open = false })
@@ -208,6 +262,7 @@ private fun BoxScope.DanmakuPickerDrawer(d: PlayerDanmaku, width: Dp, onClose: (
                 Column(Modifier.padding(top = 12.dp).testTag("dm-candidates")) {
                     st.candidates.forEachIndexed { i, c ->
                         CandidateRow(c, i, current = st.phase == DanmakuPhase.Ready && i == 0) {
+                            DanmakuSeasonGuard.userChose = DanmakuPickerBoard.currentItem
                             d.pick(c)
                             onClose()
                         }
@@ -238,12 +293,13 @@ private fun BoxScope.DanmakuPickerDrawer(d: PlayerDanmaku, width: Dp, onClose: (
                     if (hits.isEmpty()) BasicText("没有搜到，换个叫法试试。", Modifier.padding(top = 8.dp), style = Guga.song(13.sp, color = colors.dim), maxLines = 1)
                     for ((i, a) in hits.take(30).withIndex()) {
                         HitRow(a, i) {
+                            DanmakuSeasonGuard.userChose = DanmakuPickerBoard.currentItem
                             d.pickManual(a)
                             onClose()
                         }
                     }
                 }
-                TextLink("重新自动匹配", { d.repick() }, Modifier.padding(top = 16.dp).testTag("dm-repick"), icon = GuguIcon.RotateCcw, color = colors.dim)
+                TextLink("重新自动匹配", { DanmakuPickerBoard.repickByHand(d) }, Modifier.padding(top = 16.dp).testTag("dm-repick"), icon = GuguIcon.RotateCcw, color = colors.dim)
             }
         }
     }

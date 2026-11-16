@@ -102,6 +102,7 @@ fun BoxScope.TvDanmakuPicker(d: PlayerDanmaku, search: DanmakuSearch, editing: B
             st.candidates.forEachIndexed { i, c ->
                 val current = st.phase == DanmakuPhase.Ready && i == 0
                 TvBlockFocus("dmp-c-$i", {
+                    com.gugaart.ui.player.DanmakuSeasonGuard.userChose = com.gugaart.ui.player.DanmakuPickerBoard.currentItem
                     d.pick(c)
                     onClose()
                 }, Modifier.fillMaxWidth().testTag("tv-dm-cand-$i"), label = "弹幕 ${c.base}", kind = TvFocusKind.Row) { focused ->
@@ -142,10 +143,11 @@ fun BoxScope.TvDanmakuPicker(d: PlayerDanmaku, search: DanmakuSearch, editing: B
                     }
                 }
                 search.error?.let { BasicText(it, Modifier.padding(top = 6.dp), style = Guga.song(22.sp, color = colors.seal), maxLines = 2) }
-                TvAction("dmp-repick", "重新自动匹配") { d.repick() }
+                TvAction("dmp-repick", "重新自动匹配") { com.gugaart.ui.player.DanmakuPickerBoard.repickByHand(d) }
                 if (search.hits?.isEmpty() == true) BasicText("没有搜到，换个叫法试试。", Modifier.padding(top = 10.dp), style = Guga.song(22.sp, color = colors.dim), maxLines = 1)
                 hits.forEachIndexed { i, a ->
                     TvBlockFocus("dmp-h-$i", {
+                        com.gugaart.ui.player.DanmakuSeasonGuard.userChose = com.gugaart.ui.player.DanmakuPickerBoard.currentItem
                         d.pickManual(a)
                         onClose()
                     }, Modifier.fillMaxWidth().testTag("tv-dm-hit-$i"), label = "弹幕 ${a.title}", kind = TvFocusKind.Row) { focused ->

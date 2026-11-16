@@ -27,9 +27,21 @@ import kotlinx.serialization.json.put
 
 const val TRAKT_API = "https://api.trakt.tv"
 
-/** 编进包里的 Trakt 应用（壳从 .env 的 TRAKT_CLIENT_ID / TRAKT_CLIENT_SECRET 来；没配 = 空 = 这一版不能连 Trakt）。 */
-data class TraktApp(val clientId: String, val clientSecret: String) {
-    val configured: Boolean get() = clientId.isNotBlank() && clientSecret.isNotBlank()
+/** 发给 Trakt 的 User-Agent。 */
+const val TRAKT_USER_AGENT = "gugaart (+https://github.com/camille3344520/gugaart)"
+
+/**
+ * 编进包里的 Trakt 应用（壳从 .env 的 TRAKT_CLIENT_ID / TRAKT_CLIENT_SECRET 来；没有 Client ID = 这一版不能连 Trakt）。
+ * Client Secret 可以没有（用户 2026-11-16 注册时 Trakt 显示「Not issued. This app signs users in with PKCE, so there is no secret」：
+ * 2026-10 起新建的 Trakt 应用默认不发 Secret，/oauth 各个接口的 client_secret 都改成了可选）——没有就不发这个字段。
+ */
+data class TraktApp(val clientId: String, val clientSecret: String = "") {
+    val configured: Boolean get() = clientId.isNotBlank()
+}
+
+/** 有 Secret 才带上 client_secret（没有的应用不发这个字段）。 */
+private fun kotlinx.serialization.json.JsonObjectBuilder.putSecret(app: TraktApp) {
+    if (app.clientSecret.isNotBlank()) put("client_secret", app.clientSecret)
 }
 
 /** 存着的令牌 + 用户名。[expiresAtMs] = 过期时刻（UTC 毫秒）。 */
@@ -98,6 +110,8 @@ class TraktClient(private val transport: Transport, private val app: TraktApp) {
         put("Content-Type", "application/json")
         put("trakt-api-version", "2")
         put("trakt-api-key", app.clientId)
+        // Trakt 要求请求带上能认出是哪个应用的 User-Agent（不带 / 认不出的会被挡成 403）
+        put("User-Agent", TRAKT_USER_AGENT)
         if (token != null) put("Authorization", "Bearer $token")
     }
 
@@ -139,7 +153,7 @@ class TraktClient(private val transport: Transport, private val app: TraktApp) {
         val r = post("/oauth/device/token", buildJsonObject {
             put("code", code.deviceCode)
             put("client_id", app.clientId)
-            put("client_secret", app.clientSecret)
+            putSecret(app)
         })
         if (r.status in 200..299) {
             val t = obj(r)?.let { parseTraktTokens(it, null, nowMs) } ?: return TraktPoll.Failed("Trakt 回的东西读不懂")
@@ -154,7 +168,7 @@ class TraktClient(private val transport: Transport, private val app: TraktApp) {
         val r = post("/oauth/token", buildJsonObject {
             put("refresh_token", t.refresh)
             put("client_id", app.clientId)
-            put("client_secret", app.clientSecret)
+            putSecret(app)
             put("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
             put("grant_type", "refresh_token")
         })
@@ -168,7 +182,7 @@ class TraktClient(private val transport: Transport, private val app: TraktApp) {
             post("/oauth/revoke", buildJsonObject {
                 put("token", t.access)
                 put("client_id", app.clientId)
-                put("client_secret", app.clientSecret)
+                putSecret(app)
             })
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
