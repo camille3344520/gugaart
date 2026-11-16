@@ -60,7 +60,7 @@ fun byRelease(members: List<Title>): List<Title> =
 suspend fun loadSet(client: EmbyClient, set: Title): SetData {
     val r = client.getItems(
         LibraryQuery(parentId = set.id, limit = 300),
-        ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Overview", "Genres", "ProductionYear", "PremiereDate")),
+        ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Overview", "Genres", "ProductionYear", "PremiereDate", "CommunityRating")),
     )
     return SetData(set, byRelease(r.items.map { client.titleOf(it) }.filter { it.kind == Kind.Movie || it.kind == Kind.Series }))
 }

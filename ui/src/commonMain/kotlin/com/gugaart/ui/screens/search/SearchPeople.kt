@@ -60,5 +60,5 @@ fun peopleFirst(query: String, titles: List<TitleHit>, people: List<PersonHit>):
 suspend fun loadPersonWorks(client: EmbyClient, personId: String, limit: Int = 40): List<Title> =
     client.getItems(
         LibraryQuery(personIds = listOf(personId), includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("ProductionYear", "SortName"), sortOrder = "Descending", limit = limit),
-        ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "Overview")),
+        ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "Overview", "CommunityRating")),
     ).items.map { client.titleOf(it) }

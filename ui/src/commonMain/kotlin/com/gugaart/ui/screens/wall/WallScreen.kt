@@ -137,7 +137,8 @@ data class WallFilter(val genres: Set<String> = emptySet(), val decades: Set<Dec
 fun genreOptions(titles: List<Title>, limit: Int = 8): List<String> =
     titles.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key }).take(limit).map { it.key }
 
-private val WALL_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "DateCreated", "SortName", "ProductionYear"))
+// CommunityRating：Emby 4.9 只有点名要才给评分（实测：不点名 285 部里 0 部有评分）
+private val WALL_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "DateCreated", "SortName", "ProductionYear", "CommunityRating"))
 
 /** 一个媒体库里的片子（只读）。合集库取 BoxSet，其余取电影和剧集。一次最多 [limit] 部——更大的库的分页加载在下一阶段。 */
 suspend fun loadWall(client: EmbyClient, library: LibraryEntry, sort: WallSort, limit: Int = 600): Pair<List<Title>, Int> {

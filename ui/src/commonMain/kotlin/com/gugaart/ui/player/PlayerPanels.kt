@@ -134,6 +134,7 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 if (danmaku.query.hasPeaks) PanelLink("跳到下一个高能点") { danmaku.nextPeak(positionMs)?.let { controller.seekTo(it) } }
             }
         }
+        PlayerPanel.Cast -> com.gugaart.ui.cast.CastPanelBody(play)
         PlayerPanel.Next -> Column(Modifier.fillMaxSize().testTag("panel-next")) {
             val next = snap.next
             PanelHeader(panel, kicker = "NEXT · 片尾")

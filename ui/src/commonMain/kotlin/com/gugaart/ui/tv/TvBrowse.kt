@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import com.gugaart.ui.Today
 import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.data.Framing
+import com.gugaart.ui.data.ItemManage
 import com.gugaart.ui.data.LibraryEntry
 import com.gugaart.ui.data.Title
 import com.gugaart.ui.data.loadLibraries
@@ -106,7 +107,7 @@ object TvBrowseSpec {
 @Immutable
 private data class TvLibs(val libraries: List<LibraryEntry>, val latest: Map<String, List<Title>>)
 
-private val LATEST_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio"))
+private val LATEST_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "CommunityRating"))
 
 /**
  * 媒体库列表（`p=libs`）：媒体库排成一页带编号的目录；上下换库，右页跟着换（那一库的题图和最新四张海报；**右页只是预览，不接焦点**）；
@@ -211,7 +212,8 @@ private fun TvPosterWall(titles: List<Title>, columns: Int, keyPrefix: String, s
             horizontalArrangement = Arrangement.spacedBy(TvSpec.POSTER_GAP),
             verticalArrangement = Arrangement.spacedBy(TvSpec.ROW_GAP),
         ) {
-            itemsIndexed(titles, key = { _, t -> t.id }) { i, t ->
+            // 长按菜单里删掉的先藏起来（ItemManage）
+            itemsIndexed(titles.filterNot { ItemManage.isDeleted(it.id) }, key = { _, t -> t.id }) { i, t ->
                 if (sub != null) TvPosterCard(t, { g.open(t.id) }, key = "$keyPrefix${t.id}", default = i == 0, onLongClick = { TvLongPressMenu.open(t) }, sub = sub(t))
                 else TvPosterCard(t, { g.open(t.id) }, key = "$keyPrefix${t.id}", default = i == 0, onLongClick = { TvLongPressMenu.open(t) })
             }

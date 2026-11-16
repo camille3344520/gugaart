@@ -1,5 +1,6 @@
 package com.gugaart.ui.desktop
 
+import com.gugaart.ui.components.rememberPageStates
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -96,9 +97,12 @@ fun DesktopPages(route: Route, today: Today) {
     DisposableEffect(Unit) { onDispose { DesktopFocus.pages = false } }
     // 正用着的时候读者证过期（401）：记下来，登录页先说清楚（设计稿 `errors` 的 `auth`）
     com.gugaart.ui.wide.WatchSessionExpiry()
+    // 返回栈上的每一页记住自己的滚动位置：片库进详情再返回，回到进去的那一屏（PageStates）
+    val navController = com.gugugaga.app.ui.LocalGraph.current.nav
+    val pages = rememberPageStates(navController)
     CompositionLocalProvider(LocalDesktopShell provides shell) {
         Box(Modifier.fillMaxSize().onFocusChanged { DesktopFocus.pages = it.hasFocus }.desktopKeys()) {
-            when (route) {
+            pages.Page(navController, if (route == Route.Home) nav.tab.ordinal else 7) { when (route) {
                 Route.Home -> when (nav.tab) {
                     WideTab.Home -> DesktopHomeScreen(today)
                     WideTab.Discover -> DesktopDiscoverScreen(today)
@@ -114,7 +118,7 @@ fun DesktopPages(route: Route, today: Today) {
                 is Route.Settings -> DesktopSettingsScreen(route.section, today)
                 Route.Servers, is Route.Login -> DesktopLoginScreen(today, chrome = true)
                 else -> DesktopComing(today, "这一页")
-            }
+            } }
             DesktopMasthead(today.copy(volume = today.volume + shell.reprints))
         }
     }

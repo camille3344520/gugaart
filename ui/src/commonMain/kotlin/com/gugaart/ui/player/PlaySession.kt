@@ -156,7 +156,13 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
             controller.start()
         }
     }
-    DisposableEffect(play) { onDispose { play.controller.dispose() } }
+    DisposableEffect(play) {
+        onDispose {
+            // 离开播放器 = 结束投屏（电视也停；本机停在电视放到的位置，进度照常报）
+            com.gugaart.ui.cast.Cast.stop(g.scope, play, resume = false)
+            play.controller.dispose()
+        }
+    }
     // Trakt：连着就记（开始 / 暂停 / 换集或退出 = 停，带进度）；离屏测试的假客户端不记
     if (clientOverride == null) LaunchedEffect(play) {
         com.gugaart.ui.trakt.TraktService.bind(g)

@@ -1,5 +1,8 @@
 package com.gugaart.ui.screens.detail
 
+import com.gugaart.ui.player.formatBadges
+import com.gugaart.ui.player.FormatBadgeRow
+import com.gugaart.ui.player.DeviceAv
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -333,6 +336,8 @@ fun MoviePhone(movie: Title, day: Int) {
                 }
                 val cast = leads(movie)
                 FactsRow("主演", cast.getOrNull(0), if (cast.size > 1) "联合主演" else null, cast.getOrNull(1), Modifier.padding(top = 14.dp))
+                // 片源的效果徽章（4K / 杜比视界 / 全景声…；用户 2026-11-16：「影片详情页也可以打上对应的图标」）：这台设备放不了的变灰
+                FormatBadgeRow(formatBadges(source, null, DeviceAv.caps), 1.15f, Modifier.padding(top = 16.dp), notes = false)
                 PrimaryButton(
                     if (movie.progress > 0f) "续看" else "播放",
                     { graph.play(movie.id, movie.positionSec?.times(1000)) },

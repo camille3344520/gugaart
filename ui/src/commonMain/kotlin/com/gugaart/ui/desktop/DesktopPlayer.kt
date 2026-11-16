@@ -236,6 +236,8 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val creditsStart = snap.markers.credits?.startMs?.toDouble()
     val position = clock.positionMs
     val duration = clock.durationMs.takeIf { it > 0 } ?: snap.resolved?.durationMs?.toDouble() ?: 0.0
+    // 网速：mpv 自己报的下载速度，一直在取，控件一出来就有数（NetSpeed.kt）
+    val speed = com.gugaart.ui.player.rememberNetSpeed(play.controller)
     val show = controls.visible || panel != null
 
     // ---- 键位：上游 PlayerKeys 解析，命令接到控制器的公开方法
@@ -413,6 +415,11 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                 if (!narrow) DesktopPauseSeat(snap.paused && snap.phase == PlayPhase.Ready, position)
                 SealSlot(snap.favorite == true, Modifier.padding(start = Guga.rem(1f)), size = Guga.rem(3.6f))
                 Spacer(Modifier.width(Guga.rem(1f)))
+                // 投屏（DLNA）
+                if (com.gugaart.ui.cast.Cast.host != null) {
+                    EdgeButton(GuguIcon.Tv, "投屏", { opened = if (opened == PlayerPanel.Cast) null else PlayerPanel.Cast }, selected = com.gugaart.ui.cast.Cast.active != null, tag = "player-cast")
+                    Spacer(Modifier.width(Guga.rem(1f)))
+                }
                 EdgeButton(GuguIcon.Heart, if (snap.favorite == true) "取消收藏" else "收藏", { controller.toggleFavorite() }, selected = snap.favorite == true, tag = "player-fav")
                 // 置顶：有窗口才画（不能用的控件不画）
                 if (window != null) {
@@ -448,6 +455,8 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                         BasicText(Rules.clock(position.toLong()), style = Guga.numeral(Guga.player.clock), maxLines = 1, modifier = Modifier.testTag("player-time"))
                         BasicText(" / ${Rules.clock(duration.toLong())}", style = Guga.numeral(Guga.player.clock, colors.dim), maxLines = 1)
+                        // 网速（用户 2026-11-17：「调出菜单，能够自动显示当前的网络速度」）：和时间一样是一直在变的数，排在时间后面
+                        speed?.let { BasicText("网速 $it", Modifier.padding(start = Guga.rem(1.6f)).testTag("player-speed"), style = Guga.note(Guga.player.hint, colors.ink, letterSpacing = 0.04.em), maxLines = 1) }
                         if (!narrow && win.width.value >= 1280f) {
                             BasicText(
                                 "空格 暂停 · ← → ${(stepNow / 1000).toInt()} 秒 · ↑ ↓ 音量",
@@ -477,7 +486,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                                 PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"
                                 PlayerPanel.Core -> com.gugaart.ui.player.engineShort(snap.engineId)
                                 PlayerPanel.Dm -> if (render.enabled) "开" else "关"
-                                PlayerPanel.Next -> null
+                                PlayerPanel.Next, PlayerPanel.Cast -> null
                             }
                             DockWord(p, value?.take(8), panel == p, compact = win.width.value < 1800f, iconOnly = win.width.value < 1280f, warn = p == PlayerPanel.Dm && slots.danmakuWarns?.invoke() == true) {
                                 opened = if (opened == p) null else p
@@ -571,6 +580,8 @@ private fun BoxScope.Picture(play: PlaySession, snap: PlayerSnapshot, engine: Pl
             if (line != null) BasicText(line, Modifier.padding(top = Guga.rem(0.6f)), style = Guga.note(rsp(1.3f), colors.dim), maxLines = 1)
         }
     }
+    // 开播那几秒：片源的效果（杜比视界 / HDR10 / 杜比全景声…）
+    com.gugaart.ui.player.FormatFlash(snap, 1.15f, Modifier.align(Alignment.TopStart).padding(start = Guga.rem(2f), top = Guga.rem(2f)))
     // 「跳过片头 / 片尾」：玻璃胶囊（播放器里唯一的玻璃）。播放页不在根的 GlassScene 里：这里自己起一个「视频底图」场景（底图不画，画面是原生层），
     // 后端先用上游的 Plates 退路——视频取帧供底图的那一套（上游 PlayerGlassScene）是 internal，接不上。
     snap.skip?.let { skip ->

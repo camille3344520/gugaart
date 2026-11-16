@@ -376,6 +376,32 @@ class MainActivity : ComponentActivity() {
         val secureForApp = com.gugaart.ui.danmaku.withDanmakuRelay(secure, local, null)
         // Trakt：编进包里的应用（.env；没配 = 设置里写「这一版不能连 Trakt」）
         com.gugaart.ui.trakt.TraktService.install(BuildConfig.TRAKT_CLIENT_ID, BuildConfig.TRAKT_CLIENT_SECRET)
+        // DLNA 投屏：手机能投到电视（电视自己是被投的一方，不装）
+        if (!tv) com.gugaart.ui.cast.Cast.host = com.gugaart.ui.cast.DlnaCastHost {
+            val wifi = applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            val lock = wifi.createMulticastLock("gugaart-dlna").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            AutoCloseable { runCatching { lock.release() } }
+        }
+        // 开播的效果标签要知道这台设备的屏幕能显示什么：HDR 类型（Display）+ 有没有杜比视界解码器（MediaCodecList）
+        com.gugaart.ui.player.DeviceAv.caps = runCatching {
+            @Suppress("DEPRECATION")
+            val types = windowManager.defaultDisplay.hdrCapabilities?.supportedHdrTypes?.toSet().orEmpty()
+            val dvDecoder = android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS).codecInfos
+                .any { info -> !info.isEncoder && info.supportedTypes.any { it.equals("video/dolby-vision", ignoreCase = true) } }
+            com.gugaart.ui.player.AvCaps(
+                hdr10 = android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in types,
+                hdr10Plus = android.view.Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS in types,
+                hlg = android.view.Display.HdrCapabilities.HDR_TYPE_HLG in types,
+                dolbyVision = android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION in types && dvDecoder,
+            )
+        }.getOrNull()
+        // 播放器里的网速：本应用一共收了多少字节（ExoPlayer / VLC / mpv 都在本进程里）；系统不给（UNSUPPORTED）就退回内核自己的估计
+        com.gugaart.ui.player.NetTraffic.rxBytes = {
+            android.net.TrafficStats.getUidRxBytes(android.os.Process.myUid()).takeIf { it != android.net.TrafficStats.UNSUPPORTED.toLong() }
+        }
         val deviceId = local.get(LocalKeys.DEVICE_ID) ?: "gugaart-${UUID.randomUUID()}".also { local.set(LocalKeys.DEVICE_ID, it) }
         return PlatformDeps(
             uiMode = if (tv) UiMode.Tv else UiMode.Phone,

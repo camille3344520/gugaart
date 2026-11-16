@@ -83,7 +83,7 @@ data class RemoteHits(val episodes: List<Title>, val people: List<Person>)
 @Immutable
 data class TitleHit(val title: Title, val range: IntRange?)
 
-private val INDEX_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "Overview"))
+private val INDEX_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "Overview", "CommunityRating"))
 
 suspend fun loadSearchIndex(client: EmbyClient): SearchIndex {
     val r = client.getItems(LibraryQuery(includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("SortName"), sortOrder = "Ascending", limit = 5000), INDEX_FIELDS)

@@ -57,7 +57,7 @@ data class HomeData(
     val shelves: List<HomeShelf> = homeShelves(arrivals),
 )
 
-private val HOME_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Overview", "Genres", "Taglines"))
+private val HOME_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Overview", "Genres", "Taglines", "CommunityRating"))
 
 /** 真实的代码路径：上游 :core 的 `getResume` / `getViewList` / `getLatest`（全部只读）。 */
 suspend fun loadHome(client: EmbyClient): HomeData {

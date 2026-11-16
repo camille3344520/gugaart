@@ -241,7 +241,7 @@ suspend fun loadPerson(client: EmbyClient, id: String): PersonData {
     val person = client.titleOf(client.getItem(id))
     val r = client.getItems(
         LibraryQuery(personIds = listOf(id), includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("ProductionYear", "SortName"), sortOrder = "Descending", limit = 200),
-        ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "People", "Overview")),
+        ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "People", "Overview", "CommunityRating")),
     )
     val works = r.items.map { dto ->
         val t = client.titleOf(dto)

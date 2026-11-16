@@ -1,6 +1,7 @@
 package com.gugaart.ui.desktop.detail
 
 import com.gugaart.ui.desktop.deskFocusRing
+import com.gugaart.ui.components.ScrollArrows
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -436,19 +437,27 @@ fun DCastRow(people: List<Person>, onOpen: (Person) -> Unit, modifier: Modifier 
         DWidth.Xl -> 11
     }
     val card = (w - m * 2 - gut * (n + 1)) / (n + 2)
-    Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = m).testTag("d-cast"), horizontalArrangement = Arrangement.spacedBy(gut)) {
-        for (p in people) {
-            val hover = rememberHover()
-            val press = rememberPressState()
-            Column(Modifier.width(card).hover(hover).deskFocusRing(press).pressable(press, label = p.name, onClick = { onOpen(p) }).testTag("d-cast-card")) {
-                Box(Modifier.pressGraphics(press).fillMaxWidth().aspectRatio(3f / 4f).border(1.dp, colors.line)) {
-                    // 彩色，没有任何去色滤镜
-                    CoverImage(p.photo, Modifier.fillMaxSize(), Framing(0.5f, 0.2f)) { HatchPlate(Rules.monogram(p.name, person = true), Modifier.fillMaxSize(), textSize = rsp(4f)) }
+    // 演员多了右边看不到（用户 2026-11-16：「演员超过数量的时候没办法查看右边的演员了」）：两头各一个翻页箭头，
+    // 右边还有人才出「→」，翻过去左边才出「←」，点一下翻一屏；Shift + 滚轮 / 触控板照旧能横着滑
+    val scroll = rememberScrollState()
+    val page = with(androidx.compose.ui.platform.LocalDensity.current) { (w - m * 2 - card).toPx() }
+    Box(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(scroll).padding(horizontal = m).testTag("d-cast"), horizontalArrangement = Arrangement.spacedBy(gut)) {
+            for (p in people) {
+                val hover = rememberHover()
+                val press = rememberPressState()
+                Column(Modifier.width(card).hover(hover).deskFocusRing(press).pressable(press, label = p.name, onClick = { onOpen(p) }).testTag("d-cast-card")) {
+                    Box(Modifier.pressGraphics(press).fillMaxWidth().aspectRatio(3f / 4f).border(1.dp, colors.line)) {
+                        // 彩色，没有任何去色滤镜
+                        CoverImage(p.photo, Modifier.fillMaxSize(), Framing(0.5f, 0.2f)) { HatchPlate(Rules.monogram(p.name, person = true), Modifier.fillMaxSize(), textSize = rsp(4f)) }
+                    }
+                    BasicText(p.name, Modifier.padding(top = Guga.rem(1f)), style = Guga.song(rsp(1.45f), FontWeight.Bold, if (hover.value) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BasicText(castRole(p), Modifier.padding(top = Guga.rem(0.2f)), style = Guga.note(rsp(1.2f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                BasicText(p.name, Modifier.padding(top = Guga.rem(1f)), style = Guga.song(rsp(1.45f), FontWeight.Bold, if (hover.value) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText(castRole(p), Modifier.padding(top = Guga.rem(0.2f)), style = Guga.note(rsp(1.2f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        // 箭头立在照片的竖直中间
+        ScrollArrows(scroll, page, top = card * (4f / 3f) / 2 - Guga.rem(2.4f), inset = m / 2, size = Guga.rem(4.8f), tag = "d-cast")
     }
 }
 
@@ -597,5 +606,6 @@ fun DStills(stills: List<com.gugugaga.app.model.Still>) {
         cardWidth = card,
         margin = m,
         header = false,
+        arrows = true,
     )
 }

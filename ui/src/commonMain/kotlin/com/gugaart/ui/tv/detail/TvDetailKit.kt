@@ -1,5 +1,6 @@
 package com.gugaart.ui.tv.detail
 
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -175,18 +176,21 @@ fun TvBackdrop(art: Art, deep: Boolean, modifier: Modifier = Modifier, sided: Bo
 
 /** 压在整幅图上的页眉（设计稿 `.rhead`）：左「咕咕嘎嘎」+ 英文小标，右 图注（这是哪一集的剧照，电视上横排）+ 时钟。 */
 @Composable
-fun TvRunHead(english: String, caption: String?, today: Today, modifier: Modifier = Modifier) {
+fun TvRunHead(english: String, caption: String?, today: Today, modifier: Modifier = Modifier, badges: List<com.gugaart.ui.player.FormatBadge> = emptyList()) {
     val colors = Guga.colors
+    // 右上角（用户 2026-11-17：「右上角的 剧照|主视觉 时间 太小了，看不清。把 4k hdr那些放到右上角会不会好点」）：
+    // 有片源格式就放徽章（1.5 倍，电视放不了的变灰），没有才写说明；说明 22 → 28，时间 27 → 34
     Row(
-        modifier.fillMaxWidth().padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = TvSpec.TOP).height(52.dp).testTag("tv-run-head"),
+        modifier.fillMaxWidth().padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = TvSpec.TOP).heightIn(min = 52.dp).testTag("tv-run-head"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         BasicText("咕咕嘎嘎", style = Guga.song(24.sp, FontWeight.Black, letterSpacing = 0.3.em), maxLines = 1)
         Box(Modifier.padding(start = 4.dp, end = 18.dp).width(1.dp).height(22.dp).background(colors.line))
         BasicText(english, style = Guga.numeral(20.sp, colors.spot, letterSpacing = 0.2.em), maxLines = 1)
         Spacer(Modifier.weight(1f))
-        if (caption != null) BasicText(caption, Modifier.padding(end = 26.dp), style = Guga.song(22.sp, FontWeight.SemiBold, colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        TvClock(today)
+        if (badges.isNotEmpty()) com.gugaart.ui.player.FormatBadgeRow(badges, 1.5f, Modifier.padding(end = 30.dp), notes = false)
+        else if (caption != null) BasicText(caption, Modifier.padding(end = 30.dp), style = Guga.song(28.sp, FontWeight.SemiBold, colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TvClock(today, 34.sp)
     }
 }
 

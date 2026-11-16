@@ -1,5 +1,6 @@
 package com.gugaart.ui.desktop
 
+import com.gugaart.ui.data.ItemManage
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -208,7 +209,7 @@ private fun TabWord(text: String, on: Boolean, onClick: () -> Unit) {
 @Immutable
 data class LibShelf(val library: LibraryEntry, val titles: List<Title>)
 
-private val SHELF_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres"))
+private val SHELF_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "CommunityRating"))
 
 /** 只读：上游 :core 的 `getViewList` + 每个库的 `getLatest`（合集库没有「最近添加」，取头几套合集）。 */
 suspend fun loadLibShelves(client: EmbyClient): List<LibShelf> = loadLibraries(client).map { lib ->
@@ -358,8 +359,10 @@ private fun DesktopWall(lib: LibraryEntry, today: Today) {
     val all = wall.value?.first.takeIf { preset.state != "loading" }
     val total = lib.titles ?: wall.value?.second
     val conditions = filter.count + if (minRating != null) 1 else 0
-    val shown = remember(all, filter, minRating, sort) {
-        all?.filter { t -> filter.accepts(t) && (minRating == null || (t.rating?.toFloatOrNull() ?: 0f) >= minRating!!) }?.let { if (sort == WallSort.Name) sortedByLetter(it) else it }
+    // 右键菜单里删掉的先藏起来（ItemManage）
+    val deletedCount = ItemManage.deleted.size
+    val shown = remember(all, filter, minRating, sort, deletedCount) {
+        all?.filter { t -> !ItemManage.isDeleted(t.id) && filter.accepts(t) && (minRating == null || (t.rating?.toFloatOrNull() ?: 0f) >= minRating!!) }?.let { if (sort == WallSort.Name) sortedByLetter(it) else it }
     }
     val list = rememberLazyListState()
     ReportLazyScroll(list)

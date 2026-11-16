@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.components.CoverImage
+import com.gugaart.ui.data.ItemManage
 import com.gugaart.ui.data.Kind
 import com.gugaart.ui.data.Title
 import com.gugaart.ui.screens.LocalChrome
@@ -58,6 +59,7 @@ import com.gugugaga.ds.icons.GuguIcon
 import com.gugugaga.ds.icons.Icon
 import com.gugugaga.ds.physics.PressState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** 长按菜单的版式数（设计稿 `tv/css/pages.css` 的 `.cmenu`）。 */
@@ -73,8 +75,11 @@ object TvMenuSpec {
     const val LINE_ALPHA = 0.18f
 }
 
-/** 菜单里的一行。[stay] = 做完留在这一页（收藏、已看）：收起后焦点还给那张卡；否则是去别的页面（播放、详情）。 */
-class TvMenuAction(val key: String, val label: String, val icon: GuguIcon, val stay: Boolean = false, val run: () -> Unit)
+/**
+ * 菜单里的一行。[stay] = 做完留在这一页（收藏、已看）：收起后焦点还给那张卡；否则是去别的页面（播放、详情）。
+ * [closes] = false：做完菜单不收（管理那几行：结果写在纸条底下；「删除…」换成二次确认）。[danger]：朱红字。
+ */
+class TvMenuAction(val key: String, val label: String, val icon: GuguIcon, val stay: Boolean = false, val closes: Boolean = true, val danger: Boolean = false, val run: () -> Unit)
 
 /**
  * 长按确定菜单（设计稿 `p=menu`：默认 / `ep`）：米白纸条，焦点项墨底米白字；标题显示片名全名。
@@ -83,6 +88,9 @@ class TvMenuAction(val key: String, val label: String, val icon: GuguIcon, val s
  *
  * 条目：播放 / 打开详情 / 收藏（盖章）/ 标记已看（画校对勾）。收藏和已看会写服务器，只走 `AppGraph.toggleFavorite / togglePlayed`。
  * 设计稿里的「所属合集」「下载」没有数据来源 / 功能，不排。[open] 的 `more`：调用的界面自己加的几行（记录里的「从记录里移除」）。
+ *
+ * 管理员多三行「刷新元数据 / 扫描文件 / 删除…」（[ItemManage]；用户 2026-11-16：「之前可以管理emby的」）：前两行做完结果写在纸条底下、菜单不收；
+ * 「删除…」把纸条换成二次确认（「取消」/「删除文件」，焦点默认在「取消」，返回键回到菜单），删掉以后这张卡从墙上消失。
  */
 object TvLongPressMenu {
     var target: Title? by mutableStateOf(null)
@@ -129,9 +137,25 @@ object TvLongPressMenu {
                 if (back != null && restore && !runCatching { back.focusRequester.requestFocus() }.getOrDefault(false)) tvRescueFocus(g, tv)
             }
         }
+        // 纸条的两种样子：menu = 菜单；del = 删除的二次确认。status = 纸条底下的一句（管理操作的结果）
+        var stage by remember(t) { mutableStateOf("menu") }
+        var status by remember(t) { mutableStateOf<String?>(null) }
+        var busy by remember(t) { mutableStateOf(false) }
+        var wasDel by remember(t) { mutableStateOf(false) }
+        // 换成二次确认：焦点落在「取消」；从确认回到菜单：落回「删除…」（刚打开时的焦点由上面那一段给）
+        LaunchedEffect(t, stage) {
+            if (t == null) return@LaunchedEffect
+            if (stage == "del") wasDel = true else if (!wasDel) return@LaunchedEffect
+            val key = if (stage == "del") "$TV_MENU_ZONE/del-cancel" else "$TV_MENU_ZONE/delete"
+            repeat(30) {
+                if (g.focus.request(key)) return@LaunchedEffect
+                delay(16)
+            }
+        }
         if (t == null) return
+        val manage = ItemManage.canManage() && t.kind != Kind.Person
         TvModal()
-        TvBack { close() }
+        TvBack { if (stage == "del" && !busy) stage = "menu" else if (!busy) close() }
 
         val favId = if (t.kind == Kind.Episode) t.seriesId ?: t.id else t.id
         val fav = chrome.isFavorite(favId, t.favorite && t.kind != Kind.Episode)
@@ -145,6 +169,40 @@ object TvLongPressMenu {
                 if (t.kind != Kind.BoxSet) add(TvMenuAction("played", if (played) "标记未看" else "标记已看", GuguIcon.Check, stay = true) { g.togglePlayed(chrome, t.id, played) })
             }
             addAll(more)
+            if (manage) {
+                add(TvMenuAction("refresh", "刷新元数据", GuguIcon.RefreshCw, closes = false) {
+                    status = "正在请求…"
+                    g.scope.launch { status = ItemManage.refresh(g, t.id) }
+                })
+                add(TvMenuAction("scan", "扫描文件", GuguIcon.Radio, closes = false) {
+                    status = "正在请求…"
+                    g.scope.launch { status = ItemManage.scan(g, t.id) }
+                })
+                add(TvMenuAction("delete", "删除…", GuguIcon.Trash, closes = false, danger = true) { status = null; stage = "del" })
+            }
+        }.let { menu ->
+            if (stage != "del") menu else listOf(
+                TvMenuAction("del-cancel", "取消", GuguIcon.X, closes = false) { if (!busy) stage = "menu" },
+                TvMenuAction("del-confirm", if (busy) "正在删除…" else "删除文件", GuguIcon.Trash, closes = false, danger = true) {
+                    if (!busy) {
+                        busy = true
+                        status = null
+                        g.scope.launch {
+                            val err = ItemManage.delete(g, t)
+                            busy = false
+                            if (err == null) {
+                                // 那张卡已经从墙上拿掉了：焦点不还给它，交给页面上最近的一张
+                                restore = false
+                                close()
+                                delay(120)
+                                tvRescueFocus(g, tv)
+                            } else {
+                                status = err
+                            }
+                        }
+                    }
+                },
+            )
         }
 
         val density = LocalDensity.current
@@ -198,19 +256,24 @@ object TvLongPressMenu {
                         overflow = TextOverflow.Ellipsis,
                     )
                     Box(Modifier.padding(top = 14.dp, bottom = 4.dp).fillMaxWidth().height(2.dp).background(colors.onInk))
+                    if (stage == "del") {
+                        BasicText("确定删除？", Modifier.padding(top = 12.dp), style = Guga.song(27.sp, FontWeight.Black, TvMenuSpec.LABEL), maxLines = 1)
+                        BasicText("会从服务器删除媒体文件，不能撤销。", Modifier.padding(top = 6.dp, bottom = 10.dp).testTag("tv-menu-del-note"), style = Guga.song(22.sp, color = colors.onInk.copy(alpha = 0.8f)), maxLines = 2)
+                    }
                     for (a in actions) {
                         TvFocusable(
                             onClick = {
                                 restore = a.stay
                                 a.run()
-                                close()
+                                if (a.closes) close()
                             },
                             modifier = Modifier.fillMaxWidth().height(TvMenuSpec.ROW),
                             kind = TvFocusKind.OnPaper,
                             key = a.key,
                             label = a.label,
                         ) { focused ->
-                            val ink = if (focused) colors.ink else colors.onInk
+                            // 删除那几行用朱红：纸上用深一档的（和小标同色），焦点的墨底上用亮的
+                            val ink = if (a.danger) (if (focused) colors.seal else TvMenuSpec.LABEL) else if (focused) colors.ink else colors.onInk
                             Row(
                                 Modifier.fillMaxSize().drawBehind {
                                     if (!focused) drawLine(colors.onInk.copy(alpha = TvMenuSpec.LINE_ALPHA), Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
@@ -223,7 +286,9 @@ object TvLongPressMenu {
                             }
                         }
                     }
-                    BasicText("返回键收起", Modifier.align(Alignment.End).padding(top = 12.dp), style = Guga.song(20.sp, color = colors.onInk.copy(alpha = TvMenuSpec.HINT_ALPHA)), maxLines = 1)
+                    val note = status
+                    if (note != null) BasicText(note, Modifier.padding(top = 12.dp).testTag("tv-menu-status"), style = Guga.song(21.sp, color = colors.onInk), maxLines = 3)
+                    BasicText(if (stage == "del") "返回键回到菜单" else "返回键收起", Modifier.align(Alignment.End).padding(top = 12.dp), style = Guga.song(20.sp, color = colors.onInk.copy(alpha = TvMenuSpec.HINT_ALPHA)), maxLines = 1)
                 }
             }
         }

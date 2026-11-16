@@ -60,7 +60,10 @@ enum class PlayerPanel(val id: String, val word: String, val english: String) {
     Quality("quality", "画质", "QUALITY"),
     Core("core", "内核", "ENGINE"),
     Dm("dm", "弹幕", "DANMAKU"),
-    Next("next", "下一集", "NEXT");
+    Next("next", "下一集", "NEXT"),
+
+    /** DLNA 投屏（顶栏的电视按钮打开；不是功能词）。 */
+    Cast("cast", "投屏", "CAST");
 
     companion object {
         /** 排在底下的七个功能词（「下一集」不是功能词，是片尾自己出现的）。「内核」= 播放器里直接选 EXO / VLC / MPV（用户 2026-11-16）。 */

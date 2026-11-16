@@ -175,6 +175,8 @@ internal fun desktopDeps(
     val secureForApp = com.gugaart.ui.danmaku.withDanmakuRelay(secure, local, debug?.defaultSecrets?.danmakuApiUrl)
     // Trakt：编进包里的应用（.env；没配 = 设置里写「这一版不能连 Trakt」）
     com.gugaart.ui.trakt.TraktService.install(BuildInfo.TRAKT_CLIENT_ID, BuildInfo.TRAKT_CLIENT_SECRET)
+    // DLNA 投屏：电脑也能投到电视
+    com.gugaart.ui.cast.Cast.host = com.gugaart.ui.cast.DlnaCastHost()
     // 每次安装一个稳定的 id（不从机器信息推导：它会显示在 Emby 的「设备」里）
     val deviceId = local.get(LocalKeys.DEVICE_ID) ?: "gugaart-${UUID.randomUUID()}".also { local.set(LocalKeys.DEVICE_ID, it) }
     val computer = System.getenv("COMPUTERNAME")?.takeIf { it.isNotBlank() }

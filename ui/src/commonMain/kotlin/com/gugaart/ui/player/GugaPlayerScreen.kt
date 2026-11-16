@@ -232,6 +232,8 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val marks = remember(snap.markers) { listOfNotNull(snap.markers.intro?.endMs?.toDouble(), snap.markers.credits?.startMs?.toDouble()) }
     val position = clock.positionMs
     val duration = clock.durationMs.takeIf { it > 0 } ?: snap.resolved?.durationMs?.toDouble() ?: 0.0
+    // 网速：一直在采样，控件一出来就有数（NetSpeed.kt）
+    val speed = rememberNetSpeed(play.controller)
     val showControls = controls.visible && !locked
     // 手势：上游的手势层 + 这一页的回调（整页一个实例；回调执行时才读当前状态）
     val lockedNow = rememberUpdatedState(locked)
@@ -275,7 +277,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                         PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"
                         PlayerPanel.Core -> engineShort(snap.engineId)
                         PlayerPanel.Dm -> if (render.enabled) "开" else "关"
-                        PlayerPanel.Next -> null
+                        PlayerPanel.Next, PlayerPanel.Cast -> null
                     }
                     FunctionWord(p, value, panel == p, warn = p == PlayerPanel.Dm && slots.danmakuWarns?.invoke() == true, onClick = {
                         opened = if (opened == p) null else p
@@ -321,6 +323,8 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
         }
         // 贴边提示：亮度 / 音量 / 快进量 / 长按倍速
         EdgeHints(gestures)
+        // 开播那几秒：片源的效果（杜比视界 / HDR10 / 杜比全景声…）
+        FormatFlash(snap, 1f, Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 64.dp))
         if (locked) {
             // 锁屏：只留左缘一个锁（点它解开）；别的手势都不响应
             Row(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 96.dp).background(colors.inkWell).testTag("player-lock"), verticalAlignment = Alignment.CenterVertically) {
@@ -332,6 +336,8 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             BoxButton(GuguIcon.ChevronLeft, "返回", play.exit, Modifier.align(Alignment.TopStart).padding(8.dp), onImage = true)
             Row(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (!inset) PauseSeat(paused = snap.paused && snap.phase == PlayPhase.Ready, positionMs = position)
+                // 投屏（DLNA）：手机能投才有
+                if (com.gugaart.ui.cast.Cast.host != null) BoxButton(GuguIcon.Tv, "投屏", { opened = if (opened == PlayerPanel.Cast) null else PlayerPanel.Cast }, onImage = true, selected = com.gugaart.ui.cast.Cast.active != null)
                 BoxButton(GuguIcon.Heart, if (snap.favorite == true) "取消收藏" else "收藏", { controller.toggleFavorite() }, onImage = true, selected = snap.favorite == true)
                 BoxButton(GuguIcon.Lock, "锁屏", { locked = true; opened = null }, onImage = true)
             }
@@ -400,7 +406,11 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                     Column(Modifier.padding(start = if (showLogo) 14.dp else 0.dp)) {
                         val ep = snap.item?.indexNumber?.let { "第 $it 集　" }.orEmpty()
                         BasicText(ep + (snap.item?.name ?: snap.title), style = Guga.song(15.sp, FontWeight.Bold, letterSpacing = 0.06.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        specOf(snap, play).takeIf { it.isNotEmpty() }?.let { BasicText(it, Modifier.padding(top = 2.dp), style = Guga.note(10.5.sp, colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        // 规格行 + 网速（用户 2026-11-17：「调出菜单，能够自动显示当前的网络速度」）：规格太长时被省略号截，网速固定在后面不截
+                        Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            specOf(snap, play).takeIf { it.isNotEmpty() }?.let { BasicText(it, Modifier.weight(1f, fill = false), style = Guga.note(10.5.sp, colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            speed?.let { BasicText("网速 $it", Modifier.padding(start = 10.dp).testTag("player-speed"), style = Guga.note(10.5.sp, colors.ink), maxLines = 1) }
+                        }
                     }
                 }
                 // 中间三个键：退 10 秒 / 播放暂停 / 进 10 秒

@@ -1,5 +1,6 @@
 package com.gugaart.ui.desktop
 
+import com.gugaart.ui.data.ItemManage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -383,8 +384,9 @@ fun PaperDialog(tag: String, onDismiss: () -> Unit, width: Float, closable: Bool
  * 日常（播放 / 从头播放 / 收藏 / 标记已看 / 查看详情）和「管理」分开；「删除媒体…」在原地变成红边的二次确认，不弹第二个窗口。
  * 任何界面在卡片 / 行的右键处调 [open]；[Host] 由电脑的根（`GugaartFrame`）画一次。
  *
- * **管理 / 删除这一阶段只有界面**：上游没有给我们编辑元数据、删除媒体的入口，而且真实服务器只读（AGENTS.md §2.1）——
- * 管理的几行点了只说明「还没接上」，「删除文件」的执行处是空的（见 [confirmDelete]）。
+ * 「管理」只给管理员（[ItemManage]；用户 2026-11-16：「之前可以管理emby的」）：刷新元数据 / 扫描文件，结果写在管理纸片的头一行；
+ * 「删除媒体…」原地变成红边的二次确认，「删除文件」才真的删（连服务器上的媒体文件），删掉的条目从各页的列表里藏起来。
+ * 编辑信息、重新识别这类要打字填表的，在 Emby 网页控制台里做，这里不排（点了不能用的行比没有更糟）。
  * 设计稿里的「加入待看清单」没有对应的上游功能，不画。
  */
 object DesktopContextMenu {
@@ -413,12 +415,21 @@ object DesktopContextMenu {
         notice = null
     }
 
-    /**
-     * 「删除文件」：**执行处留空**。上游没有删除媒体的入口（`EmbyClient` 没有公开的删除方法），真实服务器只读；
-     * 接上之前这里只收起菜单。接的时候：调上游的删除、成功后让当前页重新取数。
-     */
-    private fun confirmDelete(@Suppress("UNUSED_PARAMETER") title: Title) {
-        close()
+    /** 删除进行中（按钮变「正在删除…」，不能再点）。 */
+    private var busy: Boolean by mutableStateOf(false)
+
+    /** 「删除文件」：调上游的删除；成功就收起菜单（条目从列表里藏起来），失败把原因写在管理纸片的头一行。 */
+    private fun confirmDelete(g: com.gugugaga.app.AppGraph, title: Title) {
+        if (busy) return
+        busy = true
+        g.scope.launch {
+            val err = ItemManage.delete(g, title)
+            busy = false
+            if (err == null) close() else {
+                notice = err
+                stage = "mng"
+            }
+        }
     }
 
     @Composable
@@ -434,6 +445,7 @@ object DesktopContextMenu {
         val fav = chrome.isFavorite(favId, t.favorite && t.kind != Kind.Episode)
         val seen = chrome.isPlayed(t.id, t.played)
         val playable = t.kind == Kind.Movie || t.kind == Kind.Episode
+        val manage = ItemManage.canManage() && t.kind != Kind.Person
         BoxWithConstraints(
             Modifier.fillMaxSize().pointerInput(Unit) {
                 awaitPointerEventScope {
@@ -483,7 +495,7 @@ object DesktopContextMenu {
                 }
                 Spacer(Modifier.height(Guga.rem(0.6f)))
                 SlipRule()
-                CtxRow(GuguIcon.SlidersHorizontal, "管理", trailingIcon = GuguIcon.ChevronRight, selected = stage != "ctx", tag = "ctx-manage", height = 4.6f) { stage = if (stage == "ctx") "mng" else "ctx" }
+                if (manage) CtxRow(GuguIcon.SlidersHorizontal, "管理", trailingIcon = GuguIcon.ChevronRight, selected = stage != "ctx", tag = "ctx-manage", height = 4.6f) { stage = if (stage == "ctx") "mng" else "ctx" }
             }
             if (stage != "ctx") {
                 val gap = with(density) { 2.dp.toPx() }
@@ -494,19 +506,21 @@ object DesktopContextMenu {
                 Slip(Modifier.offset { IntOffset(sx.toInt(), sy.toInt()) }.width(Guga.rem(DeskMenuSpec.MNG_W)).onSizeChanged { subSize = it }.testTag("desktop-context-manage")) {
                     BasicText(
                         notice ?: "管理 · 会改动服务器上的条目",
-                        Modifier.padding(horizontal = Guga.rem(1.6f), vertical = Guga.rem(1.3f)),
+                        Modifier.padding(horizontal = Guga.rem(1.6f), vertical = Guga.rem(1.3f)).testTag("ctx-notice"),
                         style = Guga.note(rsp(1.15f), if (notice != null) colors.ink else colors.faint),
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                     )
                     SlipRule()
                     Spacer(Modifier.height(Guga.rem(0.6f)))
-                    // 这几行上游还没有入口：点了只在上面那一行说明，不做任何事
-                    val pending: () -> Unit = { notice = "这个功能还没接上，条目没有改动" }
-                    CtxRow(GuguIcon.RotateCw, "刷新元数据", onClick = pending)
-                    CtxRow(GuguIcon.Info, "编辑信息", onClick = pending)
-                    CtxRow(GuguIcon.Layers, "识别 / 重新匹配", onClick = pending)
-                    CtxRow(GuguIcon.Download, "下载字幕", onClick = pending)
+                    CtxRow(GuguIcon.RotateCw, "刷新元数据", tag = "ctx-refresh") {
+                        notice = "正在请求…"
+                        g.scope.launch { notice = ItemManage.refresh(g, t.id) }
+                    }
+                    CtxRow(GuguIcon.Radio, "扫描文件", tag = "ctx-scan") {
+                        notice = "正在请求…"
+                        g.scope.launch { notice = ItemManage.scan(g, t.id) }
+                    }
                     Spacer(Modifier.height(Guga.rem(0.6f)))
                     SlipRule()
                     if (stage == "del") {
@@ -522,7 +536,7 @@ object DesktopContextMenu {
                             BasicText("会从服务器删除媒体文件，无法撤销。", Modifier.padding(top = Guga.rem(0.6f)), style = Guga.song(rsp(1.25f), color = colors.dim), maxLines = 2)
                             Row(Modifier.fillMaxWidth().padding(top = Guga.rem(1.4f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1f), Alignment.End)) {
                                 DeskButton("取消", { stage = "mng" }, icon = null, small = true, outline = true)
-                                DeskButton("删除文件", { confirmDelete(t) }, icon = null, small = true, danger = true)
+                                DeskButton(if (busy) "正在删除…" else "删除文件", { confirmDelete(g, t) }, icon = null, small = true, danger = true)
                             }
                         }
                     } else {

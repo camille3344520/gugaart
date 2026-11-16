@@ -71,7 +71,7 @@ fun pickTop(pool: List<Title>, n: Int, random: Random?): List<Title> {
 const val DECADE_SCAN = 3000
 
 private val TYPES = listOf("Movie", "Series")
-private val CARD = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "ProductionYear", "Overview", "ChildCount"))
+private val CARD = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "ProductionYear", "Overview", "ChildCount", "CommunityRating"))
 
 /** 按年份聚合成年代。纯函数：没有年份的不算；按年代从早到晚；空的年代不补。 */
 fun decadesOf(years: List<Int?>): List<Decade> =

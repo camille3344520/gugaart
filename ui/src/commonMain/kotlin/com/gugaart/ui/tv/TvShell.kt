@@ -1,5 +1,6 @@
 package com.gugaart.ui.tv
 
+import com.gugaart.ui.components.rememberPageStates
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -373,9 +374,11 @@ fun TvPages(route: Route, today: Today) {
     // 正用着的时候读者证过期（401）：记下来，登录页先说一句
     com.gugaart.ui.wide.WatchSessionExpiry()
 
+    // 返回栈上的每一页记住自己的滚动 / 网格位置：片库进详情再返回，回到进去的那一排，焦点也就能落回那张卡（PageStates）
+    val pages = rememberPageStates(g.nav)
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().onFocusChanged { tv.pageHasFocus = it.hasFocus }.focusRequester(tv.pageFocus).focusGroup().testTag("tv-pages")) {
-            when (route) {
+            pages.Page(g.nav, if (route == Route.Home) shownTab?.ordinal ?: 7 else 7) { when (route) {
                 Route.Home -> when (shownTab) {
                     null -> Box(Modifier.fillMaxSize())
                     WideTab.Home -> TvHomeScreen(today)
@@ -392,7 +395,7 @@ fun TvPages(route: Route, today: Today) {
                 is Route.Settings -> TvSettingsScreen(route.section, today)
                 Route.Servers, is Route.Login -> TvLoginScreen(today)
                 else -> TvComing(today, "这一页")
-            }
+            } }
         }
         // 侧栏展开：页面压暗
         // 侧栏展开 / 长按菜单开着：页面压暗
@@ -410,7 +413,7 @@ fun TvPages(route: Route, today: Today) {
  */
 @OptIn(ExperimentalTime::class)
 @Composable
-fun TvClock(today: Today) {
+fun TvClock(today: Today, size: androidx.compose.ui.unit.TextUnit = 27.sp) {
     var text by remember(today) { mutableStateOf(today.clock) }
     if (today.live) {
         LaunchedEffect(today) {
@@ -423,7 +426,7 @@ fun TvClock(today: Today) {
             }
         }
     }
-    BasicText(text, Modifier.testTag("tv-clock"), style = Guga.numeral(27.sp, Guga.colors.ink, letterSpacing = 0.04.em).copy(fontWeight = FontWeight.Bold), maxLines = 1)
+    BasicText(text, Modifier.testTag("tv-clock"), style = Guga.numeral(size, Guga.colors.ink, letterSpacing = 0.04.em).copy(fontWeight = FontWeight.Bold), maxLines = 1)
 }
 
 /** 本地时间（自 1970 起的毫秒，已加时区）→「21:47」。纯函数，有单测。 */

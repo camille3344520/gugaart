@@ -1,5 +1,9 @@
 package com.gugaart.ui.components
 
+import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +61,8 @@ fun episodeNoSize(n: Int): TextUnit {
 
 /**
  * 海报卡（海报墙 110 × 165、横向海报带 128 × 192）。直角、无投影。片名最多两行（单行省略会让三部 EVA 看起来一样），下一行年份 / 题材。
+ * 海报墙（[evenTitle]）：片名占满两行的高度；片名只有一行时，空着的第二行放评分（用户 2026-11-17：「中间有一行是空的，可以用来显示评分」），
+ * 两行时评分并进年份那一行的最前面。
  * 没有海报 → 斜纹空版 + 片名。已收藏 → 海报右下压一枚小印；已看 → 右上一笔校对勾。[skeleton]：加载骨架（形状 = 要出现的内容）。
  */
 @Composable
@@ -89,19 +95,41 @@ fun PosterCard(
             Skeleton(Modifier.padding(top = 10.dp).fillMaxWidth(0.8f).height(14.dp))
             Skeleton(Modifier.padding(top = 6.dp).fillMaxWidth(0.5f).height(10.dp))
         } else {
+            val titleStyle = Guga.song(type.caption * 1.12f, FontWeight.Bold, lineHeight = type.caption * 1.5f)
+            // 海报墙：先量一下片名在这个宽度里几行（同步量，不会先错一帧再跳）
+            val measurer = rememberTextMeasurer()
+            val density = LocalDensity.current
+            val widthPx = with(density) { width.roundToPx() }
+            val oneLine = evenTitle && remember(title.name, widthPx, titleStyle) {
+                measurer.measure(title.name, titleStyle, maxLines = 2, constraints = Constraints(maxWidth = widthPx)).lineCount <= 1
+            }
+            val rating = title.rating.takeIf { evenTitle }
             BasicText(
                 highlighted(title.name, highlight, colors.spot),
                 Modifier.padding(top = 9.dp),
-                style = Guga.song(type.caption * 1.12f, FontWeight.Bold, lineHeight = type.caption * 1.5f),
+                style = titleStyle,
                 maxLines = 2,
-                minLines = if (evenTitle) 2 else 1,
+                minLines = if (evenTitle && !oneLine) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!subtitle.isNullOrEmpty()) {
-                BasicText(subtitle, Modifier.padding(top = 3.dp), style = Guga.note(type.fine * 1.1f, colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (oneLine) {
+                // 片名下面空着的那一行：评分（没有评分就空着，一排底边照样对齐）
+                Box(Modifier.height(with(density) { (type.caption * 1.5f).toDp() }), contentAlignment = Alignment.CenterStart) {
+                    if (rating != null) BasicText(ratingLine(rating, colors.spot), Modifier.testTag("poster-rating"), style = Guga.numeral(type.caption * 1.05f, colors.dim), maxLines = 1)
+                }
+            }
+            val sub = if (rating != null && !oneLine) listOfNotNull("★ $rating", subtitle?.takeIf { it.isNotEmpty() }).joinToString(" · ") else subtitle
+            if (!sub.isNullOrEmpty()) {
+                BasicText(sub, Modifier.padding(top = 3.dp), style = Guga.note(type.fine * 1.1f, colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
+}
+
+/** 卡片上的评分：「★ 8.0」，星号用专色。 */
+private fun ratingLine(rating: String, star: androidx.compose.ui.graphics.Color): AnnotatedString = buildAnnotatedString {
+    withStyle(SpanStyle(color = star)) { append("★ ") }
+    append(rating)
 }
 
 /** 命中的字上专色（搜索）。 */

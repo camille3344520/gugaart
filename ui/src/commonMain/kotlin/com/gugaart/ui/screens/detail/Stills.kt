@@ -1,6 +1,7 @@
 package com.gugaart.ui.screens.detail
 
 import androidx.compose.foundation.Canvas
+import com.gugaart.ui.components.ScrollArrows
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -100,26 +101,33 @@ fun showStills(stills: List<Still>): Boolean = stills.size >= MIN_STILLS
 
 /**
  * 剧照一栏：标题「剧照 STILLS · n 张」，下面一排 16:9 的图，横滑；点一张 → [onOpen]（第几张）。
- * [cardWidth]：手机 232dp，电脑按窗口宽传更大的。
+ * [cardWidth]：手机 232dp，电脑按窗口宽传更大的。[arrows]：电脑上两头放翻页箭头（用户 2026-11-16：「剧照也是一样的，也看不到右边的」）。
  */
 @Composable
-fun StillsBand(stills: List<Still>, onOpen: (Int) -> Unit, modifier: Modifier = Modifier, cardWidth: Dp = 232.dp, margin: Dp = Guga.dimens.margin, header: Boolean = true) {
+fun StillsBand(stills: List<Still>, onOpen: (Int) -> Unit, modifier: Modifier = Modifier, cardWidth: Dp = 232.dp, margin: Dp = Guga.dimens.margin, header: Boolean = true, arrows: Boolean = false) {
     if (!showStills(stills)) return
     val colors = Guga.colors
     Column(modifier.testTag("detail-stills")) {
         if (header) SectionHeader("剧照", "STILLS", Modifier.padding(horizontal = margin), trailing = "${stills.size} 张")
-        Row(Modifier.padding(top = if (header) 16.dp else 0.dp).horizontalScroll(rememberScrollState()).padding(horizontal = margin), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            stills.forEachIndexed { i, s ->
-                val press = rememberPressState()
-                Box(
-                    Modifier.width(cardWidth).aspectRatio(16f / 9f)
-                        .pressGraphics(press)
-                        .pressable(press, label = "剧照 ${i + 1}", onClick = { onOpen(i) })
-                        .background(colors.inkWell)
-                        .testTag("still-$i"),
-                ) {
-                    CoverImage(s.thumb, Modifier.fillMaxSize())
+        val scroll = rememberScrollState()
+        Box(Modifier.padding(top = if (header) 16.dp else 0.dp).fillMaxWidth()) {
+            Row(Modifier.horizontalScroll(scroll).padding(horizontal = margin), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                stills.forEachIndexed { i, s ->
+                    val press = rememberPressState()
+                    Box(
+                        Modifier.width(cardWidth).aspectRatio(16f / 9f)
+                            .pressGraphics(press)
+                            .pressable(press, label = "剧照 ${i + 1}", onClick = { onOpen(i) })
+                            .background(colors.inkWell)
+                            .testTag("still-$i"),
+                    ) {
+                        CoverImage(s.thumb, Modifier.fillMaxSize())
+                    }
                 }
+            }
+            if (arrows) {
+                val page = with(androidx.compose.ui.platform.LocalDensity.current) { (cardWidth + 10.dp).toPx() * 3 }
+                ScrollArrows(scroll, page, top = cardWidth * (9f / 16f) / 2 - cardWidth * 0.09f, inset = margin / 2, size = cardWidth * 0.18f, tag = "d-stills")
             }
         }
     }

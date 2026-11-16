@@ -89,7 +89,7 @@ data class Favs(val items: List<Title>) {
  * 人物另取一次（收藏的人物也是条目）——服务器不支持这个查询就当没有，不让整页失败。
  */
 suspend fun loadFavs(client: EmbyClient, sortKey: String): Favs {
-    val opts = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "ProductionYear", "ChildCount"))
+    val opts = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "ProductionYear", "ChildCount", "CommunityRating"))
     val main = client.getFavorites(sortKey, 300, opts).items.map { client.titleOf(it) }
     val people = try {
         client.getItems(LibraryQuery(status = listOf("IsFavorite"), includeItemTypes = listOf("Person"), recursive = true, limit = 100), opts).items.map { client.titleOf(it) }

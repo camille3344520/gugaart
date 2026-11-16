@@ -1,5 +1,8 @@
 package com.gugaart.ui.desktop.detail
 
+import com.gugaart.ui.player.formatBadges
+import com.gugaart.ui.player.FormatBadgeRow
+import com.gugaart.ui.player.DeviceAv
 import com.gugaart.ui.desktop.deskFocusRing
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -187,8 +190,12 @@ fun DesktopMovie(movie: Title, today: Today) {
             kicker = (listOf(if (movie.kind == Kind.Episode) "单集" else "电影") + listOfNotNull(movie.genres.take(3).joinToString(" / ").takeIf { it.isNotEmpty() }, movie.year?.toString(), movie.runtimeSec?.let { Rules.minutes(it) })).joinToString(" · "),
             ratingNote = ratingNote(movie),
             startPad = posterW + gap,
-            under = movie.lead?.takeIf { it.length <= 40 && !movie.overview.startsWith(it) }?.let { lead ->
-                { BasicText("「$lead」", Modifier.padding(bottom = Guga.rem(1.6f)).testTag("d-tagline"), style = Guga.song(rsp(1.8f), lineHeight = rsp(3.06f)), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            under = {
+                movie.lead?.takeIf { it.length <= 40 && !movie.overview.startsWith(it) }?.let { lead ->
+                    BasicText("「$lead」", Modifier.padding(bottom = Guga.rem(1.6f)).testTag("d-tagline"), style = Guga.song(rsp(1.8f), lineHeight = rsp(3.06f)), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                // 片源的效果徽章（跟着选中的版本 / 音轨走；用户 2026-11-16：「影片详情页也可以打上对应的图标」）
+                FormatBadgeRow(formatBadges(source, audios.getOrNull(audio)?.index, DeviceAv.caps), Guga.rem(6f).value / 44f, Modifier.padding(bottom = Guga.rem(1.6f)), notes = false)
             },
         )
         Row(Modifier.padding(horizontal = m).padding(top = Guga.rem(2.4f)).fillMaxWidth()) {

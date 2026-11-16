@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- DLNA 投屏：找电视时拿 Wi-Fi 组播锁（有的手机不拿收不到电视的回应） -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- 应用内更新：下载完调起系统安装器（PackageInstaller），用户确认后覆盖安装 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 电视：不要求触摸屏；leanback 可选，同一个包也能装在手机 / 模拟器上 -->

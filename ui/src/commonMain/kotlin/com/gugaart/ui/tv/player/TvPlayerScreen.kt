@@ -229,6 +229,8 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     val playing = snap.phase == PlayPhase.Ready && !snap.paused
     val position = clock.positionMs
     val duration = clock.durationMs.takeIf { it > 0 } ?: snap.resolved?.durationMs?.toDouble() ?: 0.0
+    // 网速：一直在采样，控件一出来就有数（NetSpeed.kt）
+    val speed = com.gugaart.ui.player.rememberNetSpeed(play.controller)
     val snapNow by rememberUpdatedState(snap)
     val durationNow by rememberUpdatedState(duration)
 
@@ -613,7 +615,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                     Picture(play, snap, danmaku, slots, Modifier.fillMaxSize(), dim, danmakuTop = if (showOsd) 170.dp else 0.dp, duration = duration)
                     if (showBuffer && !seekShown) TvBuffer(play, snap)
                     if (showOsd) {
-                        TvPlayerTop(snap, art, position, duration, clock.rate, com.gugaart.ui.player.subtitleBadgeOf(play, snap))
+                        TvPlayerTop(snap, art, position, duration, clock.rate, com.gugaart.ui.player.subtitleBadgeOf(play, snap), speed)
                         // 底部暗角 + 进度条 + 两排键
                         Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(300.dp).background(Brush.verticalGradient(0f to Color.Transparent, 0.55f to TvPlayerSpec.DARK.copy(alpha = 0.75f), 1f to TvPlayerSpec.DARK.copy(alpha = 0.95f))))
                         TvGroup("bar", listOf("osd-bar"))
@@ -692,13 +694,15 @@ private fun Picture(play: PlaySession, snap: PlayerSnapshot, danmaku: PlayerDanm
             dm(DanmakuHost(snap.itemId, snap.item, controller.presentationClock, holding, render.enabled, dur, UiMode.Tv), Modifier.matchParentSize().padding(top = danmakuTop))
         }
         if (dim > 0f) Box(Modifier.matchParentSize().drawBehind { drawRect(paper.copy(alpha = dim)) })
+        // 开播那几秒：片源的效果（杜比视界 / HDR10 / 杜比全景声…），在顶栏下面
+        com.gugaart.ui.player.FormatFlash(snap, 1.6f, Modifier.align(Alignment.TopStart).padding(start = 96.dp, top = 200.dp))
     }
 }
 
 /** 顶栏（只在控件显示时）：左 片名 logo + 集名 + 规格；右 她的一格（**只有暂停时**坐进来）+ 时钟 + 预计几点播完。没有返回按钮。 */
 @OptIn(ExperimentalTime::class)
 @Composable
-private fun BoxScope.TvPlayerTop(snap: PlayerSnapshot, art: Art, position: Double, duration: Double, rate: Double, subtitle: String? = null) {
+private fun BoxScope.TvPlayerTop(snap: PlayerSnapshot, art: Art, position: Double, duration: Double, rate: Double, subtitle: String? = null, speed: String? = null) {
     val colors = Guga.colors
     val preset = LocalPreset.current
     val now = LocalTvPlayerClock.current ?: remember(position.toLong() / 30_000) {
@@ -737,6 +741,8 @@ private fun BoxScope.TvPlayerTop(snap: PlayerSnapshot, art: Art, position: Doubl
         Column(horizontalAlignment = Alignment.End) {
             BasicText("${now.first}:${if (now.second < 10) "0" else ""}${now.second}", style = Guga.numeral(36.sp), maxLines = 1)
             if (duration > 0) BasicText("预计 ${endClock(now.first, now.second, duration - position, rate)} 播完", style = Guga.song(20.sp, color = colors.dim), maxLines = 1)
+            // 网速（用户 2026-11-17：「调出菜单，能够自动显示当前的网络速度」）
+            speed?.let { BasicText("网速 $it", Modifier.testTag("tv-player-speed"), style = Guga.song(22.sp, color = colors.ink), maxLines = 1) }
             // 字幕是怎么选来的（「字幕 简中 · 自动」）
             subtitle?.let { BasicText(it, style = Guga.song(20.sp, color = colors.dim), maxLines = 1) }
         }

@@ -1,5 +1,6 @@
 package com.gugaart.ui
 
+import com.gugaart.ui.components.rememberPageStates
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
@@ -339,7 +340,9 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                                             }
                                         }
                                     }
-                                    if (!homeShown) when (pageRoute) {
+                                    // 返回栈上的每一页记住自己的滚动位置：片库进详情再返回，回到进去的那一屏（PageStates）
+                                    val pages = rememberPageStates(graph.nav)
+                                    if (!homeShown) pages.Page(graph.nav, if (pageRoute == Route.Home) tab.ordinal else 7) { when (pageRoute) {
                                         Route.Home -> when (tab) {
                                             PhoneTab.Home -> Unit
                                             PhoneTab.Library -> WallScreen(null)
@@ -356,7 +359,7 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                                         Route.Discover -> DiscoverScreen(today)
                                         Route.Servers, is Route.Login -> LoginScreen(today)
                                         else -> ComingPage(today, "这一页")
-                                    }
+                                    } }
                                 }
                             }
                         }
