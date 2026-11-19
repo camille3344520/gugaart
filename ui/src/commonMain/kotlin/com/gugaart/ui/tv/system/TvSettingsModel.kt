@@ -103,6 +103,9 @@ class TvInfo(override val id: String, override val label: String, val value: Str
 /** 一个动作（检查更新、切换账号、恢复默认）：确定 = 执行。[confirm]：要再按一次确定才执行（恢复默认、退出登录）。 */
 class TvAction(override val id: String, override val label: String, override val note: String?, val value: String, val confirm: String? = null, val run: () -> Unit) : TvSetting
 
+/** 一份只读的清单（开源许可）：确定 = 右边页边出来一列，上下翻看，返回 / 左收起。 */
+class TvPanel(override val id: String, override val label: String, override val note: String?, val value: String) : TvSetting
+
 /**
  * 要打字的一项：确定 = 换成遥控器全键盘那一屏，「保存」写回、返回不改。[secret]：密钥（弹幕服务器地址里带令牌、TMDB 令牌）——
  * 行里只写「已配置 / 未设置」，键盘那一屏默认打码，按「显示」才是明文。[value] = 现在存着的字。
@@ -133,7 +136,7 @@ class TvOrder(
 ) : TvSetting
 
 /** 这一行接不接焦点。 */
-val TvSetting.focusable: Boolean get() = this is TvToggle || this is TvChoice || this is TvAction || this is TvText || this is TvOrder
+val TvSetting.focusable: Boolean get() = this is TvToggle || this is TvChoice || this is TvAction || this is TvText || this is TvOrder || this is TvPanel
 
 /** 拿起的那一项往上 / 往下挪一格之后的顺序（到头不动）。纯函数，有单测。 */
 fun tvMoved(order: List<String>, held: String, down: Boolean): List<String> {
@@ -363,6 +366,10 @@ fun tvSettingRows(
         if (g.update.enabled) TvAction("about-check", "检查更新", g.update.status.value.lastResult.ifEmpty { "还没有检查过" }, "检查") { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) } else TvInfo("about-check", "检查更新", "未开启", "这一版不检查更新"),
         // 不自动下载、不自动安装（用户 2026-11-15）：没有「自动下载更新」开关了
         TvInfo("channel", "更新通道", g.update.channelLabel),
+        // 随包的第三方组件和许可证（D-lead-41；和手机 / 电脑同一份 OpenSourceLicenses）。排在「这台设备」前面：
+        // 右页一屏只排得下 6 行，能接焦点的两行（检查更新、开源许可）要隔得近，焦点往下才走得到（windowStart 的 next）
+        TvHead("许可", "LICENSES"),
+        TvPanel(TV_LICENSES, "开源许可", "本应用按 GPL-3.0 分发 · 第三方组件和它们的许可证", "查看"),
         TvHead("这台设备", "DEVICE"),
         TvInfo("version", "版本", g.deps.appVersion),
         TvInfo("platform", "平台", g.deps.platformLabel),
@@ -371,6 +378,9 @@ fun tvSettingRows(
         TvInfo("secure", "令牌存储", g.deps.secureMode()),
     )
 }
+
+/** 「开源许可」那一行的 id（也是页边那一列的 id：路由 `Route.Settings("licenses")` 直接打开它）。 */
+const val TV_LICENSES = "about-licenses"
 
 /**
  * 电视上的弹幕服务器清单（多个弹幕服务器：播放时同时去匹配，谁先匹配上用谁）：每台一行（键盘那一屏改；存成空 = 去掉这一台），

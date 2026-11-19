@@ -179,7 +179,7 @@ fun TvBackdrop(art: Art, deep: Boolean, modifier: Modifier = Modifier, sided: Bo
 fun TvRunHead(english: String, caption: String?, today: Today, modifier: Modifier = Modifier, badges: List<com.gugaart.ui.player.FormatBadge> = emptyList()) {
     val colors = Guga.colors
     // 右上角（用户 2026-11-17：「右上角的 剧照|主视觉 时间 太小了，看不清。把 4k hdr那些放到右上角会不会好点」）：
-    // 有片源格式就放徽章（1.5 倍，电视放不了的变灰），没有才写说明；说明 22 → 28，时间 27 → 34
+    // 有片源格式就放徽章（1.5 倍；不看设备能力，照常亮），没有才写说明；说明 22 → 28，时间 27 → 34
     Row(
         modifier.fillMaxWidth().padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = TvSpec.TOP).heightIn(min = 52.dp).testTag("tv-run-head"),
         verticalAlignment = Alignment.CenterVertically,

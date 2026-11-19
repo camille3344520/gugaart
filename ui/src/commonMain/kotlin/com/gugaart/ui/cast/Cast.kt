@@ -54,7 +54,7 @@ object Cast {
         } finally {
             searching = false
         }
-        if (devices.isEmpty()) message = "没找到能投的电视：电视和这台设备要连同一个网络，电视上要打开「投屏 / DLNA」"
+        if (devices.isEmpty()) message = "没找到能投的电视：电视和这台设备要连同一个网络，电视上要打开「投屏 / DLNA」" + (runCatching { h.emptyHint() }.getOrNull() ?: "")
     }
 
     /** 投到 [device]：本机暂停，电视从本机现在的位置接着放。 */

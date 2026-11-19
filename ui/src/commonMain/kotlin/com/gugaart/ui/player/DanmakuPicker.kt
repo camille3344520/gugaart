@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import com.gugaart.ui.components.PrimaryButton
 import com.gugaart.ui.components.SheetSpec
 import com.gugaart.ui.components.TextLink
+import com.gugaart.ui.components.typingTarget
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.player.PlayerDanmaku
 import com.gugugaga.app.ui.LocalGraph
@@ -278,7 +279,7 @@ private fun BoxScope.DanmakuPickerDrawer(d: PlayerDanmaku, width: Dp, onClose: (
                         BasicTextField(
                             search.query,
                             { search.query = it },
-                            Modifier.fillMaxWidth().testTag("dm-search"),
+                            Modifier.fillMaxWidth().testTag("dm-search").typingTarget(),
                             textStyle = Guga.song(15.sp, color = colors.ink),
                             singleLine = true,
                             cursorBrush = SolidColor(colors.spot),

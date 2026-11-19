@@ -25,6 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.DisposableEffect
+import com.gugugaga.app.ui.LocalGraph
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +53,20 @@ object FieldSpec {
     val TEXT_BIG = 30.sp
     /** 下划线：平时米白 2 dp，出错朱红。 */
     val UNDERLINE = 2.dp
+}
+
+/**
+ * 输入框焦点报给上游（`AppGraph.typingFocusChanged` → `isTyping`）：聚焦期间单键快捷键（`/`、字母）stand down，
+ * 只有 ⌘/Ctrl 组合键还生效（主理人实测：设置里填弹幕服务器地址打「/」会跳搜索）。离开组合时若还聚焦要减回去，计数不泄漏。
+ */
+fun Modifier.typingTarget(): Modifier = composed {
+    val graph = LocalGraph.current
+    var focused by remember { mutableStateOf(false) }
+    DisposableEffect(graph) { onDispose { if (focused) graph.typingFocusChanged(false) } }
+    onFocusChanged {
+        focused = it.isFocused
+        graph.typingFocusChanged(it.isFocused)
+    }
 }
 
 /**
@@ -87,7 +105,7 @@ fun PaperField(
                 BasicTextField(
                     value,
                     onChange,
-                    Modifier.fillMaxWidth().testTag(tag).semantics { contentDescription = label },
+                    Modifier.fillMaxWidth().testTag(tag).typingTarget().semantics { contentDescription = label },
                     enabled = enabled,
                     textStyle = Guga.song(size, FontWeight.Black, if (enabled) colors.ink else colors.dim, letterSpacing = if (masked) 0.4.em else TextUnit.Unspecified),
                     singleLine = true,

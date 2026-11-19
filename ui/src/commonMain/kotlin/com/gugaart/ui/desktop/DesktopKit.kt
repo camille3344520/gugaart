@@ -51,6 +51,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -188,15 +191,28 @@ fun Modifier.hover(state: HoverState): Modifier = pointerInput(state) {
     }
 }
 
+/**
+ * 右键按下：真的右键（含触控板的双指点按）；Mac 宿主（⌘ 键位）上 ⌃ 点按也算右键——系统惯例（`design/macos/notes.md` §1 第 14 条、
+ * 对齐清单 A01）。AWT 把 ⌃ 点按报成「主键 + Ctrl」，不是副键，所以要单独认；Windows 的 Ctrl + 点击不变。
+ */
+internal fun PointerEvent.isContextPress(ctrlClickIsContext: Boolean): Boolean =
+    type == PointerEventType.Press &&
+        (buttons.isSecondaryPressed || (ctrlClickIsContext && buttons.isPrimaryPressed && keyboardModifiers.isCtrlPressed))
+
+/** Mac 宿主：⌃ 点按 = 右键（[isContextPress]）。 */
+@Composable
+internal fun ctrlClickIsContext(): Boolean = LocalDesktopHost.current.modifier == ModifierGlyph.Cmd
+
 /** 右键：回调拿到鼠标在窗口里的位置（px），直接交给 [DesktopContextMenu.open]。 */
 fun Modifier.onRightClick(onClick: (Offset) -> Unit): Modifier = composed {
     var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val cb by rememberUpdatedState(onClick)
+    val ctrlCtx by rememberUpdatedState(ctrlClickIsContext())
     onGloballyPositioned { coords = it }.pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) {
                 val e = awaitPointerEvent()
-                if (e.type == PointerEventType.Press && e.buttons.isSecondaryPressed) {
+                if (e.isContextPress(ctrlCtx)) {
                     val ch = e.changes.firstOrNull() ?: continue
                     ch.consume()
                     cb(coords?.takeIf { it.isAttached }?.localToRoot(ch.position) ?: ch.position)
@@ -272,7 +288,7 @@ object DesktopKeys {
 
     val target: Title? get() = hovered ?: pageTarget
 
-    fun handle(e: KeyEvent, graph: AppGraph, nav: WideNav, chrome: PageChrome): Boolean {
+    fun handle(e: KeyEvent, graph: AppGraph, nav: WideNav, chrome: PageChrome, modifier: ModifierGlyph = ModifierGlyph.Ctrl, idle: com.gugaart.ui.idle.IdleClock? = null): Boolean {
         // Esc（和根上的「返回」一样在抬起时处理）：先关我们的菜单，再收页面自己的面板（[onEscape]）；都没有就不消费，交回根上的「返回」
         if (e.key == Key.Escape) {
             if (e.type != KeyEventType.KeyUp) return false
@@ -287,37 +303,36 @@ object DesktopKeys {
         if (e.type != KeyEventType.KeyDown) return false
         val ctrl = e.isCtrlPressed || e.isMetaPressed
         if (e.isAltPressed) return false
-        if (ctrl) return when (e.key) {
-            Key.K -> {
-                openSearch(graph)
-                true
+        if (ctrl) {
+            val c = when (e.key) {
+                Key.K -> DesktopCommand.Search
+                Key.Comma -> DesktopCommand.Settings
+                Key.F -> DesktopCommand.Filter
+                else -> null
             }
-            Key.Comma -> {
-                if (graph.nav.route !is Route.Settings) graph.nav.navigate(Route.Settings())
-                true
+            if (c != null) return DesktopCommands.run(c, graph, nav, chrome, idle)
+            // macOS 惯例键只在 modifier == Cmd 时认（P-mac-1 已定）；Windows 不变
+            if (modifier == ModifierGlyph.Cmd && e.isMetaPressed) {
+                val c2 = when (e.key) {
+                    Key.R -> DesktopCommand.Reprint
+                    Key.LeftBracket -> DesktopCommand.Back
+                    Key.One -> DesktopCommand.GoHome
+                    Key.Two -> DesktopCommand.GoDiscover
+                    Key.Three -> DesktopCommand.GoLibs
+                    Key.Four -> DesktopCommand.GoColls
+                    Key.Five -> DesktopCommand.GoMe
+                    else -> null
+                }
+                if (c2 != null) return DesktopCommands.run(c2, graph, nav, chrome, idle)
             }
-            Key.F -> onFilter?.invoke() ?: false
-            else -> false
+            return false
         }
-        if (e.key == Key.F5) {
-            nav.onReprint?.invoke()
-            return nav.onReprint != null
-        }
+        if (e.key == Key.F5) return DesktopCommands.run(DesktopCommand.Reprint, graph, nav, chrome, idle)
         if (typing || graph.isTyping) return false
         return when (e.key) {
-            Key.Slash -> {
-                openSearch(graph)
-                true
-            }
-            Key.V -> target?.let { t ->
-                val id = if (t.kind == Kind.Episode) t.seriesId ?: t.id else t.id
-                graph.toggleFavorite(chrome, id, chrome.isFavorite(id, t.favorite && t.kind != Kind.Episode))
-                true
-            } ?: false
-            Key.W -> target?.let { t ->
-                graph.togglePlayed(chrome, t.id, chrome.isPlayed(t.id, t.played))
-                true
-            } ?: false
+            Key.Slash -> DesktopCommands.run(DesktopCommand.Search, graph, nav, chrome, idle)
+            Key.V -> DesktopCommands.run(DesktopCommand.Favorite, graph, nav, chrome, idle)
+            Key.W -> DesktopCommands.run(DesktopCommand.Played, graph, nav, chrome, idle)
             Key.DirectionLeft -> onArrow?.invoke(-1) ?: false
             Key.DirectionRight -> onArrow?.invoke(1) ?: false
             Key.Enter, Key.NumPadEnter -> onEnter?.invoke() ?: false
@@ -336,7 +351,9 @@ fun Modifier.desktopKeys(): Modifier = composed {
     val graph = LocalGraph.current
     val nav = LocalWideNav.current
     val chrome = LocalChrome.current
-    onKeyEvent { DesktopKeys.handle(it, graph, nav, chrome) }
+    val host = LocalDesktopHost.current
+    val idle = com.gugaart.ui.idle.LocalIdleClock.current
+    onKeyEvent { DesktopKeys.handle(it, graph, nav, chrome, host.modifier, idle) }
 }
 
 /* ------------------------------------------------------------------ 纸面小件 */

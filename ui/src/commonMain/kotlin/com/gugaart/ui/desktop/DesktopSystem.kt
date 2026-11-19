@@ -78,6 +78,8 @@ import com.gugaart.ui.screens.settings.CacheSection
 import com.gugaart.ui.screens.settings.DanmakuSection
 import com.gugaart.ui.screens.settings.GugaSection
 import com.gugaart.ui.screens.settings.LayoutSection
+import com.gugaart.ui.screens.settings.LicensesBody
+import com.gugaart.ui.screens.settings.OpenSourceLicenses
 import com.gugaart.ui.screens.settings.LookSection
 import com.gugaart.ui.screens.settings.PlaybackSection
 import com.gugaart.ui.screens.settings.StrmSection
@@ -317,7 +319,9 @@ fun DesktopSettingsScreen(section: String?, today: Today) {
         "about" -> "about"
         else -> null
     }
-    val sec = GugaSection.of(wanted) ?: GugaSection.Look
+    // 「开源许可」是关于下面的一页：左栏亮着「关于」，右栏换成许可清单
+    val licenses = wanted == OpenSourceLicenses.KEY
+    val sec = if (licenses) GugaSection.About else GugaSection.of(wanted) ?: GugaSection.Look
     val settings by g.settings.state.collectAsState()
     val prefs by rememberGugaStore().prefs.collectAsState()
     val session by g.session.session.collectAsState()
@@ -325,7 +329,7 @@ fun DesktopSettingsScreen(section: String?, today: Today) {
     // 截图预置 `dd`：首选引擎的选择器推开着（纸面语言，推开不盖）
     val pageState = LocalPageState.current ?: "pick=engine".takeIf { preset.state == "dd" }
     val pick = pageStateOf(pageState, "pick")
-    DesktopPage(Modifier.testTag("desktop-settings-${sec.key}")) {
+    DesktopPage(Modifier.testTag(if (licenses) "desktop-settings-licenses" else "desktop-settings-${sec.key}")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = Guga.dimens.margin)) {
             Column(Modifier.width(Guga.rem(if (dWidth() == DWidth.Sm) 22f else DesktopSystemSpec.SETTINGS_NAV)).testTag("settings-nav")) {
                 Rule(strong = true)
@@ -335,7 +339,7 @@ fun DesktopSettingsScreen(section: String?, today: Today) {
                     val press = rememberPressState()
                     val ink = if (on || hover.value) colors.spot else colors.ink
                     Row(
-                        Modifier.fillMaxWidth().hover(hover).deskFocusRing(press).pressable(press, label = s.title, onClick = { if (!on) g.nav.replace(Route.Settings(s.key)) }).padding(vertical = Guga.rem(1.5f)).testTag(if (on) "settings-nav-on" else "settings-nav-row"),
+                        Modifier.fillMaxWidth().hover(hover).deskFocusRing(press).pressable(press, label = s.title, onClick = { if (!on || licenses) g.nav.replace(Route.Settings(s.key)) }).padding(vertical = Guga.rem(1.5f)).testTag(if (on) "settings-nav-on" else "settings-nav-row"),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         BasicText(s.number, Modifier.width(Guga.rem(3.6f)), style = Guga.numeral(rsp(1.3f), if (on) colors.spot else colors.faint), maxLines = 1)
@@ -344,16 +348,16 @@ fun DesktopSettingsScreen(section: String?, today: Today) {
                     }
                     Rule()
                 }
-                BasicText("Ctrl , 打开设置 · Esc 返回", Modifier.padding(top = Guga.rem(1.6f)), style = Guga.note(rsp(1.1f), colors.faint), maxLines = 1)
+                BasicText("${DesktopCommand.Settings.hint(LocalDesktopHost.current.modifier) ?: "Ctrl ,"} 打开设置 · Esc 返回", Modifier.padding(top = Guga.rem(1.6f)), style = Guga.note(rsp(1.1f), colors.faint), maxLines = 1)
             }
             Spacer(Modifier.width(Guga.rem(if (dWidth() == DWidth.Sm) 3.2f else DesktopSystemSpec.SETTINGS_GAP)))
             Column(Modifier.weight(1f).testTag("settings-body")) {
                 Row(verticalAlignment = Alignment.Bottom) {
-                    BasicText(sec.title, style = Guga.song(rsp(5.2f), FontWeight.Black, lineHeight = rsp(6f), letterSpacing = 0.06.em), maxLines = 1)
-                    BasicText(sec.english, Modifier.padding(start = Guga.rem(1.6f), bottom = Guga.rem(1.2f)), style = Guga.numeral(rsp(1.15f), colors.spot, letterSpacing = 0.24.em), maxLines = 1)
+                    BasicText(if (licenses) "开源许可" else sec.title, style = Guga.song(rsp(5.2f), FontWeight.Black, lineHeight = rsp(6f), letterSpacing = 0.06.em), maxLines = 1)
+                    BasicText(if (licenses) "LICENSES" else sec.english, Modifier.padding(start = Guga.rem(1.6f), bottom = Guga.rem(1.2f)), style = Guga.numeral(rsp(1.15f), colors.spot, letterSpacing = 0.24.em), maxLines = 1)
                 }
-                BasicText(sectionSummary(sec, facts), Modifier.padding(top = Guga.rem(0.6f), bottom = Guga.rem(2.4f)), style = Guga.song(rsp(1.4f), color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                CompositionLocalProvider(LocalPageState provides pageState) {
+                BasicText(if (licenses) OpenSourceLicenses.INTRO else sectionSummary(sec, facts), Modifier.padding(top = Guga.rem(0.6f), bottom = Guga.rem(2.4f)), style = Guga.song(rsp(1.4f), color = colors.dim), maxLines = if (licenses) 2 else 1, overflow = TextOverflow.Ellipsis)
+                if (licenses) LicensesBody() else CompositionLocalProvider(LocalPageState provides pageState) {
                     when (sec) {
                         GugaSection.Look -> LookSection(pick)
                         GugaSection.Layout -> LayoutSection()
@@ -430,7 +434,25 @@ private fun ShortcutTable(modifier: Modifier = Modifier) {
                 Rule()
             }
         }
-        BasicText("别处：Ctrl K 搜索 · Ctrl , 设置 · 详情页 V 收藏 / W 标记已看 / [ ] 换季 / Enter 播放", Modifier.padding(top = Guga.rem(1.4f)), style = Guga.note(rsp(1.15f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val mod = LocalDesktopHost.current.modifier
+        BasicText(
+            "别处：${DesktopCommand.Search.hint(mod) ?: "Ctrl K"} 搜索 · ${DesktopCommand.Settings.hint(mod) ?: "Ctrl ,"} 设置 · ${DesktopCommand.Filter.hint(mod) ?: "Ctrl F"} 筛选 · 详情页 V 收藏 / W 标记已看 / [ ] 换季 / Enter 播放",
+            Modifier.padding(top = Guga.rem(1.4f)), style = Guga.note(rsp(1.15f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        // macOS：多一张 ⌘ 键位表（内容 = cmdHint 非空的命令；M2-3）
+        if (mod == ModifierGlyph.Cmd) {
+            val cmdRows = remember { DesktopCommand.entries.filter { it.cmdHint != null }.map { Shortcut(it.cmdHint!!, it.label) } }
+            DSec(null, "⌘ 键位（macOS）", "COMMAND", trailing = "${cmdRows.size} 组")
+            DGrid(cmdRows, 2, gapX = Guga.dimens.gutter * 2) { r ->
+                Column {
+                    Row(Modifier.fillMaxWidth().padding(vertical = Guga.rem(1.1f)), verticalAlignment = Alignment.CenterVertically) {
+                        BasicText(r.does, Modifier.weight(1f), style = Guga.song(rsp(1.4f), FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        DKbd(r.keys)
+                    }
+                    Rule()
+                }
+            }
+        }
     }
 }
 

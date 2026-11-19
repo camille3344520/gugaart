@@ -68,9 +68,26 @@ data class GugaDimens(
     val minTarget: Dp,
     /** 电脑的 1 rem（dp）：1440 宽 = 10，随窗口宽在 9.4–13 之间变；手机 / 电视恒为 10（不缩放）。电脑的版式数一律写 `Guga.rem(x)`。 */
     val rem: Dp = 10.dp,
+    /** 手机：标签栏离底（`max(18, home 条)`，D-lead-25）。安卓 = 18；iOS 有 home 条时 34。 */
+    val bottomBar: Dp = 18.dp,
+    /** 手机横屏：控件让出的左右安全区（iOS 的岛那一侧 62；安卓 = 0）。画面本身不让（铺满）。 */
+    val sideInset: Dp = 0.dp,
 ) {
+    /** 内容末尾比安卓多留的那一截（标签栏抬高了多少）：安卓 = 0，所以安卓的留白一个不变。 */
+    val tabLift: Dp get() = bottomBar - 18.dp
+
     companion object {
         val Phone = GugaDimens(UiMode.Phone, margin = 24.dp, gutter = 16.dp, mastheadHeight = 44.dp, ruleStrong = 1.dp, ruleHair = 1.dp, statusBar = 46.dp, sectionGap = 36.dp, minTarget = 48.dp)
+
+        /**
+         * 手机按安全区算（M4-1，ADR 0005 §2.2）：状态栏占位 = `max(46, 上)`、标签栏离底 = `max(18, 下)`、横屏左右 = `max(左, 右)`。
+         * 默认的 [PhoneInsets]（安卓）算出来和 [Phone] 逐字段相同。
+         */
+        fun phone(insets: PhoneInsets): GugaDimens = Phone.copy(
+            statusBar = maxOf(46.dp, insets.top),
+            bottomBar = maxOf(18.dp, insets.bottom),
+            sideInset = maxOf(insets.left, insets.right),
+        )
         val Tv = GugaDimens(UiMode.Tv, margin = 136.dp, gutter = 32.dp, mastheadHeight = 64.dp, ruleStrong = 2.dp, ruleHair = 1.dp, statusBar = 0.dp, sectionGap = 48.dp, minTarget = 64.dp)
 
         /** 电脑：`rem = clamp(9.4, 窗口宽 / 144, 13)`；页边 1100 → 32、1440 → 49、3168 → 136（两段线性）。 */
@@ -83,8 +100,8 @@ data class GugaDimens(
             return GugaDimens(UiMode.Desktop, margin = margin.dp, gutter = (2.4f * rem).dp, mastheadHeight = 44.dp, ruleStrong = 1.dp, ruleHair = 1.dp, statusBar = 0.dp, sectionGap = (5.6f * rem).dp, minTarget = 32.dp, rem = rem.dp)
         }
 
-        fun of(uiMode: UiMode, windowWidthDp: Float): GugaDimens = when (uiMode) {
-            UiMode.Phone -> Phone
+        fun of(uiMode: UiMode, windowWidthDp: Float, insets: PhoneInsets = PhoneInsets()): GugaDimens = when (uiMode) {
+            UiMode.Phone -> phone(insets)
             UiMode.Tv -> Tv
             UiMode.Desktop -> desktop(windowWidthDp)
         }

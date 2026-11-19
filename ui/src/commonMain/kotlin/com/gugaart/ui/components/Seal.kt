@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.theme.GugaFonts
+import com.gugaart.ui.theme.feel
 import com.gugugaga.ds.physics.LocalMotionPrefs
 
 /** 落章的参数（docs/design-language.md §8）：420 ms，`cubic-bezier(.2, 1.5, .4, 1)`；2.6 倍 +8° → 0.9 倍 −9°（55 %）→ 1 倍 −7°。 */
@@ -83,9 +84,12 @@ fun SealSlot(sealed: Boolean, modifier: Modifier = Modifier, size: Dp = 40.dp) {
     // 0 = 没有章，1 = 章盖好了；首次组合直接是终值（进页面时已经收藏的不重放动画）
     val t = remember { Animatable(if (sealed) 1f else 0f) }
     val fade = remember { Animatable(if (sealed) 1f else 0f) }
+    val host = com.gugaart.ui.theme.LocalPhoneHost.current
     LaunchedEffect(sealed) {
         if (sealed) {
             if (t.value >= 1f && fade.value >= 1f) return@LaunchedEffect
+            // 触感（M4-3）：落章 = 成功；擦章 = 轻。进页面时已经收藏的不响（上面已经返回了）
+            host.feel(com.gugaart.ui.theme.HapticStyle.Success)
             fade.snapTo(1f)
             if (reduced) t.snapTo(1f) else {
                 t.snapTo(0f)
@@ -93,6 +97,7 @@ fun SealSlot(sealed: Boolean, modifier: Modifier = Modifier, size: Dp = 40.dp) {
             }
         } else {
             if (fade.value <= 0f) return@LaunchedEffect
+            host.feel(com.gugaart.ui.theme.HapticStyle.Light)
             if (reduced) fade.snapTo(0f) else fade.animateTo(0f, tween(SealMotion.FADE_MS))
             t.snapTo(0f)
         }
@@ -137,9 +142,12 @@ fun ProofTick(checked: Boolean, modifier: Modifier = Modifier, size: Dp = 14.dp,
     val colors = Guga.colors
     val reduced = LocalMotionPrefs.current.reducedMotion
     val t = remember { Animatable(if (checked) 1f else 0f) }
+    val host = com.gugaart.ui.theme.LocalPhoneHost.current
     LaunchedEffect(checked) {
         val target = if (checked) 1f else 0f
         if (t.value == target) return@LaunchedEffect
+        // 触感（M4-3）：打勾 / 擦掉都是轻的一下
+        host.feel(com.gugaart.ui.theme.HapticStyle.Light)
         if (reduced) t.snapTo(target) else t.animateTo(target, tween(if (checked) TickMotion.DRAW_MS else 200, easing = TickMotion.EASE))
     }
     Canvas(modifier.size(size * 1.9f).testTag(if (checked) "tick-on" else "tick-off")) {

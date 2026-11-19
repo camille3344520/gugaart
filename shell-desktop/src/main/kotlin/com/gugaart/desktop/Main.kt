@@ -37,6 +37,7 @@ import java.util.UUID
  * 只在开发运行时有效（Gradle `:shell-desktop:run` 传 `-Dgugaart.dev=true`；打出来的包里没有）：
  *   -Dgugaart.mockAccount=<地址>  Mock Emby 的夹具账号，第一次启动时静默登录（`-Pgugaart.mockAccount=http://127.0.0.1:<端口>`；从不是真实服务器）
  *   --probe=<目录>                「画面让位」实测：见 [ViewportProbe]
+ *   --accept=<场景+场景|all>      macOS 真窗口验收（`--accept-out=<目录>` 放报告和截图）：见 `mac/accept/`、docs/acceptance-mac.md
  *   --engine=mpv|vlc              探针用哪个内核（写进探针自己的数据目录的设置里）
  */
 /**
@@ -44,7 +45,7 @@ import java.util.UUID
  * 对话框在 AWT 事件线程上开（模态），读文件在 IO 线程。
  */
 /** 配置备份的文件那一半（Windows）：系统的保存 / 打开对话框（模态，在 AWT 事件线程上开），读写在 IO 线程。 */
-private fun backupFileHost(): com.gugaart.ui.backup.BackupFileHost {
+internal fun backupFileHost(): com.gugaart.ui.backup.BackupFileHost {
     fun dialog(title: String, mode: Int, name: String?): File? {
         var chosen: File? = null
         java.awt.EventQueue.invokeAndWait {
@@ -75,7 +76,7 @@ private fun backupFileHost(): com.gugaart.ui.backup.BackupFileHost {
     )
 }
 
-private fun fontImportHost(dataDir: File): com.gugaart.ui.data.FontImportHost {
+internal fun fontImportHost(dataDir: File): com.gugaart.ui.data.FontImportHost {
     val dir = File(dataDir, "fonts")
     return com.gugaart.ui.data.FontImportHost(
         pick = {
@@ -122,6 +123,31 @@ fun main(args: Array<String>) {
     val route = opt["route"]?.let(::parseRoute) ?: Route.Home
     val bounds = opt["bounds"]?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.takeIf { it.size == 4 }?.let { Rectangle(it[0], it[1], it[2], it[3]) }
         ?: if (uiMode == UiMode.Phone) Rectangle(60, 60, 905, 412) else null
+    // macOS：一扇 Compose Window（系统标题栏 + 红绿灯），不用 Win32 窗口栈（ADR 0004 §2.2）。Windows 路径一行不动。
+    if (System.getProperty("os.name").startsWith("Mac")) {
+        // M1-6：深色外观 + 应用名，要在任何 AWT / Compose 调用之前设（X06 / X08）
+        com.gugaart.desktop.mac.macSystemProperties().forEach { (k, v) -> System.setProperty(k, v) }
+        com.gugaart.desktop.mac.MacSession.start(
+            com.gugaart.desktop.mac.MacOptions(
+                dataDir = opt["data-dir"]?.let(::File) ?: com.gugaart.desktop.mac.macDataDir(null),
+                route = route,
+                backend = backend,
+                uiMode = uiMode,
+                bounds = bounds,
+                probeDir = opt["probe"]?.takeIf { dev }?.let(::File),
+                probeRounds = opt["probe-rounds"]?.toIntOrNull()?.coerceIn(1, 20) ?: 1,
+                probeExtras = opt["probe-extras"] == "true",
+                probeSearch = opt["probe-search"],
+                probeSecs = opt["probe-secs"]?.toIntOrNull()?.coerceIn(5, 600) ?: 40,
+                probeStrm = opt["probe-strm"]?.takeIf { it in setOf("auto", "direct", "proxy") },
+                // 真窗口验收（开发运行才有；scripts/accept-mac.mjs）：--accept=<场景+场景|all> --accept-out=<目录> [--accept-merge=true]
+                acceptScenarios = opt["accept"]?.takeIf { dev }?.let { com.gugaart.desktop.mac.accept.parseScenarioList(it, com.gugaart.desktop.mac.accept.AcceptScenarios.NAMES) },
+                acceptOut = opt["accept-out"]?.takeIf { dev && opt["accept"] != null }?.let(::File),
+                acceptMerge = opt["accept-merge"] == "true",
+            ),
+        )
+        return
+    }
     // Mock Emby（tools/mock-emby）的夹具账号 demo / demo：只在开发运行时、只对 -Pgugaart.mockAccount 给的那台 Mock 用，从不是真实凭据
     val mock = System.getProperty("gugaart.mockAccount")?.takeIf { dev && Regex("""^https?://[^\s"\\]+$""").matches(it) }
     val debug = if (mock != null) DebugOptions(mockAccount = parseMockAccount("""{"server":"$mock","username":"demo","password":"demo"}""")) else DebugOptions.None

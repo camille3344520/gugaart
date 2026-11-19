@@ -41,12 +41,14 @@ import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
 
 /**
- * `Route.Settings(section)` 的入口（设计稿 `p=settings`）。没有分区 = 目录页（九行）；有 = 那个分区的页。
+ * `Route.Settings(section)` 的入口（设计稿 `p=settings`）。没有分区 = 目录页（九行）；有 = 那个分区的页；`licenses` = 关于下面的「开源许可」。
  * 设置项的键、默认值、取值范围全部是上游的（`app/settings/`，同一份 `gugu.settings.v1`），读写都走上游的 `graph.settings`；
  * 画报自己的四项在 `gugaart.settings.v1`（[GugaSettingsStore]）。这里只重画外观。
  */
 @Composable
 fun SettingsScreen(section: String?) {
+    // 「关于」下面的「开源许可」不是九个分区之一，是单独一页
+    if (section == OpenSourceLicenses.KEY) return LicensesPage()
     val sec = GugaSection.of(section)
     if (sec == null) SettingsIndexPage() else SettingsSectionPage(sec)
 }

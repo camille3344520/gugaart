@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>咕咕嘎嘎 · 咕嘎画报（B1）· macOS 端</title>
+<link rel="stylesheet" href="menu.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0b0a08;color:#EFE6D4;font-family:Georgia,"Noto Serif SC","Source Han Serif SC","Songti SC","SimSun",serif}
+body{display:grid;grid-template-columns:300px 1fr;padding-top:24px}
+/* 顶上一条是 macOS 的菜单栏（系统画的；标题 / 命令 / ⌘ 键是我们定的，能点开） */
+#mbar{position:fixed;top:0;left:0;right:0}
+aside{height:calc(100vh - 24px);overflow-y:auto;padding:26px 22px 40px;border-right:1px solid rgba(239,230,212,.18)}
+aside h1{font-size:24px;font-weight:900;letter-spacing:.3em}aside h1 small{display:block;font-size:12px;font-weight:400;letter-spacing:0;line-height:1.7;color:rgba(239,230,212,.64);margin-top:10px}
+aside h2{font-size:11px;font-style:italic;font-weight:400;letter-spacing:.24em;color:#EA4E30;margin:26px 0 8px;padding-bottom:6px;border-bottom:1px solid #EFE6D4}
+nav#toc a{display:grid;grid-template-columns:30px 1fr auto;padding:8px 0;border-bottom:1px solid rgba(239,230,212,.14);font-size:14.5px;font-weight:700;cursor:pointer;color:inherit;text-decoration:none}
+nav#toc a em{font-style:italic;font-weight:400;color:rgba(239,230,212,.4)}nav#toc a small{font-weight:400;font-size:11px;color:rgba(239,230,212,.4);font-style:italic}
+nav#toc a.on,nav#toc a:hover{color:#EA4E30}
+ul{list-style:none}ul li{font-size:12.5px;line-height:1.7;color:rgba(239,230,212,.64);padding:8px 0;border-bottom:1px solid rgba(239,230,212,.1)}ul li b{display:block;color:#EFE6D4;font-size:13.5px}
+main{height:calc(100vh - 24px);overflow-y:auto;padding:26px 30px 80px}
+figure{margin-bottom:44px}
+figcaption{display:flex;align-items:baseline;gap:14px;margin-bottom:10px}figcaption b{font-size:20px;font-weight:900;letter-spacing:.1em;white-space:nowrap}figcaption span{font-size:12.5px;color:rgba(239,230,212,.6);line-height:1.6}
+/* 每块画板是一扇 macOS 窗口：圆角 + 落在桌面上的影子（窗口外壳，不是内容卡片）；选了「菜单栏 / 刘海屏」时它是整块屏幕 */
+.fit{position:relative;overflow:hidden;border-radius:10px;box-shadow:0 24px 80px rgba(0,0,0,.6),0 0 0 1px rgba(239,230,212,.28);background:#100E0B}
+.fit.disp{border-radius:14px;box-shadow:0 0 0 1px rgba(239,230,212,.2),0 0 0 6px #1a1a1a,0 24px 80px rgba(0,0,0,.7)}
+.fit iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.bar a{font-size:12.5px;padding:5px 10px;box-shadow:inset 0 0 0 1px rgba(239,230,212,.3);cursor:pointer;white-space:nowrap}
+.bar a.on{background:#EFE6D4;color:#141109;font-weight:700}.bar i{font-size:11px;color:rgba(239,230,212,.4);margin:0 6px 0 10px;letter-spacing:.2em}
+.bar a.mac.on{background:#1d1d1f;color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.5)}
+.bar a.open{margin-left:auto;font-style:italic;box-shadow:none;border-bottom:1px solid}
+</style>
+</head>
+<body>
+<div id="mbar"></div>
+<aside>
+  <h1>咕咕嘎嘎<small>咕嘎画报（B1）macOS 端的全部界面。每块画板都是活的窗口：能滚、能点、能拖、能右键，点导航会真的跳到别的界面。报头就是透明标题栏，左端是系统的红绿灯（悬停出符号，失焦变灰）；报头下那一排是液态玻璃引擎实时渲染的。顶上这条菜单栏能点开——菜单的样子是 macOS 画的，命令和 ⌘ 键是我们定的。每块画板下面多一排「macOS」按钮：失焦、系统全屏、菜单栏、刘海屏全屏播放、画中画。需要支持 WebGL2 的 Chromium 内核浏览器。</small></h1>
+  <h2>CONTENTS　界面</h2>
+  <nav id="toc"></nav>
+  <h2>MACOS　和电脑端不一样的</h2>
+  <ul id="plays"></ul>
+</aside>
+<main id="main"></main>
+<script src="../desktop/js/lib.js"></script>
+<script src="../desktop/js/sprite.js"></script>
+<script src="../desktop/js/app.js"></script>
+<script src="../desktop/js/blur.js"></script>
+<script src="../desktop/js/mascot.js"></script>
+<script src="../desktop/js/poses.js"></script>
+<script src="../desktop/js/screens-a.js"></script>
+<script src="../desktop/js/screens-a2.js"></script>
+<script src="../desktop/js/screens-b.js"></script>
+<script src="../desktop/js/screens-c.js"></script>
+<script src="macos-menu.js"></script>
+<script>
+(function () {
+const S = APP.S, ids = Object.keys(S), groups = []; ids.forEach((id) => { let g = groups.find((x) => x.n === S[id].g); if (!g) groups.push(g = { n: S[id].g, ids: [] }); g.ids.push(id); });
+if (S.player && !S.player.states.some((s) => s[0] === 'pip')) S.player.states.push(['pip', '画中画（能力待定）']);
+const PLAYS = [
+  ['菜单栏', '顶上这条：点「咕咕嘎嘎 / 文件 / 编辑 / 显示 / 播放 / 窗口 / 帮助」看每条命令和 ⌘ 键（← → 换菜单，Esc 关）。带「系统」小标的是 macOS 自动加的，我们不写也删不掉；菜单的字体、高亮、圆角全是系统画的。右端的 ▶ 是系统的「正在播放」，封面、片名、集名由我们报上去。'],
+  ['红绿灯', '报头左端三颗：鼠标移上去一起露出 × / − / 全屏符号；点进别的窗口，这一扇的三颗变灰、报头的字变淡（选「失焦」看）。报头是透明标题栏：可拖、双击缩放、VOL. 仍然能点。'],
+  ['⌘ 键', '⌘K 搜索、⌘, 设置、⌘R 付印新刊、⌘[ ⌘] 返回 / 前进、⌘1–5 首页 / 发现 / 片库 / 合集 / 我的、⌘F 海报墙筛选、V 收藏、W 已看。Ctrl 那套也还能按。'],
+  ['触控板', '双指左右滑 = 返回 / 前进（鼠标侧键一样）；首页海报流、横向海报行双指横滑；惯性滚动；首页封面跨页和目录之间仍有吸附。'],
+  ['系统全屏', '绿灯 / ⌃⌘F 进全屏 Space：红绿灯归系统收走，报头留着（它是画报的报头，不只是标题栏）；鼠标推到顶边，菜单栏滑下来盖在报头上（「菜单栏」+「系统全屏」）。'],
+  ['刘海屏全屏播放', '播放器画板选「刘海屏全屏」：顶上 37 pt 是刘海那一条，画面矩形永远不碰它——16:9 的片正好以整块面板为中心、黑边把刘海条吃掉；控件出现时顶栏从刘海条下面开始；字幕、弹幕都在画面里，一个像素不挡。'],
+  ['画中画', '播放器选「画中画」：画面搬进系统的小窗（右下角那块，拖到哪个角都行，谁也盖不住），主窗口留一页纸面说明。这个能力取决于上游在 macOS 上接的内核，标「待定」。'],
+  ['其余照旧', '翻封面、滚轮翻页、悬停海报、盖章、校对勾、右键菜单、换季、筛选、搜索、账号菜单、播放器的十四个状态、输密码时她闭眼——全部和电脑端一样。'],
+];
+const SIZES = { '': [1470, 956, 'MacBook Air 13″ 1470 × 956'], pro: [1512, 982, 'MacBook Pro 14″ 1512 × 982'], xl: [2560, 1440, '外接 27″ 2560 × 1440'], sm: [1100, 720, '最小窗口 1100 × 720'], full: [1512, 982, '全屏 1512 × 982'], narrow: [640, 420, '很窄 640 × 420'] };
+const MAC = (id) => [['', '窗口'], ['blur', '失焦'], ['fs', '系统全屏'], ['menu', '菜单栏'], ['fsmenu', '全屏 + 菜单栏']].concat(
+  id === 'home' ? MacMenu.MENUS.map((m, i) => ['menu:' + i, '菜单 · ' + m.t]) : id === 'player' ? [['notch', '刘海屏全屏'], ['notchmenu', '刘海屏全屏 + 菜单栏'], ['np', '正在播放'], ['menu:4', '菜单 · 播放']] : id === 'wall' ? [['menu:3', '菜单 · 显示']] : []);
+const main = document.getElementById('main'), Q = new URLSearchParams(location.search);
+const macNote = (t) => String(t || '').replace(/Ctrl K/g, '⌘ K').replace(/Ctrl ,/g, '⌘ ,').replace(/Ctrl/g, '⌘');
+document.getElementById('plays').innerHTML = PLAYS.map((p) => `<li><b>${p[0]}</b>${p[1]}</li>`).join('');
+const show = (gn) => {
+  const g = groups.find((x) => x.n === gn) || groups[0];
+  document.getElementById('toc').innerHTML = groups.map((x, i) => `<a data-g="${x.n}" class="${x === g ? 'on' : ''}"><em>${APP.pad(i + 1)}</em>${x.n}<small>${x.ids.reduce((a, id) => a + (S[id].states || [1]).length, 0)} 个状态</small></a>`).join('');
+  main.innerHTML = g.ids.map((id) => { const s = S[id], sz = s.sizes ? (id === 'player' ? ['', 'pro', 'xl', 'sm', 'full', 'narrow'] : ['', 'pro', 'xl', 'sm']) : [''];
+    return `<figure data-id="${id}" data-st="" data-sz="" data-mac=""><figcaption><b>${s.title}</b><span>${macNote(s.note)}</span></figcaption><div class="fit"><iframe loading="lazy"></iframe></div>
+      <div class="bar">${(s.states || [['', '默认']]).map((st, i) => `<a data-st="${st[0]}" class="${i === 0 ? 'on' : ''}">${st[1]}</a>`).join('')}${sz.length > 1 ? '<i>窗口</i>' + sz.map((z, i) => `<a data-sz="${z}" class="${i === 0 ? 'on' : ''}">${SIZES[z][2]}</a>`).join('') : ''}<a class="open" data-open>单独打开 ↗</a></div>
+      <div class="bar"><i>macOS</i>${MAC(id).map((m, i) => `<a data-mac="${m[0]}" class="mac${i === 0 ? ' on' : ''}">${m[1]}</a>`).join('')}</div></figure>`; }).join('');
+  main.querySelectorAll('figure').forEach(load); main.scrollTop = 0;
+};
+const urlOf = (f) => { const m = f.dataset.mac; let q = `p=${f.dataset.id}${f.dataset.st ? '&st=' + f.dataset.st : ''}${f.dataset.sz === 'full' ? '&full=1' : ''}`;
+  if (f.dataset.st === 'pip') q += '&pipwin=1';
+  if (m === 'blur') q += '&blur=1'; else if (m === 'fs') q += '&fs=1'; else if (m === 'menu') q += '&menu=1&annot=1'; else if (m === 'fsmenu') q += '&fs=1&menu=1&annot=1';
+  else if (m.startsWith('menu:')) q += '&menu=1&annot=1&open=' + m.slice(5); else if (m === 'notch') q += '&notch=1'; else if (m === 'notchmenu') q += '&notch=1&menu=1'; else if (m === 'np') q += '&menu=1&np=1';
+  return (/[?&](menu|notch|np|pipwin)=/.test('?' + q) ? 'screen.html?' : 'board.html?') + q; };
+function load(f) { const disp = /notch/.test(f.dataset.mac), [w, h] = disp ? SIZES.pro : SIZES[f.dataset.sz], fit = f.querySelector('.fit'), fr = f.querySelector('iframe'), k = Math.min(1, (main.clientWidth - 60) / w);
+  fit.classList.toggle('disp', disp || /menu|np|pipwin/.test(urlOf(f)));
+  fit.style.width = w * k + 'px'; fit.style.height = h * k + 'px'; fr.width = w; fr.height = h; fr.style.transform = `scale(${k})`; if (fr.dataset.u !== urlOf(f) + w) { fr.dataset.u = urlOf(f) + w; fr.src = urlOf(f); } }
+main.addEventListener('click', (e) => { const a = e.target.closest('a'); if (!a) return; const f = a.closest('figure');
+  if (a.dataset.open !== undefined) { window.open(urlOf(f)); return; }
+  if (a.dataset.st !== undefined) { f.dataset.st = a.dataset.st; f.querySelectorAll('[data-st]').forEach((x) => x.classList.toggle('on', x === a)); }
+  if (a.dataset.sz !== undefined) { f.dataset.sz = a.dataset.sz; f.querySelectorAll('[data-sz]').forEach((x) => x.classList.toggle('on', x === a)); }
+  if (a.dataset.mac !== undefined) { f.dataset.mac = a.dataset.mac; f.querySelectorAll('[data-mac]').forEach((x) => x.classList.toggle('on', x === a)); }
+  load(f); });
+document.getElementById('toc').addEventListener('click', (e) => { const a = e.target.closest('a'); if (a) { history.replaceState(null, '', '?g=' + encodeURIComponent(a.dataset.g)); show(a.dataset.g); } });
+addEventListener('resize', () => main.querySelectorAll('figure').forEach(load));
+show(Q.get('g'));
+// 画廊顶上的菜单栏：和 screen.html 同一个组件；这里没有窗口可以接命令，只用来看
+MacMenu.mount(document.getElementById('mbar'), { annot: true, openTitle: Q.get('open') != null ? +Q.get('open') : null, openNP: !!Q.get('np') });
+let n = 0; const t = setInterval(() => { const fr = main.querySelector('iframe'); try { if (fr && fr.contentDocument && fr.contentDocument.body && fr.contentDocument.body.dataset.ready === '1') { document.body.dataset.ready = '1'; clearInterval(t); } } catch (e) { document.body.dataset.ready = '1'; clearInterval(t); } if (++n > 80) { document.body.dataset.ready = '1'; clearInterval(t); } }, 250);
+})();
+</script>
+</body>
+</html>

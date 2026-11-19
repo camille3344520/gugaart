@@ -70,6 +70,7 @@ import com.gugaart.ui.Today
 import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.EmptyLibraryView
 import com.gugaart.ui.components.ErrorView
+import com.gugaart.ui.components.typingTarget
 import com.gugaart.ui.components.FilterNoneView
 import com.gugaart.ui.components.FullBleed
 import com.gugaart.ui.components.HatchPlate
@@ -415,7 +416,7 @@ private fun DesktopWall(lib: LibraryEntry, today: Today) {
                         // 一次最多取 600 部：库更大时写明墙上先排了多少
                         note = all?.size?.takeIf { total != null && it < total }?.let { "先排出 $it 部" },
                     ) {
-                        Kbd("Ctrl F")
+                        Kbd(DesktopCommand.Filter.hint(LocalDesktopHost.current.modifier) ?: "Ctrl F")
                         DeskChip("筛选", { panel = !panel }, strong = panel || conditions > 0, icon = GuguIcon.SlidersHorizontal, note = conditions.takeIf { it > 0 }?.toString(), height = DeskBrowseSpec.TOOL, tag = "wall-filter-key")
                         DeskChip(sort.label, { sortOpen = !sortOpen }, strong = sortOpen, icon = GuguIcon.ArrowUpDown, note = sortNote(sort), trailingIcon = GuguIcon.ChevronDown, height = DeskBrowseSpec.TOOL, tag = "wall-sort-key")
                         ViewToggle(listView) { listView = it }
@@ -802,6 +803,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                         .fillMaxWidth()
                         .focusRequester(field)
                         .onFocusChanged { DesktopKeys.typing = it.isFocused }
+                        .typingTarget()
                         .onPreviewKeyEvent { e ->
                             if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                             when (e.key) {

@@ -85,6 +85,7 @@ fun PersonPhone(data: PersonData) {
     val colors = Guga.colors
     val p = data.person
     val scroll = rememberScrollState(LocalPreset.current.scroll)
+    com.gugaart.ui.screens.ScrollsToTop { scroll.animateScrollTo(0) }
     val photo = rememberImage(p.art.poster, keepPrevious = true)
     LaunchedEffect(photo) { chrome.spot = photo?.spot() }
     var filter by remember { mutableStateOf(WorkFilter.All) }

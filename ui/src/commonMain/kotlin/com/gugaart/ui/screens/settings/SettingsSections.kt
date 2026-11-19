@@ -223,6 +223,28 @@ internal fun LayoutSection() {
 
 /* ------------------------------------------------------------------ 03 播放 */
 
+/** 首选引擎下面那句回退链说明，按平台写实际的链（上游 EngineSelect）：安卓 ExoPlayer→VLC→mpv→转码；
+ *  Mac / iPhone 只有进程内 MPVKit（libmpv），放不了出出错页，不自动换 VLC / 不自动转码；Windows mpv→VLC→转码。纯函数，有单测。 */
+fun engineChainNote(android: Boolean, mac: Boolean, ios: Boolean = false): String = when {
+    // iPhone 用手机版式（android 那一位是「手机 / 电视版式」），内核却和 Mac 一样（上游 U-ios-9）：先看它
+    ios -> "只有进程内的 MPVKit（libmpv）一个内核：放不了就出出错页，不自动请服务器转码（要转码在「码率上限」里选一档）"
+    android -> "ExoPlayer 放不了时换 VLC，再换 mpv，最后请服务器转码"
+    mac -> "只有进程内的 MPVKit（libmpv）一个内核：放不了就出出错页，不自动换 VLC、不自动请服务器转码（要转码在「码率上限」里选一档）"
+    else -> "mpv 放不了时换 VLC，最后请服务器转码"
+}
+
+/**
+ * 设置 › 播放「首选引擎」的选项：macOS / iOS 用上游按平台的那一份（U-mac-5：自动（MPV）/ mpv / 外部播放器；U-ios-9：自动（MPV）/ mpv，
+ * iOS 没有外部播放器），别的端照旧按「是不是安卓设备」。纯函数，有单测。
+ */
+fun settingsEngineChoices(android: Boolean, mac: Boolean, ios: Boolean = false): List<com.gugugaga.app.settings.EngineChoice> = when {
+    // = 上游 engineChoices(PlatformKind.Ios)（U-ios-9，只在 mac/ios-targets 上）；这里由 Mac 那一份去掉「外部播放器」得到，
+    // 这样 :ui 挂哪一份上游都编得过
+    ios -> engineChoices(com.gugugaga.app.player.PlatformKind.MacOS).filter { it.id != "external" }
+    mac -> engineChoices(com.gugugaga.app.player.PlatformKind.MacOS)
+    else -> engineChoices(android)
+}
+
 @Composable
 internal fun PlaybackSection(pick: String?) {
     val g = LocalGraph.current
@@ -230,7 +252,11 @@ internal fun PlaybackSection(pick: String?) {
     val p = settings.playbackPrefs
     fun put(key: String, v: JsonElement) = g.settings.patch("playback", key to v)
     val android = g.deps.uiMode != UiMode.Desktop
-    val engines = remember(android) { engineChoices(android) }
+    // macOS 只有一个内嵌内核（上游 U-mac-5 的 engineChoices(MacOS)：自动（MPV）/ mpv / 外部播放器，没有 VLC、没有「双内核」）
+    val mac = !android && com.gugaart.ui.desktop.LocalDesktopHost.current.platformName == "macOS"
+    // iPhone：手机版式（android = true），平台却是 iOS（壳的 platformLabel「iOS 27.2 · 机型」），内核和 Mac 一样只有 mpv
+    val ios = g.deps.platformLabel.startsWith("iOS ")
+    val engines = remember(android, mac, ios) { settingsEngineChoices(android, mac, ios) }
 
     SettingGroup("播放引擎", "ENGINE")
     PickRow(
@@ -239,7 +265,7 @@ internal fun PlaybackSection(pick: String?) {
         engines.map { PickOption(it.id, it.label.substringBefore('（'), it.label.substringAfter('（', "").removeSuffix("）").takeIf { n -> n.isNotEmpty() }) },
         listOf(p.engine),
         { put("engine", JsonPrimitive(it)) },
-        note = if (android) "ExoPlayer 放不了时换 VLC，再换 mpv，最后请服务器转码" else "mpv 放不了时换 VLC，最后请服务器转码",
+        note = engineChainNote(android, mac, ios),
         tag = "set-engine",
         startOpen = pick == "engine",
     )
@@ -824,12 +850,23 @@ internal fun AboutSection() {
     Rule()
 
     SettingGroup("更新", "UPDATE")
-    if (g.update.enabled) {
-        SettingRow("检查更新", note = status.lastResult.ifEmpty { "还没有检查过" }, tag = "about-check") { ActionWord("检查", { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) }) }
+    // iOS（侧载）：应用里暂不检查更新（清单验签在 iOS 上还没做），不报「签名校验失败」，钮打开发布页
+    val sideload = com.gugaart.ui.theme.LocalPhoneHost.current.distribution == com.gugaart.ui.theme.Distribution.Sideload
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    if (sideload) {
+        SettingRow("检查更新", note = com.gugaart.ui.screens.update.aboutCheckNote(true, status.lastResult), tag = "about-check") {
+            ActionWord("发布页", { runCatching { uri.openUri(com.gugaart.ui.screens.update.releasesPage()) } })
+        }
+    } else if (g.update.enabled) {
+        SettingRow("检查更新", note = com.gugaart.ui.screens.update.aboutCheckNote(false, status.lastResult), tag = "about-check") { ActionWord("检查", { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) }) }
         InfoRow("更新通道", g.update.channelLabel)
     } else {
         SettingRow("检查更新", note = "这一版不检查更新", tag = "about-check") { ValueText("未开启") }
     }
+
+    // 随包的第三方组件和许可证（D-lead-41；三端同一页、同一个位置——更新和这台设备之间，内容 = OpenSourceLicenses）
+    SettingGroup("许可", "LICENSES")
+    SettingRow("开源许可", note = "本应用按 GPL-3.0 分发 · 第三方组件和它们的许可证", tag = "about-licenses", onClick = { g.nav.navigate(Route.Settings(OpenSourceLicenses.KEY)) }) { ValueChevron(null) }
 
     SettingGroup("这台设备", "DEVICE")
     InfoRow("平台", g.deps.platformLabel)

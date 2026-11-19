@@ -76,6 +76,18 @@ object DesktopSpec {
 
     /** 点 `VOL.` 的热区宽。 */
     const val VOL_HIT = 9f
+
+    /** macOS：系统红绿灯在左上，报头 / 播放器顶栏的文字让到这条 px 之后（固定 px，不随 rem；设计稿 85）。 */
+    const val MAC_LEADING_PX = 85f
+
+    /** macOS：窗口失焦时报头文字的不透明度（线不变淡；设计稿 55 %）。 */
+    const val INACTIVE_ALPHA = 0.55f
+
+    /**
+     * macOS 系统全屏时播放器的底色（M2-6）：纯黑。全屏的窗口在刘海那一条之下，那一条由系统涂黑；画面四周的页边、片子自带的黑边都和它
+     * 接成一片，不留一道「比黑浅一点」的边。只在 macOS 的全屏里用（Windows 照旧 [DesktopPlayerSpec.MARGIN]）。
+     */
+    val FULLSCREEN_BLACK = androidx.compose.ui.graphics.Color(0xFF000000)
 }
 
 /** 电脑外壳自己的界面状态：「付印新刊」了几次（报头的期号跟着滚上去）。 */
@@ -134,6 +146,8 @@ fun DesktopMasthead(today: Today, modifier: Modifier = Modifier) {
     val colors = Guga.colors
     val nav = LocalWideNav.current
     val controls = LocalGraph.current.deps.windowControls
+    val host = LocalDesktopHost.current
+    val systemLeft = host.windowKeys == WindowKeysStyle.SystemLeft
     val solid = !nav.bleed || nav.scrollPx > 2f
     val band: @Composable () -> Unit = {
         Box(
@@ -143,16 +157,23 @@ fun DesktopMasthead(today: Today, modifier: Modifier = Modifier) {
                 .drawBehind { if (solid) drawRect(colors.paper) }
                 .testTag(if (solid) "desktop-masthead-solid" else "desktop-masthead"),
         ) {
-            Box(Modifier.padding(start = Guga.dimens.margin, end = Guga.rem(DesktopSpec.MASTHEAD_END), top = Guga.rem(DesktopSpec.MASTHEAD_TOP)).fillMaxWidth().height(Guga.rem(DesktopSpec.MASTHEAD))) {
-                Masthead(volume = "VOL. ${today.volume}", date = today.date, issue = today.volume, dateSlot = { com.gugaart.ui.screens.me.RankChip(today.date, it) })
+            // macOS（SystemLeft）：右端不再留窗口键的位置，日期对齐右页边；文字让位红绿灯（M2-1）
+            Box(Modifier.padding(start = Guga.dimens.margin, end = if (systemLeft) Guga.dimens.margin else Guga.rem(DesktopSpec.MASTHEAD_END), top = Guga.rem(DesktopSpec.MASTHEAD_TOP)).fillMaxWidth().height(Guga.rem(DesktopSpec.MASTHEAD))) {
+                Masthead(
+                    volume = "VOL. ${today.volume}", date = today.date, issue = today.volume,
+                    dateSlot = { com.gugaart.ui.screens.me.RankChip(today.date, it) },
+                    leadingInset = if (systemLeft) maxOf(0.dp, host.leadingInsetPx.dp - Guga.dimens.margin) else 0.dp,
+                    contentAlpha = if (host.active) 1f else DesktopSpec.INACTIVE_ALPHA,
+                )
                 // VOL. 可点：付印新刊（热区盖在期号上，不改报头的排法）
                 val press = rememberPressState()
                 val reprint = nav.onReprint
                 if (reprint != null) {
-                    Box(Modifier.width(Guga.rem(DesktopSpec.VOL_HIT)).fillMaxHeight().deskFocusRing(press).pressable(press, label = "换一批片单", onClick = reprint).testTag("desktop-reprint"))
+                    Box(Modifier.padding(start = if (systemLeft) maxOf(0.dp, host.leadingInsetPx.dp - Guga.dimens.margin) else 0.dp).width(Guga.rem(DesktopSpec.VOL_HIT)).fillMaxHeight().deskFocusRing(press).pressable(press, label = "换一批片单", onClick = reprint).testTag("desktop-reprint"))
                 }
             }
-            WindowKeys(Modifier.align(Alignment.TopEnd))
+            // macOS 的红绿灯由系统在左上画，这里不再自绘三个窗口键（M2-1 / 主理人实测问题 1）
+            if (!systemLeft) WindowKeys(Modifier.align(Alignment.TopEnd))
         }
     }
     Box(modifier.fillMaxWidth()) {

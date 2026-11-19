@@ -1,0 +1,208 @@
+/* 咕嘎画报（B1）· iOS（iPhone）—— 在 ../phone/css/* 之后加载，画廊和真机模式共用。
+ * 只写 iOS 相对安卓手机不同的部分：
+ *   1. 安全区：状态栏高度 = --sat（灵动岛机型 62）、home 条 = --sab（34）、横屏左右 = --sal / --sar；手机端写死的 46 / 18 全部换成变量
+ *   2. 随视口宽度排版：列宽、海报墙、合集格、封面区按 --vw / --vh 算，412 宽时和安卓手机的数值一模一样
+ *   3. iOS 状态栏样式（画廊里画，真机不画）、玻璃标签栏按安全区落位
+ *   4. iOS 独有的状态：左边缘右滑返回、长按纸片菜单、AirPlay / 画中画、App Store 号外、iOS 键盘示意
+ * 版式、纸面语言、专色、玻璃范围、她的规矩全部沿用 ../phone，一个 token 没改。 */
+
+/* ---- 字体：仓库里入库的 Noto Serif SC 子集（decisions.md Q3），字重映射照 GugaFonts.snap：≤450 → 400、≤750 → 600、其余 → 900 ---- */
+@font-face{font-family:"Noto Serif SC";src:url(../../../third_party/fonts/noto-serif-sc/subset/NotoSerifSC-400-subset.ttf) format("truetype");font-weight:100 450;font-display:swap}
+@font-face{font-family:"Noto Serif SC";src:url(../../../third_party/fonts/noto-serif-sc/subset/NotoSerifSC-600-subset.ttf) format("truetype");font-weight:451 750;font-display:swap}
+@font-face{font-family:"Noto Serif SC";src:url(../../../third_party/fonts/noto-serif-sc/subset/NotoSerifSC-900-subset.ttf) format("truetype");font-weight:751 900;font-display:swap}
+
+/* ---- 单屏参数（画廊每块画板 inline 覆盖；真机模式由 JS 写在 :root 上） ---- */
+:root{--vw:402px;--vh:874px;--sat:62px;--sab:34px;--sal:0px;--sar:0px;--sbc:29px;--k:1;--pk:.725;--px:0px}
+.sB{--tabb:max(18px,var(--sab));--pw:calc((var(--vw) - 82px) / 3);container-type:inline-size}
+.ph{width:var(--vw);height:var(--vh)}
+.pl{width:var(--vw);height:var(--vh)}
+@property --p{syntax:'<number>';inherits:true;initial-value:0}
+
+/* ---- iOS 状态栏（系统外壳示意：只在画廊里画，真机由系统盖上来） ---- */
+.sB .status{height:var(--sat);padding:0;display:block;font-family:-apple-system,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;font-size:17px;font-weight:600;letter-spacing:-.01em;color:#fff}
+.sB .status b{position:absolute;left:0;width:calc(50% - 70px);text-align:center;top:var(--sbc);transform:translateY(-50%);font-weight:600;letter-spacing:-.02em}
+.sB .status span{position:absolute;right:0;width:calc(50% - 70px);justify-content:center;top:var(--sbc);transform:translateY(-50%);gap:7px;font-size:16px}
+.sB .status .sig{display:flex;align-items:flex-end;gap:1.5px;height:11px}
+.sB .status .sig u{display:block;width:3px;background:currentColor;border-radius:1px}
+.sB .status .sig u:nth-child(1){height:4px}.sB .status .sig u:nth-child(2){height:6px}.sB .status .sig u:nth-child(3){height:8.5px}.sB .status .sig u:nth-child(4){height:11px}
+.sB .status .batt{width:27px;height:13px;border-radius:4px;border:1px solid rgba(255,255,255,.4);opacity:1;padding:1.5px;position:relative}
+.sB .status .batt u{width:72%;border-radius:2px}
+.sB .status .batt::after{content:"";position:absolute;right:-4px;top:3.5px;width:2px;height:4px;background:rgba(255,255,255,.4);border-radius:0 1px 1px 0}
+.pl .status{display:none}
+
+/* 灵动岛 / 刘海 + home 条：系统外壳示意（画廊 / 截图），不参与设计语言评审 */
+.sB .iosfx{position:absolute;inset:0;z-index:12;pointer-events:none}
+.sB .iosfx .isl{position:absolute;left:50%;top:11px;width:126px;height:37px;margin-left:-63px;border-radius:20px;background:#000;display:block}
+.sB.notch .iosfx .isl{top:0;width:210px;height:30px;margin-left:-105px;border-radius:0 0 21px 21px}
+.sB .iosfx .hm{position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:rgba(255,255,255,.82);display:block;transition:opacity .4s}
+.pl .iosfx .isl{left:11px;top:50%;width:37px;height:126px;margin:-63px 0 0 0}
+.pl .iosfx .hm{width:190px;margin-left:-95px}
+.sB-player.idle .iosfx .hm,.sB-player.locked .iosfx .hm,.sB-player.ended .iosfx .hm{opacity:0}   /* 看片时 home 条自动隐去（真机：chrome.homeIndicatorHidden） */
+
+/* ---- 顶部：状态栏高度跟安全区走 ---- */
+.sB .b-band{height:var(--sat)}
+.sB .scroll.below{top:var(--sat)}
+.sB .b-top{height:calc(var(--sat) + 50px)}
+.sB .b-nav{top:calc(var(--sat) + 2px)}
+.v1 .b1-cover{padding-top:var(--sat)}
+.v1 .d-mast{top:var(--sat)}
+.sB .sv-top{height:calc(var(--sat) + 106px)}
+.sB .sv-top .b-mast{top:var(--sat)}
+.sB .sv-top .b-nav{top:calc(var(--sat) + 60px)}
+.sB .sv-in{padding-top:calc(var(--sat) + 120px)}
+.sB.first .sv-in{padding-top:calc(var(--sat) + 78px)}
+.sB .b-set{padding-top:calc(var(--sat) + 64px)}
+.sB .h-top{height:calc(var(--sat) + 78px)}
+.sB .h-cap{top:calc(var(--sat) + 78px)}
+.v1 .d-hero .h-top{height:calc(var(--sat) + 184px)}
+.v1 .b-az{top:calc(var(--sat) + 216px)}
+.v1 .b-azb{top:calc(var(--sat) + 284px)}
+
+/* ---- 底部：标签栏落在 home 条上方（max(18, 安全区)），内容末尾给它让位 ---- */
+.sB .chrome .g.ios-tabs{left:24px;right:96px;width:auto;top:auto;bottom:var(--tabb);height:56px}
+.sB .chrome .g.ios-fab{left:auto;right:24px;top:auto;bottom:var(--tabb);width:56px;height:56px}
+.sB.tabs-away .chrome .g{transform:translateY(calc(var(--tabb) + 80px))}
+.sB .b-colo{padding-bottom:calc(var(--tabb) + 112px)}
+.sB .b-colo.short{padding-bottom:50px}
+.v1 .b-end{margin-bottom:calc(var(--tabb) + 132px)}
+.sB .b-colo.wend{padding-bottom:calc(var(--tabb) + 112px)}
+.v1 .b-toast{display:none!important}   /* iOS 没有系统返回键，也就没有「再按一次返回退出」 */
+
+/* ---- 首页封面区：按视口宽居中；高度不够时整块按 --k 收紧（402 × 874 时 0.96，375 × 812 时 0.86；安卓 412 × 905 = 1） ---- */
+.v1 .b1-bg{width:100%;height:calc(560px * var(--k))}
+.v1 .b1-bg img{width:100%;height:100%}
+.v1 .b1-bg i{background:linear-gradient(to bottom,rgba(16,14,11,.5) 0%,rgba(16,14,11,.1) 17%,rgba(16,14,11,.12) 50%,rgba(16,14,11,.8) 80%,#100E0B 98%)}
+.v1 .b-glow{width:100%}
+.v1 .cv-in{height:calc(742px * var(--k))}
+.v1 .b-stage{width:100%;top:calc(56px * var(--k));height:calc(352px * var(--k))}
+.v1 .cv{left:calc(50% - 110px * var(--k));top:calc(10px * var(--k));width:calc(220px * var(--k));height:calc(330px * var(--k))}
+.v1 .b-logo{left:calc(50% - 135px);top:calc(366px * var(--k))}
+.v1 .b-ticks{top:calc(466px * var(--k))}
+.v1 .b-iss{top:calc(478px * var(--k))}
+.v1 .b-cta{top:calc(590px * var(--k))}
+.v1 .cover-pg{top:calc(636px * var(--k))}
+.v1 .b1-cover .b-note{top:calc(660px * var(--k))}
+.v1 .b1-skel .c{left:calc(50% - 110px)}
+.v1 .b1-skel .c.l{left:calc(50% - 246px)}
+.v1 .b1-skel .c.r{left:calc(50% + 136px)}
+
+/* ---- 海报墙 / 合集格：列宽随视口；412 宽 = 110 × 165、列距 17（安卓的数） ---- */
+.sB .b-wall,.sB .b-skel{grid-template-columns:repeat(3,var(--pw))}
+.sB .b-po,.sB .b-po img,.sB .b-skel i{width:var(--pw)}
+.sB .b-po img,.sB .b-skel i{height:calc(var(--pw) * 1.5)}
+.v1 .b-po .pg{top:calc(var(--pw) * 1.5 - 2px)}
+.sB .b-po .seal{top:calc(var(--pw) * 1.5 + 6px)}
+.v1 .s-card .pp{width:100%;height:auto;aspect-ratio:2 / 3}
+.v1 .s-card .pp img,.v1 .s-card .pp i{width:100%;height:100%}
+.v1 .b-kbd{display:none}
+@container (max-width:390px){
+  .sB .b-mast span{min-width:72px}
+  .sB .b-mast.app b{font-size:19px}
+  .v1 .l-sum span:last-child{display:none}
+  .v1 .d-one>b{font-size:112px}
+  .v1 .b-iss{grid-template-columns:96px 1fr}
+  .v1 .b-iss .b-kick{letter-spacing:.2em}
+}
+
+/* ---- 搜索：iOS 键盘示意（深色键盘 + 拼音候选条；系统外壳，真机不画） ---- */
+.v1 .b-kbd.ios{display:none;height:calc(291px + var(--sab));background-color:#2a2a2c;border-top:0;padding:0 3px calc(var(--sab));font-family:-apple-system,"SF Pro Text","PingFang SC",sans-serif}
+.v1.typing .b-kbd.ios{display:block}
+.v1 .b-kbd.ios .cand{height:44px;gap:20px;padding:0 14px;font-size:17px;color:#fff;border-bottom:1px solid rgba(255,255,255,.08)}
+.v1 .b-kbd.ios .cand b{font-size:13px;color:#8e8e93;font-weight:400}
+.v1 .b-kbd.ios .cand span:first-of-type{color:#fff;font-weight:600}
+.v1 .b-kbd.ios .kr{gap:6px;margin-top:11px}
+.v1 .b-kbd.ios .kr i{max-width:34px;height:42px;border-radius:5px;background-color:#6b6b6e;color:#fff;font-size:22px;font-weight:400;box-shadow:0 1px 0 #1b1b1c}
+.v1 .b-kbd.ios .kr i.w{max-width:44px;background-color:#464649;font-size:16px}
+.v1 .b-kbd.ios .kr i.sp{max-width:none;flex:5;font-size:15px;color:#fff;background-color:#6b6b6e}
+.v1 .b-kbd.ios .kr i.go{background-color:#0a84ff;color:#fff;font-weight:600;font-family:inherit;max-width:88px;font-size:15px}
+.v1.typing .chrome .g{transform:translateY(calc(var(--tabb) + 80px))}   /* 键盘弹起：标签栏沉下去（iOS 的键盘盖在内容上） */
+.v1.typing .b-res{padding-bottom:calc(300px + var(--sab))}
+
+/* ---- 长按 = 纸片菜单（推开，不盖）：米白纸、墨字、直角、细边；在那一行 / 那一排海报下面展开 ---- */
+.sB .ios-ctx{grid-column:1 / -1;background-color:#EFE6D4;color:#141109;border:1px solid #141109;padding:12px 14px 4px;font-family:var(--cn);animation:bfil .35s cubic-bezier(.3,.9,.2,1);position:relative}
+.sB .b-sec>.ios-ctx,.sB .f-body>.ios-ctx{margin:0 24px 10px}
+.sB .b-dbody .ios-ctx,.sB .b-wall .ios-ctx,.sB .b-inset .ios-ctx{margin:0 0 10px}
+.sB .b-wall .ios-ctx{margin:-8px 0 2px}
+.sB .ios-ctx .ct{display:flex;align-items:baseline;gap:10px;border-bottom:1px solid #141109;padding-bottom:9px}
+.sB .ios-ctx .ct em{font-family:Georgia,serif;font-style:italic;font-size:9.5px;letter-spacing:.3em;color:rgba(20,17,9,.55);white-space:nowrap}
+.sB .ios-ctx .ct b{font-weight:900;font-size:16px;line-height:1.35;letter-spacing:.04em;flex:1;min-width:0}
+.sB .ios-ctx .ct i{font-size:11px;font-style:italic;color:rgba(20,17,9,.55);white-space:nowrap;font-family:Georgia,var(--cn)}
+.sB .ios-ctx a{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(20,17,9,.18);font-size:15px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.3,1.6,.5,1)}
+.sB .ios-ctx a:active{transform:scale(1.03)}
+.sB .ios-ctx a .ic{font-size:17px}
+.sB .ios-ctx a small{font-size:11px;font-style:italic;color:rgba(20,17,9,.55);font-weight:400;font-family:Georgia,var(--cn)}
+.sB .ios-ctx .fav-slot{width:28px;height:28px;border-color:rgba(20,17,9,.4)}
+.sB .ios-ctx .fav-slot b{font-size:14px}
+.sB .ios-ctx .mk u{border-color:rgba(20,17,9,.5)}
+.sB .ios-ctx .grp{font-family:Georgia,serif;font-style:italic;font-size:9.5px;letter-spacing:.3em;color:rgba(20,17,9,.5);padding:12px 0 2px}
+.sB .ios-ctx a.danger{color:#B8321C}
+.sB .ios-ctx a.danger.confirm{grid-template-columns:1fr;border:1px solid #D8432A;padding:10px 12px;margin:6px 0;color:#B8321C;font-weight:700}
+.sB .ios-ctx a.danger.confirm small{color:#B8321C;display:block}
+.sB .ios-ctx .close{grid-template-columns:1fr auto;border-bottom:0;font-size:11.5px;font-style:italic;font-weight:400;color:rgba(20,17,9,.6);padding:10px 0 8px;font-family:Georgia,var(--cn)}
+.sB .b-po.held,.sB .b-li.held{transform:scale(1.04);transition:transform .25s cubic-bezier(.3,1.6,.5,1)}
+.sB .b-po,.sB .b-li{transition:transform .25s cubic-bezier(.3,1.6,.5,1)}
+
+/* ---- 左边缘右滑返回（交互式）：被推入的页跟着手指走，底下那一页从 −30 % 跟回来、压暗退去 ---- */
+.sB .ios-veil{position:absolute;inset:0;z-index:10;background-color:#0b0a08;opacity:0;pointer-events:none}
+.sB .ios-page{position:absolute;inset:0;z-index:11;background-color:var(--paper);overflow:hidden;transform:translateX(calc(var(--p, 0) * 100%))}
+.sB-swipe>.content,.sB-swipe>.chrome{transform:translateX(calc((var(--p, 0) - 1) * 30%))}
+.sB-swipe .ios-veil{opacity:calc((1 - var(--p, 0)) * .45)}
+.sB .ios-page .b-top .b-nav a[data-back]{box-shadow:none}
+
+/* ---- 首页上的画中画浮窗（系统画的，不是版面元素；画廊示意） ---- */
+.v1 .ios-pipwin{display:none;position:absolute;right:12px;top:calc(var(--sat) + 8px);width:176px;height:99px;border-radius:12px;overflow:hidden;z-index:13;box-shadow:0 8px 30px rgba(0,0,0,.6),0 0 0 .5px rgba(255,255,255,.25);background:#000}
+.v1.ios-pip .ios-pipwin{display:block}
+.v1 .ios-pipwin img{width:100%;height:100%;object-fit:cover}
+.v1 .ios-pipwin i{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.35),transparent 40%)}
+.v1 .ios-pipwin svg{position:absolute;width:16px;height:16px;color:#fff;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.v1 .ios-pipwin svg.a{left:8px;top:7px}.v1 .ios-pipwin svg.b{right:8px;top:7px}
+.v1 .ios-pipwin svg.c{left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px}
+
+/* ---- 更新「号外」：iOS 不能自更新，按钮通向 App Store / TestFlight；没有下载进度、没有「退出应用」 ---- */
+.sB .up-slip .up-store{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--dim);margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-style:italic}
+.sB .up-slip .up-store i{width:26px;height:26px;border:1px solid var(--line);display:grid;place-items:center;font-style:normal;font-size:13px;flex:none}
+.sB .up-slip .up-store b{color:var(--ink);font-style:normal;font-weight:700}
+
+/* ---- 播放器横屏：画面铺满（含圆角和灵动岛的那一侧），控件和字幕让出安全区；面板打开时画面缩到 --pk（由视口算） ---- */
+.sB-player .stage{width:100%;height:100%}
+.sB-player .stage .frame{object-fit:contain;background-color:#000}
+.sB-player.open .stage{transform:translate(var(--px),14px) scale(var(--pk))}
+.sB-player{--stw:var(--vw)}
+@keyframes dmk{from{transform:translateX(0)}to{transform:translateX(calc(var(--stw, 905px) * -1 - 100%))}}
+.sB-player .dmk{left:var(--sal);right:var(--sar)}
+.sB-player .mid{top:calc(50% - 22px)}
+.sB-player .top{left:calc(16px + var(--sal));right:calc(16px + var(--sar))}
+.sB-player.open .top{left:calc(28px + var(--sal));right:calc(212px + var(--sar));top:20px}
+.sB-player .bot{left:calc(28px + var(--sal));right:calc(28px + var(--sar));bottom:calc(8px + var(--sab))}
+.sB-player.open .bot{left:calc(20px + var(--sal));right:calc(204px + var(--sar));bottom:calc(6px + var(--sab))}
+.sB-player .panel-host{right:calc(20px + var(--sar));bottom:calc(14px + var(--sab))}
+.sB-player .subline{bottom:calc(96px + var(--sab))}
+.sB-player.open .subline,.sB-player.idle .subline,.sB-player.locked .subline{bottom:calc(26px + var(--sab))}
+.sB-player .p-skip{right:calc(28px + var(--sar));bottom:calc(104px + var(--sab))}
+.sB-player .p-seek,.sB-player .p-long{left:calc(28px + var(--sal))}
+.sB-player .p-g{top:calc(50% - 116px)}
+.sB-player .p-g.bright{left:calc(24px + var(--sal))}
+.sB-player .p-g.vol{right:calc(24px + var(--sar))}
+.sB-player .p-lock{top:calc(50% - 20px);left:calc(24px + var(--sal))}
+.sB-player .p-buf{top:50%;transform:translate(-50%,-50%)}
+.sB-player .p-err{top:50%;transform:translateY(-50%);left:calc(150px + var(--sal));right:calc(150px + var(--sar))}
+.sB-player .p-end .x{left:calc(16px + var(--sal))}
+.sB-player .p-end .el{left:calc(72px + var(--sal))}
+.sB-player .p-end .er{right:calc(56px + var(--sar))}
+/* AirPlay / 画中画：画面拿掉，换成纸面说明（画面在别处放着，所以没有她） */
+.sB-player .top a.on{color:var(--red);border-color:var(--red)}
+.sB-player .p-air,.sB-player .p-pip{position:absolute;left:calc(52px + var(--sal));top:68px;width:440px;display:none;font-family:var(--cn);z-index:3}
+.sB-player.airplay .p-air,.sB-player.pip .p-pip{display:block}
+.sB-player.airplay .stage .frame,.sB-player.airplay .dmk,.sB-player.airplay .subline,.sB-player.airplay .mid,.sB-player.airplay .sh-t,.sB-player.airplay .sh-b,
+.sB-player.pip .stage .frame,.sB-player.pip .dmk,.sB-player.pip .subline,.sB-player.pip .mid,.sB-player.pip .sh-t,.sB-player.pip .sh-b{display:none!important}
+.sB-player.pip .bot,.sB-player.pip .top{opacity:.35;pointer-events:none}
+.sB-player .p-air h4,.sB-player .p-pip h4{font-weight:900;font-size:30px;letter-spacing:.1em;line-height:1.22;margin:4px 0 8px}
+.sB-player .p-air p,.sB-player .p-pip p{font-size:12.5px;line-height:1.6;color:var(--dim);max-width:420px}
+.sB-player .p-air .eb,.sB-player .p-pip .eb{display:flex;align-items:center;gap:18px;margin-top:12px}
+.sB-player .p-air .b-btn,.sB-player .p-pip .b-btn{height:36px;font-size:13.5px}
+.sB-player .p-air .dev{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:12px;color:var(--dim)}
+/* 合成画板（左滑返回）：状态栏是系统的，不跟着页走——藏掉两层里的，在外框层画一条 */
+.sB-swipe .content .status,.sB-swipe .ios-page .status{display:none}
+.sB-swipe .iosfx .status{display:block;pointer-events:none}
+.sB .up-b{flex-wrap:wrap;gap:14px 18px}
+.sB-player .p-air .dev i{display:inline-block;width:7px;height:7px;background:var(--red)}

@@ -110,13 +110,15 @@ fun DesktopChrome(route: Route, today: Today, modifier: Modifier = Modifier) {
     val selectNow = rememberUpdatedState(select)
     val indexNow = rememberUpdatedState(index)
 
-    // 键盘：玻璃排里的东西有焦点时键从这里冒泡；什么都没有焦点时，焦点放到兜底接收格上
+    // 键盘：玻璃排里的东西有焦点时键从这里冒泡；什么都没有焦点时，焦点放到兜底接收格上。
+    // 但任何一层（含播放器里的弹幕源搜索）的输入框有焦点时不抢：抢了字就打不进（主理人真窗口实测，Windows 同路径）。
     var chromeFocus by remember { mutableStateOf(false) }
     val sink = remember { FocusRequester() }
-    LaunchedEffect(route, nav.tab, chromeFocus, DesktopFocus.pages) {
-        if (!chromeFocus && !DesktopFocus.pages) {
+    val typing = g.isTyping
+    LaunchedEffect(route, nav.tab, chromeFocus, DesktopFocus.pages, typing) {
+        if (!chromeFocus && !DesktopFocus.pages && !typing) {
             withFrameNanos { }
-            if (!chromeFocus && !DesktopFocus.pages) runCatching { sink.requestFocus() }
+            if (!chromeFocus && !DesktopFocus.pages && !g.isTyping) runCatching { sink.requestFocus() }
         }
     }
     Box(Modifier.fillMaxSize().onFocusChanged { chromeFocus = it.hasFocus }.desktopKeys()) {
@@ -230,7 +232,7 @@ fun DesktopChrome(route: Route, today: Today, modifier: Modifier = Modifier) {
                 ) {
                     Icon(GuguIcon.Search, colors.ink, Guga.rem(1.7f), strokeWidth = if (route is Route.Search) 2.6f else 2f)
                     BasicText("搜索", style = Guga.song(rsp(1.4f), FontWeight.SemiBold, letterSpacing = 0.1.em), maxLines = 1)
-                    BasicText("Ctrl K", style = Guga.numeral(rsp(1.15f), colors.ink.copy(alpha = 0.7f), letterSpacing = 0.04.em), maxLines = 1)
+                    BasicText(DesktopCommand.Search.hint(LocalDesktopHost.current.modifier) ?: "Ctrl K", style = Guga.numeral(rsp(1.15f), colors.ink.copy(alpha = 0.7f), letterSpacing = 0.04.em), maxLines = 1)
                 }
                 Spacer(Modifier.width(Guga.rem(DeskNavSpec.GAP)))
                 // 账号圆钮：用户名的头一个字。菜单从圆钮里长出来（上游 GlassMorph）

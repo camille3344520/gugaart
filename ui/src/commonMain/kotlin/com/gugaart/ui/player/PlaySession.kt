@@ -94,7 +94,10 @@ val LocalPlayerClientOverride = staticCompositionLocalOf<((AppSession) -> Player
  */
 val LocalDanmakuSlotOverride = staticCompositionLocalOf<(@Composable (com.gugugaga.app.player.DanmakuHost, androidx.compose.ui.Modifier) -> Unit)?> { null }
 
-/** 测试缝：把这一页的 [PlaySession] 交给测试（离屏渲染不能点：测试直接调控制器的公开命令，比如暂停）。应用里从不设置。 */
+/**
+ * 把这一页的 [PlaySession] 交出去（每次重组都会叫一次）。测试用它直接调控制器的公开命令（离屏渲染不能点）；
+ * Mac 壳用它把控制器接到系统的「正在播放」和媒体键（任务单 MP-6）。别的壳不设置。
+ */
 val LocalPlaySessionSink = staticCompositionLocalOf<((PlaySession) -> Unit)?> { null }
 
 /**

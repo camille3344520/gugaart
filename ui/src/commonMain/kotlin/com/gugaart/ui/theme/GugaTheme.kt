@@ -86,7 +86,7 @@ fun GugaTheme(spot: Color? = null, content: @Composable () -> Unit) {
     val values = GugaThemeValues(
         uiMode = uiMode,
         colors = GugaColors(spot = animatedSpot),
-        dimens = GugaDimens.of(uiMode, win.width.value),
+        dimens = GugaDimens.of(uiMode, win.width.value, LocalPhoneInsets.current),
         type = GugaType.of(uiMode, if (uiMode == UiMode.Desktop) desktopRem(win.width.value) else 10f),
         player = GugaPlayerType.of(uiMode, if (uiMode == UiMode.Desktop) desktopRem(win.width.value) else 10f),
     )

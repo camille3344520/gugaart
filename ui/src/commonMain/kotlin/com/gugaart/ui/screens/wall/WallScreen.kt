@@ -182,6 +182,7 @@ fun WallScreen(libraryId: String?) {
     val deletedCount = com.gugaart.ui.data.ItemManage.deleted.size
     val shown = remember(all, filter, deletedCount) { all?.filter { !com.gugaart.ui.data.ItemManage.isDeleted(it.id) && filter.accepts(it) } }
     val list = rememberLazyListState()
+    com.gugaart.ui.screens.ScrollsToTop { list.animateScrollToItem(0) }
     val returnPx = with(LocalDensity.current) { PhoneTabBarSpec.RETURN_DP.toPx() }
     LaunchedEffect(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) {
         chrome.reportScroll(list.firstVisibleItemIndex * 2000f + list.firstVisibleItemScrollOffset, 0f, returnPx)
@@ -313,7 +314,7 @@ fun WallScreen(libraryId: String?) {
                     }
                 }
             }
-            item("safe") { Spacer(Modifier.height(150.dp)) }
+            item("safe") { Spacer(Modifier.height(150.dp + Guga.dimens.tabLift)) }
         }
         StatusBand(solid = list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 4, modifier = Modifier.background(colors.paper.copy(alpha = 0f)))
     }

@@ -164,7 +164,7 @@ object DesktopAccountMenu {
                     switching = true
                 }
                 AccountRule()
-                AccountRow(GuguIcon.SlidersHorizontal, "设置", "Ctrl ,") {
+                AccountRow(GuguIcon.SlidersHorizontal, "设置", DesktopCommand.Settings.hint(LocalDesktopHost.current.modifier) ?: "Ctrl ,") {
                     open = false
                     g.nav.navigate(Route.Settings())
                 }

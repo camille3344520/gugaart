@@ -25,11 +25,11 @@ fun backupTimeText(epochMs: Long, utcOffsetMs: Long): String {
     return "$y-${two(m)}-${two(d)} ${two(minutes / 60)}:${two(minutes % 60)}"
 }
 
-/** 备份里写的「哪一端做的」。 */
-fun backupPlatformLabel(mode: UiMode): String = when (mode) {
+/** 备份里写的「哪一端做的」。电脑端写桌面宿主报的平台名（`LocalDesktopHost.platformName`：Windows / macOS）。 */
+fun backupPlatformLabel(mode: UiMode, desktopPlatform: String = "Windows"): String = when (mode) {
     UiMode.Phone -> "安卓手机"
     UiMode.Tv -> "安卓电视"
-    UiMode.Desktop -> "Windows"
+    UiMode.Desktop -> desktopPlatform
 }
 
 /**
@@ -41,6 +41,8 @@ class BackupController(
     private val prefs: GugaSettingsStore,
     val files: BackupFileHost?,
     private val scope: CoroutineScope,
+    /** 电脑端的平台名（`LocalDesktopHost.platformName`）；手机 / 电视不用。 */
+    private val desktopPlatform: String = "Windows",
 ) {
     var webdav by mutableStateOf(WebDavConfig("", "", ""))
         private set
@@ -55,7 +57,7 @@ class BackupController(
 
     private fun now(): String = currentTimeMillis().let { backupTimeText(it, localUtcOffsetMs(it)) }
 
-    private suspend fun make(): String = makeBackup(g, backupPlatformLabel(g.deps.uiMode), now())
+    private suspend fun make(): String = makeBackup(g, backupPlatformLabel(g.deps.uiMode, desktopPlatform), now())
 
     fun load() {
         scope.launch { webdav = WebDavConfig.load(g.deps.secure) }

@@ -69,6 +69,14 @@ class PageChrome {
         anchor = 0f
     }
 
+    /** 点状态栏回顶（iOS，D-lead-27）：每点一次加一；正露着的那一页的主滚动区看到它变就滚回 0（[ScrollsToTop]）。 */
+    var scrollTopTick: Int by mutableStateOf(0)
+        private set
+
+    fun requestScrollTop() {
+        scrollTopTick++
+    }
+
     /** 条目 id → 收藏 / 已看（本地改过的才在里面）。 */
     val favorites = mutableStateMapOf<String, Boolean>()
     val played = mutableStateMapOf<String, Boolean>()
@@ -86,6 +94,21 @@ fun ReportScroll(scroll: ScrollState) {
     val chrome = LocalChrome.current
     val returnPx = with(LocalDensity.current) { PhoneTabBarSpec.RETURN_DP.toPx() }
     LaunchedEffect(scroll.value, scroll.maxValue) { chrome.reportScroll(scroll.value.toFloat(), scroll.maxValue.toFloat(), returnPx) }
+    ScrollsToTop { scroll.animateScrollTo(0) }
+}
+
+/**
+ * 这一页的主滚动区认「点状态栏」（D-lead-27）：壳报上来一次（[PageChrome.requestScrollTop]），正露着的这一页就滚回顶。
+ * 只认这一页露面**之后**的点（返回到一页时不会因为以前点过而被滚回顶，`PageStates` 留着的位置照旧）；被盖住的页（`LocalPageShown` = false）不动。
+ * 安卓没有这回事：壳不给 [com.gugaart.ui.theme.PhoneHost.statusBarTaps]，计数永远不变。
+ */
+@Composable
+fun ScrollsToTop(toTop: suspend () -> Unit) {
+    val chrome = LocalChrome.current
+    val shown = com.gugaart.ui.idle.LocalPageShown.current
+    val since = androidx.compose.runtime.remember { chrome.scrollTopTick }
+    val tick = chrome.scrollTopTick
+    LaunchedEffect(tick) { if (tick != since && shown) toTop() }
 }
 
 /**

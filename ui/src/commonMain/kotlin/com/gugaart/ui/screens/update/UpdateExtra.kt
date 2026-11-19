@@ -126,12 +126,31 @@ fun UpdateExtra() {
     }
     val live by graph.update.state.collectAsState()
     val dismissed by graph.update.dismissedVersion.collectAsState()
-    val view = extraView(override ?: live, UpdateConsent.dismissedFor(dismissed), UpdateConsent.ignored) ?: return
+    // 侧载（iOS，D-lead-26）：只查不下载；号外的主钮打开 GitHub 上这一版的发布页，强制更新也能「稍后」（这一次运行里收起）
+    val sideload = com.gugaart.ui.theme.LocalPhoneHost.current.distribution == com.gugaart.ui.theme.Distribution.Sideload
+    var laterThisRun by remember { mutableStateOf(0) }
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val view = extraView(override ?: live, UpdateConsent.dismissedFor(dismissed), UpdateConsent.ignored)?.takeUnless { sideload && it.forced && releaseCodeOf(override ?: live) == laterThisRun } ?: return
     var permissionHint by remember { mutableStateOf(false) }
     val release = ((override ?: live) as? UpdateState.Available)?.release
+    if (sideload) {
+        ExtraSlip(
+            view,
+            permissionHint = false,
+            onUpdate = { runCatching { uri.openUri(releasePage(view.version)) } },
+            onLater = {
+                UpdateConsent.hideAgain()
+                if (view.forced) laterThisRun = releaseCodeOf(override ?: live) else graph.update.dismiss()
+            },
+            onIgnore = release?.takeUnless { view.forced }?.let { r -> { UpdateConsent.ignore(graph, r.versionCode) } },
+            sideload = true,
+        )
+        return
+    }
     ExtraSlip(
         view,
         permissionHint = permissionHint,
+        dmg = graph.deps.uiMode == com.gugugaga.ds.theme.UiMode.Desktop && com.gugaart.ui.desktop.LocalDesktopHost.current.selfUpdate == com.gugaart.ui.desktop.SelfUpdate.OpenDmg,
         onUpdate = {
             when (view.phase) {
                 // 下好了：用户点「现在安装」才交给安装器
@@ -146,11 +165,45 @@ fun UpdateExtra() {
     )
 }
 
-/** 号外这张纸片（只画）。强制更新没有「稍后」，点外面 / 返回也收不掉。 */
+/**
+ * macOS 的「装」= 打开下好的 `.dmg`、用户自己拖一次（decisions.md D-lead-8；设计稿 `design/macos/notes.md` §8 的那句话）。
+ * 号外上照实写，主钮是「下载安装包」。
+ */
+const val DMG_NOTE = "下载的是 .dmg：打开后把「咕咕嘎嘎」拖进「应用程序」替换旧的，再打开一次就好"
+
+/** 所有版本的发布页（iOS 关于页「检查更新」那一行打开它）。 */
+fun releasesPage(): String = "https://github.com/${com.gugaart.ui.update.GithubUpdate.REPO}/releases"
+
+/**
+ * iOS（侧载）暂不在应用里检查更新：更新清单的 Ed25519 验签在 iOS 上还没做（上游的验签在 iOS 上恒为 false），
+ * 自动检查每次都会「签名校验失败，已忽略」。1.3.0 不实现验签，关于页不报这个失败，写这一句，钮打开发布页。
+ */
+const val SIDELOAD_CHECK_NOTE = "iOS 版暂不支持应用内检查更新，新版本请看发布页"
+
+/** 关于页「检查更新」下面那句：侧载（iOS）写 [SIDELOAD_CHECK_NOTE]，别的端写上一次检查的结果。纯函数，有单测。 */
+fun aboutCheckNote(sideload: Boolean, lastResult: String): String = if (sideload) SIDELOAD_CHECK_NOTE else lastResult.ifEmpty { "还没有检查过" }
+
+/** 这一版在 GitHub 上的发布页（侧载的号外打开它；仓库名只在 [com.gugaart.ui.update.GithubUpdate.REPO] 一处）。 */
+fun releasePage(version: String): String = "https://github.com/${com.gugaart.ui.update.GithubUpdate.REPO}/releases/tag/v$version"
+
+private fun releaseCodeOf(state: UpdateState): Int = when (state) {
+    is UpdateState.Available -> state.release.versionCode
+    is UpdateState.Failed -> state.release?.versionCode ?: 0
+    else -> 0
+}
+
+/** 侧载时号外下面那句话（D-lead-26，她的话）。 */
+const val SIDELOAD_HINT = "新版在 GitHub 的发布页上：下载 .ipa，用你平时自签的工具装上，覆盖安装就好。"
+
+/**
+ * 号外这张纸片（只画）。强制更新没有「稍后」，点外面 / 返回也收不掉。
+ * [dmg]：这一端的「装」是打开 `.dmg`（macOS，`SelfUpdate.OpenDmg`）——主钮和说明换成 Mac 的说法，三个选项不变（D15）。
+ * [sideload]（iOS）：主钮是「打开发布页」，没有下载进度、没有「退出应用」；强制更新也有「稍后」（D-lead-26）。
+ */
 @Composable
-fun ExtraSlip(view: ExtraView, permissionHint: Boolean, onUpdate: () -> Unit, onLater: () -> Unit, onIgnore: (() -> Unit)? = null) {
+fun ExtraSlip(view: ExtraView, permissionHint: Boolean, onUpdate: () -> Unit, onLater: () -> Unit, onIgnore: (() -> Unit)? = null, dmg: Boolean = false, sideload: Boolean = false) {
     val colors = Guga.colors
-    val canDismiss = !view.forced
+    val canDismiss = !view.forced || sideload
     SheetHost(if (canDismiss) onLater else null, tag = "update-extra") {
         SlipHeader("号外", "EXTRA · ${if (view.forced) "必须更新" else "新版本"}", "No. ${view.version}")
         Row(Modifier.padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -163,10 +216,13 @@ fun ExtraSlip(view: ExtraView, permissionHint: Boolean, onUpdate: () -> Unit, on
                 }
                 BasicText(head, style = Guga.song(34.sp, FontWeight.Black, lineHeight = 42.sp), maxLines = 2)
                 val sub = when {
+                    sideload -> listOfNotNull(SIDELOAD_HINT, view.meta.takeIf { it.isNotEmpty() }).joinToString("\n")
                     view.phase == ExtraPhase.Failed -> view.message
                     permissionHint -> "请在系统设置里允许「咕咕嘎嘎」安装应用，再回来点一次。"
                     view.phase == ExtraPhase.Permission -> "需要先允许这个应用安装更新。"
-                    view.forced && view.phase == ExtraPhase.Offer -> "这一版不能再用了。更新大约一分钟，登录和设置都会留着。"
+                    view.forced && view.phase == ExtraPhase.Offer -> if (dmg) "这一版不能再用了。$DMG_NOTE。" else "这一版不能再用了。更新大约一分钟，登录和设置都会留着。"
+                    dmg && (view.phase == ExtraPhase.Offer || view.phase == ExtraPhase.Ready) ->
+                        listOfNotNull(view.meta.takeIf { it.isNotEmpty() }, DMG_NOTE, view.message).joinToString("\n")
                     else -> listOfNotNull(view.meta.takeIf { it.isNotEmpty() }, view.message).joinToString("\n")
                 }
                 if (!sub.isNullOrEmpty()) BasicText(sub, Modifier.padding(top = 10.dp), style = Guga.song(Guga.type.caption, color = if (view.phase == ExtraPhase.Failed) colors.seal else colors.dim, lineHeight = 20.sp), maxLines = 4, overflow = TextOverflow.Ellipsis)
@@ -184,27 +240,27 @@ fun ExtraSlip(view: ExtraView, permissionHint: Boolean, onUpdate: () -> Unit, on
                 Rule()
             }
         }
-        if (view.phase == ExtraPhase.Downloading) {
+        if (view.phase == ExtraPhase.Downloading && !sideload) {
             Box(Modifier.padding(top = 18.dp).fillMaxWidth().height(2.dp).progressLine(view.progress, colors.spot, track = colors.line, outside = false).testTag("update-progress"))
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 BasicText(if (view.total > 0) "${megabytes(view.done)} / ${megabytes(view.total)} · ${(view.progress * 100).roundToInt()}%" else megabytes(view.done), style = Guga.numeral(Guga.type.caption, colors.dim), maxLines = 1)
             }
         }
         Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            val (label, enabled) = when (view.phase) {
-                ExtraPhase.Offer -> "下载并安装" to true
+            val (label, enabled) = if (sideload) "打开发布页" to true else when (view.phase) {
+                ExtraPhase.Offer -> (if (dmg) "下载安装包" else "下载并安装") to true
                 ExtraPhase.Downloading -> "下载中……" to false
-                ExtraPhase.Ready -> "现在安装" to true
-                ExtraPhase.Installing -> "正在安装……" to false
+                ExtraPhase.Ready -> (if (dmg) "打开安装包" else "现在安装") to true
+                ExtraPhase.Installing -> (if (dmg) "正在打开……" else "正在安装……") to false
                 ExtraPhase.Permission -> "去允许" to true
                 ExtraPhase.Failed -> "再试一次" to true
             }
-            PrimaryButton(label, onUpdate, Modifier.testTag("update-go"), icon = GuguIcon.Download.takeIf { view.phase == ExtraPhase.Offer }, enabled = enabled)
+            PrimaryButton(label, onUpdate, Modifier.testTag("update-go"), icon = GuguIcon.Download.takeIf { view.phase == ExtraPhase.Offer && !sideload }, enabled = enabled)
             // 忽略这一版 · 稍后（强制更新没有）
             if (canDismiss) {
                 if (view.phase == ExtraPhase.Offer && onIgnore != null) TextLink("忽略这一版", onIgnore, Modifier.testTag("update-ignore"), color = colors.dim)
                 TextLink(
-                    when (view.phase) {
+                    if (sideload) "稍后" else when (view.phase) {
                         ExtraPhase.Downloading -> "放到后台"
                         ExtraPhase.Ready -> "下次打开再装"
                         else -> "稍后"

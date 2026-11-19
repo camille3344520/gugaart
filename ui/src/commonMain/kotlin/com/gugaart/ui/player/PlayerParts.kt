@@ -49,6 +49,7 @@ import com.gugugaga.ds.icons.Icon
 import com.gugugaga.ds.physics.pressGraphics
 import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /** 播放器的六个功能词 + 片尾的「下一集」：都是页边里的一栏，同一种做法（docs/player.md §2）。 */
@@ -144,7 +145,7 @@ fun stretchHeat(v: FloatArray): FloatArray {
         when {
             x <= 0f -> 0f
             x <= lo -> HEAT_FLOOR * (x / lo)
-            else -> HEAT_FLOOR + (1f - HEAT_FLOOR) * Math.pow(((x - lo) / (hi - lo)).toDouble(), k.toDouble()).toFloat()
+            else -> HEAT_FLOOR + (1f - HEAT_FLOOR) * ((x - lo) / (hi - lo)).toDouble().pow(k.toDouble()).toFloat()
         }
     }
 }
@@ -166,7 +167,7 @@ object HeatSpec {
 }
 
 /** 一根热度柱的高（px）。纯函数，有单测：0 → 最矮的墩；1 → 最高；中间按 [HeatSpec.GAMMA] 提亮。 */
-fun heatColumnHeight(v: Float, maxPx: Float, minPx: Float): Float = minPx + Math.pow(v.coerceIn(0f, 1f).toDouble(), HeatSpec.GAMMA.toDouble()).toFloat() * (maxPx - minPx)
+fun heatColumnHeight(v: Float, maxPx: Float, minPx: Float): Float = minPx + v.coerceIn(0f, 1f).toDouble().pow(HeatSpec.GAMMA.toDouble()).toFloat() * (maxPx - minPx)
 
 /**
  * 画弹幕热度：一排从 [baseY] 往上长的细柱，每柱的高 = 这一段的热度。播过的（[frac] 以左）= [played]（专色），没播的 = [rest] 压暗。

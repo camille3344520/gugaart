@@ -65,6 +65,7 @@ object PhoneTabBarSpec {
     val HEIGHT = 56.dp
     val SEARCH = 56.dp
     val GAP = 12.dp
+    /** 安卓的离底；实际用的是 `Guga.dimens.bottomBar`（iOS 抬到 home 条上方）。 */
     val BOTTOM = 18.dp
 
     /** 往回滚这么多就回来。 */
@@ -106,11 +107,13 @@ fun PhoneTabBar(active: PhoneTab?, onSelect: (PhoneTab) -> Unit, onSearch: () ->
     val ind = rememberSlidingIndicator(index.coerceAtLeast(0).toFloat(), tabs.size)
     LaunchedEffect(index) { if (index >= 0 && ind.targetValue != index.toFloat()) ind.animateTo(index.toFloat()) }
     val sink by animateFloatAsState(if (sunk) 1f else 0f, tween(if (reduced) 0 else PhoneTabBarSpec.SINK_MS), label = "sink")
-    val travel = with(density) { (PhoneTabBarSpec.HEIGHT + PhoneTabBarSpec.BOTTOM + 24.dp).toPx() }
+    // 离底 = Guga.dimens.bottomBar：安卓 18（= PhoneTabBarSpec.BOTTOM），iOS 在 home 条上方 34（M4-1，D-lead-25）
+    val bottom = Guga.dimens.bottomBar
+    val travel = with(density) { (PhoneTabBarSpec.HEIGHT + bottom + 24.dp).toPx() }
     val onSelectNow = rememberUpdatedState(onSelect)
     val indexNow = rememberUpdatedState(index)
     Row(
-        modifier.padding(bottom = PhoneTabBarSpec.BOTTOM).graphicsLayer { translationY = sink * travel }.testTag(if (sunk) "tab-bar-sunk" else "tab-bar"),
+        modifier.padding(bottom = bottom).graphicsLayer { translationY = sink * travel }.testTag(if (sunk) "tab-bar-sunk" else "tab-bar"),
         horizontalArrangement = Arrangement.spacedBy(PhoneTabBarSpec.GAP),
         verticalAlignment = Alignment.CenterVertically,
     ) {

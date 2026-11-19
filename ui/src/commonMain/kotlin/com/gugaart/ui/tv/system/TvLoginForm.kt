@@ -61,6 +61,7 @@ import com.gugaart.ui.screens.login.LoginStep
 import com.gugaart.ui.screens.login.addressPlan
 import com.gugaart.ui.screens.login.addressPreview
 import com.gugaart.ui.theme.Guga
+import com.gugaart.ui.components.typingTarget
 import com.gugaart.ui.tv.TvFocusKind
 import com.gugaart.ui.tv.detail.LocalTvGroups
 import com.gugaart.ui.tv.detail.TvActionButton
@@ -438,6 +439,7 @@ internal fun TvEditText(value: String, onChange: (String) -> Unit, mask: Boolean
         },
         Modifier
             .fillMaxWidth()
+            .typingTarget()
             .focusRequester(requester)
             .onPreviewKeyEvent { e ->
                 val down = e.type == KeyEventType.KeyDown

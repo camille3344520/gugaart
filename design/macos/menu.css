@@ -1,0 +1,58 @@
+/* 咕咕嘎嘎 · macOS 端 —— 系统菜单栏 / 下拉菜单 / 「正在播放」的外观示意。
+ * 这一整个文件画的都是 macOS 自己会画的东西（SF 字体、13 px、22 px 行高、系统高亮蓝、深色菜单），
+ * 不属于画报的设计语言：不是纸面、不是玻璃、不走按下放大。应用把它声明成深色外观（和「只有深色」一致），所以菜单是深色的。
+ * 真机上这里一行 CSS 都不存在。
+ */
+.mb{position:relative;height:24px;display:flex;align-items:center;padding:0 10px 0 10px;background:#1d1d1f;color:rgba(255,255,255,.92);
+  font:13px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;user-select:none;-webkit-user-select:none;z-index:200;white-space:nowrap}
+.mb.notch{height:37px;padding-left:12px}
+.mb .apple{display:flex;align-items:center;height:20px;padding:0 9px;border-radius:4px}
+.mb .apple svg{width:14px;height:14px;fill:currentColor;display:block}
+.mb .mt{position:relative;display:flex;align-items:center;height:20px;padding:0 9px;border-radius:4px;cursor:default}
+.mb .mt.app{font-weight:700}
+.mb .mt.open{background:rgba(255,255,255,.18)}
+.mb .r{margin-left:auto;display:flex;align-items:center;gap:4px;height:100%}
+.mb .r .st{position:relative;display:flex;align-items:center;justify-content:center;height:20px;min-width:26px;padding:0 4px;border-radius:4px}
+.mb .r .st svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;display:block}
+.mb .r .st.open{background:rgba(255,255,255,.18)}
+.mb .r .ime{font-style:normal;font-size:11.5px;line-height:1;border:1.2px solid currentColor;border-radius:3px;padding:1px 2px}
+.mb .r em{font-style:normal;font-size:12.5px;padding:0 5px}
+.mb.notch .r{padding-right:4px}
+/* 刘海：菜单栏左右两组绕开中间那一块（示意；真机上它是摄像头挖孔） */
+.mb.notch::after{content:"";position:absolute;left:50%;top:0;width:190px;height:33px;margin-left:-95px;background:#000;border-radius:0 0 11px 11px}
+
+/* ---- 下拉菜单：系统外观 ---- */
+.mdd{display:none;position:absolute;left:0;top:calc(100% + 3px);min-width:230px;padding:5px 0;background:rgba(44,44,46,.97);color:rgba(255,255,255,.92);
+  border-radius:7px;box-shadow:0 0 0 .5px rgba(255,255,255,.18),0 10px 34px rgba(0,0,0,.55);font-weight:400;cursor:default;text-align:left;z-index:300}
+.mt.open>.mdd{display:block}
+.mdd .mi{position:relative;display:flex;align-items:center;height:22px;margin:0 5px;padding:0 10px 0 0;border-radius:4px;color:inherit;text-decoration:none}
+.mdd .mi .ck{width:22px;text-align:center;font-size:12px;flex:none}
+.mdd .mi .l{flex:1;padding-right:28px}
+.mdd .mi em{font-style:normal;font-size:11px;color:rgba(255,255,255,.45);margin-right:10px}
+.mdd .mi kbd{font:inherit;font-size:12.5px;color:rgba(255,255,255,.55);letter-spacing:.02em;display:flex;gap:1px}
+.mdd .mi kbd i{font-style:normal;letter-spacing:.06em}
+.mdd .mi .ar{font-size:15px;color:rgba(255,255,255,.55);margin-left:12px;line-height:1}
+.mdd .mi:hover:not(.dis){background:#2f6cf2;color:#fff}
+.mdd .mi:hover:not(.dis) kbd,.mdd .mi:hover:not(.dis) .ar,.mdd .mi:hover:not(.dis) em{color:rgba(255,255,255,.85)}
+.mdd .mi.dis{color:rgba(255,255,255,.3)}.mdd .mi.dis kbd{color:rgba(255,255,255,.25)}
+.mdd hr{border:0;height:1px;background:rgba(255,255,255,.14);margin:5px 14px}
+.mdd .mf{margin:2px 10px 6px;display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:5px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.4);font-size:12.5px}
+.mdd .mf::before{content:"⌕";font-size:14px}
+.mdd .sub{left:calc(100% - 2px);top:-5px;display:none}
+.mdd .mi.has:hover>.sub{display:block}
+/* 画廊里给「系统自带」的条目加一个小标（真机菜单里没有这个字） */
+.mb.annot .mi.sys .l::after,.mb.annot .mf.sys::after{content:"系统";font-size:9.5px;color:rgba(255,255,255,.35);margin-left:8px;vertical-align:middle;border:.5px solid rgba(255,255,255,.3);border-radius:3px;padding:0 3px;line-height:12px}
+.mb.annot .mf.sys::after{margin-left:auto}
+
+/* ---- 「正在播放」弹出面板（控制中心 / 菜单栏那一块，系统画；封面、标题、副标题由应用报上去） ---- */
+.mb .np .pop{display:none;position:absolute;right:-8px;top:calc(100% + 4px);width:300px;padding:12px 14px;background:rgba(44,44,46,.97);border-radius:12px;
+  box-shadow:0 0 0 .5px rgba(255,255,255,.18),0 10px 34px rgba(0,0,0,.55);align-items:center;gap:12px;color:#fff;z-index:300;cursor:default}
+.mb .np.open .pop{display:flex}
+.mb .np .pop .art{width:52px;height:52px;border-radius:6px;background:#3a3a3c center/cover no-repeat;flex:none;box-shadow:0 0 0 .5px rgba(255,255,255,.14)}
+.mb .np .pop .tx{min-width:0;flex:1}
+.mb .np .pop .tx b{display:block;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mb .np .pop .tx span{display:block;font-size:11.5px;color:rgba(255,255,255,.55);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mb .np .pop .ctl{display:flex;align-items:center;gap:2px;flex:none}
+.mb .np .pop .ctl a{width:26px;height:26px;display:grid;place-items:center;border-radius:13px}
+.mb .np .pop .ctl a:hover{background:rgba(255,255,255,.12)}
+.mb .np .pop .ctl svg{width:14px;height:14px;display:block}.mb .np .pop .ctl .pp svg{width:16px;height:16px}

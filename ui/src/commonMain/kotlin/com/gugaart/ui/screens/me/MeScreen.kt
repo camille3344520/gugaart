@@ -295,7 +295,7 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
             Rule()
             BasicText("咕咕嘎嘎 · 用你的片库自动排片", Modifier.fillMaxWidth().padding(top = 30.dp), style = Guga.song(Guga.type.caption, color = colors.faint, letterSpacing = 0.2.em).copy(textAlign = TextAlign.Center), maxLines = 1)
             // 底部安全区：末尾内容能滚到标签栏上方
-            Spacer(Modifier.height(150.dp))
+            Spacer(Modifier.height(150.dp + dimens.tabLift))
         }
         StatusBand(solid = scroll.value > 2)
         if (leaving) {

@@ -75,7 +75,7 @@ private val CARD = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio"
 
 /** 按年份聚合成年代。纯函数：没有年份的不算；按年代从早到晚；空的年代不补。 */
 fun decadesOf(years: List<Int?>): List<Decade> =
-    years.filterNotNull().filter { it in 1880..2199 }.groupingBy { it / 10 * 10 }.eachCount().toSortedMap().map { Decade(it.key, it.value) }
+    years.filterNotNull().filter { it in 1880..2199 }.groupingBy { it / 10 * 10 }.eachCount().entries.sortedBy { it.key }.map { Decade(it.key, it.value) }
 
 /** 榜单行的副行：「剧集 · 2026 · 9.5 分」；新到榜不强调评分时也照写（有就写）。 */
 fun chartLine(t: Title): String =

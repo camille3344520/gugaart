@@ -2,7 +2,6 @@ package com.gugaart.ui.screens.detail
 
 import com.gugaart.ui.player.formatBadges
 import com.gugaart.ui.player.FormatBadgeRow
-import com.gugaart.ui.player.DeviceAv
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -130,6 +129,7 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
     val series = head.series
     val hour = LocalHour.current
     val scroll = rememberScrollState(preset.scroll)
+    com.gugaart.ui.screens.ScrollsToTop { scroll.animateScrollTo(0) }
     val voice = rememberNoteVoice()
     // 剧照（演职员之后一栏；点开看大图）
     val stills = rememberItemStills(series.id)
@@ -297,6 +297,7 @@ fun MoviePhone(movie: Title, day: Int) {
     val colors = Guga.colors
     val hour = LocalHour.current
     val scroll = rememberScrollState(preset.scroll)
+    com.gugaart.ui.screens.ScrollsToTop { scroll.animateScrollTo(0) }
     val voice = rememberNoteVoice()
     // 剧照（演职员之后一栏；点开看大图）
     val stills = rememberItemStills(movie.id)
@@ -336,8 +337,8 @@ fun MoviePhone(movie: Title, day: Int) {
                 }
                 val cast = leads(movie)
                 FactsRow("主演", cast.getOrNull(0), if (cast.size > 1) "联合主演" else null, cast.getOrNull(1), Modifier.padding(top = 14.dp))
-                // 片源的效果徽章（4K / 杜比视界 / 全景声…；用户 2026-11-16：「影片详情页也可以打上对应的图标」）：这台设备放不了的变灰
-                FormatBadgeRow(formatBadges(source, null, DeviceAv.caps), 1.15f, Modifier.padding(top = 16.dp), notes = false)
+                // 片源的效果徽章（4K / 杜比视界 / 全景声…；用户 2026-11-16：「影片详情页也可以打上对应的图标」）：不看设备能力，照常亮（decisions.md D-mac-6）
+                FormatBadgeRow(formatBadges(source, null, null), 1.15f, Modifier.padding(top = 16.dp), notes = false)
                 PrimaryButton(
                     if (movie.progress > 0f) "续看" else "播放",
                     { graph.play(movie.id, movie.positionSec?.times(1000)) },

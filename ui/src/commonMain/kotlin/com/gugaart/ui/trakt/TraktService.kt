@@ -501,7 +501,7 @@ object TraktService {
         libraryIndex?.takeIf { now - it.first < 30 * 60_000L }?.let { return it.second }
         val map = HashMap<String, String>()
         for (s in allItems(client, "Series", ItemsRequestOptions(fields = listOf("ProviderIds"), enableImages = false, enableUserData = false))) {
-            for (k in idKeys(s.providerIds)) map.putIfAbsent(k, s.id)
+            for (k in idKeys(s.providerIds)) map.getOrPut(k) { s.id } // 先到的那部留着（putIfAbsent 是 JVM 专有的）
         }
         libraryIndex = now to map
         return map

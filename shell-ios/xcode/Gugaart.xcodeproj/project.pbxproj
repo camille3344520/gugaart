@@ -1,0 +1,295 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		6A0000000000000000000101 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A0000000000000000000201 /* AppDelegate.swift */; };
+		6A0000000000000000000102 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6A0000000000000000000202 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		6A0000000000000000000201 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		6A0000000000000000000202 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		6A0000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		6A0000000000000000000205 /* Gugaart.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Gugaart.xcconfig; sourceTree = "<group>"; };
+		6A0000000000000000000204 /* Gugaart.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Gugaart.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		6A0000000000000000000301 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		6A0000000000000000000401 = {
+			isa = PBXGroup;
+			children = (
+				6A0000000000000000000402 /* Gugaart */,
+				6A0000000000000000000403 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6A0000000000000000000402 /* Gugaart */ = {
+			isa = PBXGroup;
+			children = (
+				6A0000000000000000000201 /* AppDelegate.swift */,
+				6A0000000000000000000202 /* Assets.xcassets */,
+				6A0000000000000000000203 /* Info.plist */,
+				6A0000000000000000000205 /* Gugaart.xcconfig */,
+			);
+			path = Gugaart;
+			sourceTree = "<group>";
+		};
+		6A0000000000000000000403 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6A0000000000000000000204 /* Gugaart.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6A0000000000000000000501 /* Gugaart */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6A0000000000000000000802 /* Build configuration list for PBXNativeTarget "Gugaart" */;
+			buildPhases = (
+				6A0000000000000000000601 /* Compile Kotlin (GugaartShell) */,
+				6A0000000000000000000302 /* Sources */,
+				6A0000000000000000000301 /* Frameworks */,
+				6A0000000000000000000303 /* Resources */,
+				6A0000000000000000000602 /* Version from gradle.properties */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Gugaart;
+			productName = Gugaart;
+			productReference = 6A0000000000000000000204 /* Gugaart.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6A0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+			};
+			buildConfigurationList = 6A0000000000000000000801 /* Build configuration list for PBXProject "Gugaart" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = 6A0000000000000000000401;
+			productRefGroup = 6A0000000000000000000403 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6A0000000000000000000501 /* Gugaart */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		6A0000000000000000000303 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6A0000000000000000000102 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		6A0000000000000000000601 /* Compile Kotlin (GugaartShell) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Compile Kotlin (GugaartShell)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Kotlin 的整页（:shell-ios → 静态 framework GugaartShell + Compose 的资源）。经仓库的 scripts/gw.mjs（自动选 JDK、--and-stop 一次性守护进程）。\n# 全局排队锁由调 xcodebuild 的人拿（嵌套再排会自己等自己）。挂哪份上游：环境变量 GUGAART_NATIVE_DIR，没有就按 gradle.properties。\nset -e\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT/../..\"\nif [ -z \"$JAVA_HOME\" ]; then export JAVA_HOME=\"$(/usr/libexec/java_home -v 21 2>/dev/null || true)\"; fi\nNATIVE=\"\"\nif [ -n \"$GUGAART_NATIVE_DIR\" ]; then NATIVE=\"-Pgugaart.nativeDir=$GUGAART_NATIVE_DIR\"; fi\n# Release 的 framework 要整程序优化，2 GB 的构建堆不够（实测 OOM）：Kotlin/Native 编译器单独起一个 6 GB 的进程\nEXTRA=\"\"\nif [ \"$CONFIGURATION\" = \"Release\" ]; then EXTRA=\"-Pkotlin.native.disableCompilerDaemon=true -Pkotlin.native.jvmArgs=-Xmx6g\"; fi\n# Debug 带模拟器验收的进程内运行器（B5）；Release / IPA 里没有这段代码\nif [ \"$CONFIGURATION\" = \"Debug\" ]; then EXTRA=\"$EXTRA -Pgugaart.accept=true\"; fi\nnode scripts/gw.mjs :shell-ios:embedAndSignAppleFrameworkForXcode -Pgugaart.android=false -Pandroid.builder.sdkDownload=false --offline $NATIVE $EXTRA --and-stop\n";
+		};
+		6A0000000000000000000602 /* Version from gradle.properties */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Version from gradle.properties";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# 版本号只在 gradle.properties 的 gugaart.version（x.y.z）：CFBundleShortVersionString = x.y.z，CFBundleVersion = x × 10000 + y × 100 + z（M4-11）\n# 输入写成处理好的 Info.plist：新构建系统才会把这一步排在 ProcessInfoPlistFile 之后（不写时会被它盖回 0.0.0，B5 验收查出来的）\nset -e\nV=$(sed -n 's/^gugaart\\.version=//p' \"$SRCROOT/../../gradle.properties\" | tr -d '[:space:]')\nA=$(echo \"$V\" | cut -d. -f1); B=$(echo \"$V\" | cut -d. -f2); C=$(echo \"$V\" | cut -d. -f3)\nCODE=$((A * 10000 + B * 100 + C))\nP=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $V\" -c \"Set :CFBundleVersion $CODE\" \"$P\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6A0000000000000000000302 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6A0000000000000000000101 /* AppDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		6A0000000000000000000701 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		6A0000000000000000000702 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6A0000000000000000000703 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6A0000000000000000000205 /* Gugaart.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 0;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Gugaart/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gugugaga.art;
+				PRODUCT_NAME = Gugaart;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		6A0000000000000000000704 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6A0000000000000000000205 /* Gugaart.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 0;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Gugaart/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gugugaga.art;
+				PRODUCT_NAME = Gugaart;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6A0000000000000000000801 /* Build configuration list for PBXProject "Gugaart" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6A0000000000000000000701 /* Debug */,
+				6A0000000000000000000702 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6A0000000000000000000802 /* Build configuration list for PBXNativeTarget "Gugaart" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6A0000000000000000000703 /* Debug */,
+				6A0000000000000000000704 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 6A0000000000000000000001 /* Project object */;
+}

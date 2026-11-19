@@ -21,6 +21,7 @@ import com.gugaart.ui.data.ItemManage
 import com.gugaart.ui.data.Kind
 import com.gugaart.ui.data.Title
 import com.gugaart.ui.theme.Guga
+import com.gugaart.ui.theme.feel
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.ds.icons.GuguIcon
 import kotlinx.coroutines.launch
@@ -47,6 +48,9 @@ object PhoneItemMenu {
     @Composable
     fun Host() {
         val t = target ?: return
+        // 触感（M4-3）：长按出纸片 = 中
+        val host = com.gugaart.ui.theme.LocalPhoneHost.current
+        androidx.compose.runtime.LaunchedEffect(t) { host.feel(com.gugaart.ui.theme.HapticStyle.Medium) }
         val g = LocalGraph.current
         val chrome = LocalChrome.current
         val colors = Guga.colors

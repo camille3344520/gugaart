@@ -20,6 +20,7 @@ import com.gugaart.ui.player.PanelLink
 import com.gugaart.ui.player.PanelOption
 import com.gugaart.ui.player.PanelSection
 import com.gugaart.ui.player.PlaySession
+import com.gugaart.ui.desktop.LocalDesktopHost
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.ui.LocalGraph
 import kotlinx.coroutines.launch
@@ -76,12 +77,18 @@ fun CastPanelBody(play: PlaySession) {
             }
             if (!Cast.searching) PanelLink(if (Cast.devices.isEmpty()) "再找一遍" else "重新找一遍") { scope.launch { Cast.search() } }
         }
-        Cast.message?.let { BasicText(it, Modifier.padding(top = 12.dp).testTag("cast-message"), style = Guga.note(p.note, colors.dim), maxLines = 3) }
+        Cast.message?.let { BasicText(it, Modifier.padding(top = 12.dp).testTag("cast-message"), style = Guga.note(p.note, colors.dim), maxLines = 5) }
+        // M2-13：Mac 上找了半天一台都没有时，多半句「本地网络」权限的提示（只加字，不加按钮；Windows / 手机不变）
+        val macHint = if (!Cast.searching && Cast.devices.isEmpty()) castLocalNetworkHint(LocalDesktopHost.current.platformName) else null
         BasicText(
-            "用的是 DLNA：电视和这台设备要连同一个网络，电视上打开「投屏 / DLNA / 无线投屏」。投屏时电视自己放原片，弹幕不会投过去；电视放不了的格式会提示。",
-            Modifier.padding(top = 16.dp),
+            "用的是 DLNA：电视和这台设备要连同一个网络，电视上打开「投屏 / DLNA / 无线投屏」。投屏时电视自己放原片，弹幕不会投过去；电视放不了的格式会提示。" + (macHint ?: ""),
+            Modifier.padding(top = 16.dp).testTag("cast-dlna-note"),
             style = Guga.note(p.note, colors.faint),
             maxLines = 5,
         )
     }
 }
+
+/** M2-13（P-mac-15 文案，D-lead-15）：只有 macOS 才有这句「本地网络」权限提示；别的端返回 null。纯函数，有单测。 */
+fun castLocalNetworkHint(platformName: String): String? =
+    if (platformName == "macOS") "· 也可能是没有本地网络权限，去系统设置 › 隐私与安全性 › 本地网络里打开。" else null

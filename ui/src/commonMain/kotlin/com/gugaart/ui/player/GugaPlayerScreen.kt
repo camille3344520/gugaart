@@ -2,6 +2,7 @@ package com.gugaart.ui.player
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -69,6 +71,7 @@ import com.gugugaga.app.player.AutoNextState
 import com.gugugaga.app.player.ControlsVisibility
 import com.gugugaga.app.player.DanmakuHost
 import com.gugugaga.app.player.ErrorActionId
+import com.gugugaga.app.player.PlayController
 import com.gugugaga.app.player.PlayPage
 import com.gugugaga.app.player.PlayPhase
 import com.gugugaga.app.player.PlayerDanmaku
@@ -235,6 +238,10 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     // 网速：一直在采样，控件一出来就有数（NetSpeed.kt）
     val speed = rememberNetSpeed(play.controller)
     val showControls = controls.visible && !locked
+    // 横屏的安全区（M4-1）：控件、字幕区、弹幕、贴边提示让出左右 [side]（iOS 的岛那一侧 62），时间轴让出底下的 home 条；
+    // 画面本身不让（铺满）。安卓：side = 0、stripBottom = 10，和原来一样。
+    val side = Guga.dimens.sideInset
+    val stripBottom = maxOf(10.dp, com.gugaart.ui.theme.LocalPhoneInsets.current.bottom - 8.dp)
     // 手势：上游的手势层 + 这一页的回调（整页一个实例；回调执行时才读当前状态）
     val lockedNow = rememberUpdatedState(locked)
     val durationNow = rememberUpdatedState(duration)
@@ -266,6 +273,9 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                 onScrub = { controller.scrubTo(it) },
                 onScrubEnd = { controller.seekTo(it); controller.setScrubbing(false); controls.bump() },
             )
+            // 窄的时候（iOS 横屏开着面板：画面一栏只有 530 dp 上下）七个功能词只写词、不写值，免得挤在一起；安卓、全幅照旧
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val showValues = maxWidth >= 600.dp
             Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 for (p in PlayerPanel.WORDS) {
                     if (p == PlayerPanel.Eps && LocalPlayerEpisodes.current == null && snap.episodes.isEmpty()) continue
@@ -279,11 +289,12 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                         PlayerPanel.Dm -> if (render.enabled) "开" else "关"
                         PlayerPanel.Next, PlayerPanel.Cast -> null
                     }
-                    FunctionWord(p, value, panel == p, warn = p == PlayerPanel.Dm && slots.danmakuWarns?.invoke() == true, onClick = {
+                    FunctionWord(p, value.takeIf { showValues }, panel == p, warn = p == PlayerPanel.Dm && slots.danmakuWarns?.invoke() == true, onClick = {
                         opened = if (opened == p) null else p
                         controls.bump()
                     })
                 }
+            }
             }
         }
     }
@@ -301,7 +312,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             val holding = rememberUpdatedState(snap.holding)
             val dur = rememberUpdatedState(duration)
             val top by androidx.compose.animation.core.animateDpAsState(phoneDanmakuTop(inset, showControls), androidx.compose.animation.core.tween(220), label = "dm-top")
-            dm(DanmakuHost(snap.itemId, snap.item, controller.presentationClock, holding, render.enabled, dur, UiMode.Phone), Modifier.matchParentSize().padding(top = top))
+            dm(DanmakuHost(snap.itemId, snap.item, controller.presentationClock, holding, render.enabled, dur, UiMode.Phone), Modifier.matchParentSize().padding(top = top).padding(horizontal = side))
         }
         // 暂停只轻微压暗；缓冲压暗 40 % + 一条细线和速度
         val dim = when {
@@ -312,6 +323,9 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
         Box(
             Modifier.matchParentSize().drawBehind { if (dim > 0f) drawRect(colors.paper.copy(alpha = dim)) }.playerGestures(gestures, touchGestures = true).testTag(if (snap.paused) "player-picture-paused" else "player-picture"),
         )
+        // 画中画期间（iOS M5-10，D-lead-24）：画面那一格是纸面说明，时间轴和功能词留着；点「回到这里」= 收回小窗
+        val pip = play.platform.pictureInPicture.takeIf { com.gugaart.ui.theme.LocalPhoneHost.current.pipInPage }
+        if (pip != null && pip.active) PhonePipNote(onBack = { pip.toggle() }, Modifier.matchParentSize())
         if (showBuffer) {
             // 缓冲：正中一小块墨底——细线、「缓冲中」、一行小字（引擎回退 / 换线路的通知排在这里，不弹窗）
             Column(Modifier.align(Alignment.Center).background(colors.inkWell).padding(horizontal = 22.dp, vertical = 12.dp).testTag("player-buffer"), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -322,23 +336,28 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             }
         }
         // 贴边提示：亮度 / 音量 / 快进量 / 长按倍速
-        EdgeHints(gestures)
+        Box(Modifier.matchParentSize().padding(horizontal = side)) { EdgeHints(gestures) }
         // 开播那几秒：片源的效果（杜比视界 / HDR10 / 杜比全景声…）
-        FormatFlash(snap, 1f, Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 64.dp))
+        FormatFlash(snap, 1f, Modifier.align(Alignment.TopStart).padding(start = 16.dp + side, top = 64.dp))
         if (locked) {
             // 锁屏：只留左缘一个锁（点它解开）；别的手势都不响应
-            Row(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 96.dp).background(colors.inkWell).testTag("player-lock"), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.align(Alignment.BottomStart).padding(start = 12.dp + side, bottom = 96.dp).background(colors.inkWell).testTag("player-lock"), verticalAlignment = Alignment.CenterVertically) {
                 BoxButton(GuguIcon.Lock, "解锁", { locked = false; controls.bump() }, onImage = true, selected = true)
                 BasicText("已锁定 · 点锁解开", Modifier.padding(start = 4.dp, end = 14.dp), style = Guga.song(11.sp, color = colors.ink, letterSpacing = 0.1.em), maxLines = 1)
             }
         } else if (showControls || inset) {
             // 两个上角的方框按钮：返回永远在左上；收藏必须在
-            BoxButton(GuguIcon.ChevronLeft, "返回", play.exit, Modifier.align(Alignment.TopStart).padding(8.dp), onImage = true)
-            Row(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            BoxButton(GuguIcon.ChevronLeft, "返回", play.exit, Modifier.align(Alignment.TopStart).padding(start = 8.dp + if (inset) 0.dp else side, top = 8.dp, end = 8.dp, bottom = 8.dp), onImage = true)
+            Row(Modifier.align(Alignment.TopEnd).padding(start = 8.dp, top = 8.dp, end = 8.dp + if (inset) 0.dp else side, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // AirPlay（iOS，D-lead-35：只换声音的输出设备，系统的路由选择器）：宿主给了才画；设计稿 ios notes §1 第 11 条的顺序
+                // [AirPlay][她的一格][收藏][画中画][锁]
+                com.gugaart.ui.theme.LocalPhoneHost.current.airPlay?.let { air -> BoxButton(GuguIcon.Airplay, "AirPlay", air, Modifier.testTag("player-airplay"), onImage = true) }
                 if (!inset) PauseSeat(paused = snap.paused && snap.phase == PlayPhase.Ready, positionMs = position)
                 // 投屏（DLNA）：手机能投才有
                 if (com.gugaart.ui.cast.Cast.host != null) BoxButton(GuguIcon.Tv, "投屏", { opened = if (opened == PlayerPanel.Cast) null else PlayerPanel.Cast }, onImage = true, selected = com.gugaart.ui.cast.Cast.active != null)
                 BoxButton(GuguIcon.Heart, if (snap.favorite == true) "取消收藏" else "收藏", { controller.toggleFavorite() }, onImage = true, selected = snap.favorite == true)
+                // 画中画（iOS M5-10）：宿主要页内的钮（PhoneHost.pipInPage）、平台也有这个能力才画（上游规则：不能用的钮不如没有）
+                play.platform.pictureInPicture?.takeIf { com.gugaart.ui.theme.LocalPhoneHost.current.pipInPage }?.let { pip -> PipBoxButton(pip.active, { pip.toggle(); controls.bump() }) }
                 BoxButton(GuguIcon.Lock, "锁屏", { locked = true; opened = null }, onImage = true)
             }
         }
@@ -347,7 +366,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             if (!locked) {
                 val press = rememberPressState()
                 Row(
-                    Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = if (inset) 12.dp else PlayerSpec.STRIP + 10.dp).pressGraphics(press).background(colors.inkWell)
+                    Modifier.align(Alignment.BottomEnd).padding(end = 16.dp + if (inset) 0.dp else side, bottom = if (inset) 12.dp else PlayerSpec.STRIP + 10.dp).pressGraphics(press).background(colors.inkWell)
                         .pressable(press, label = skip.label) { controller.skip() }.padding(horizontal = 14.dp, vertical = 9.dp).testTag("player-skip"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -365,12 +384,12 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxWidth().height(PlayerSpec.INSET_TOP).background(colors.paper))
                 Row(Modifier.weight(1f)) {
-                    Box(Modifier.width(PlayerSpec.INSET).fillMaxHeight().background(colors.paper))
+                    Box(Modifier.width(PlayerSpec.INSET + side).fillMaxHeight().background(colors.paper))
                     Column(Modifier.weight(1f)) {
                         Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) { picture(true) }
-                        strip(Modifier.fillMaxWidth().height(PlayerSpec.STRIP).background(colors.paper).padding(top = 4.dp))
+                        strip(Modifier.fillMaxWidth().height(PlayerSpec.STRIP + stripBottom - 10.dp).background(colors.paper).padding(top = 4.dp, bottom = stripBottom - 10.dp))
                     }
-                    Column(Modifier.width(PlayerSpec.MARGIN).fillMaxHeight().background(colors.paper).padding(start = 18.dp, end = 20.dp, bottom = 10.dp).testTag("player-margin")) {
+                    Column(Modifier.width(PlayerSpec.MARGIN + side).fillMaxHeight().background(colors.paper).padding(start = 18.dp, end = 20.dp + side, bottom = stripBottom).testTag("player-margin")) {
                         Box(Modifier.weight(1f)) {
                             PanelBody(panel, play, snap, danmaku, slots, art, position, close = {
                                 if (panel == PlayerPanel.Next) dismissedNext = true
@@ -399,7 +418,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                     drawRect(Brush.verticalGradient(listOf(Color.Transparent, colors.paper.copy(alpha = 0.86f)), size.height - bottom, size.height), Offset(0f, size.height - bottom), Size(size.width, bottom))
                 }
                 // 顶栏：返回（在 picture 里）｜片名 logo + 集名 + 规格
-                Row(Modifier.align(Alignment.TopStart).padding(start = 66.dp, top = 8.dp, end = 200.dp).height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.align(Alignment.TopStart).padding(start = 66.dp + side, top = 8.dp, end = 200.dp + side).height(48.dp), verticalAlignment = Alignment.CenterVertically) {
                     // 片名 logo：剧集一定有（没有 logo 图就是宋体剧名）；电影只有真有 logo 图时才放——否则和右边那行片名是同一行字写两遍
                     val showLogo = snap.item?.seriesName != null || (art.logo != null && !preset.textTitles)
                     if (showLogo) TitleLogo(snap.item?.seriesName ?: snap.title, art.logo, 78.dp, 40.dp, textOnly = preset.textTitles, baseSize = 20.sp)
@@ -420,11 +439,11 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                     CenterKey(if (snap.paused) GuguIcon.Play else GuguIcon.Pause, if (snap.paused) "播放" else "暂停", 34.dp) { controller.userGesture(); controller.togglePlay(); controls.bump() }
                     CenterKey(GuguIcon.RotateCw, "进 10 秒", 26.dp) { controller.seekBy(10_000.0); controls.bump() }
                 }
-                strip(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp).padding(bottom = 10.dp))
+                strip(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp + side).padding(bottom = stripBottom))
             }
             // 引擎不支持非全窗视口时的退路：贴右边的小面板（墨底），不挡字幕区（画面下方三分之一不放）
             if (panel != null) {
-                Column(Modifier.align(Alignment.TopEnd).width(PlayerSpec.MARGIN).fillMaxHeight(0.66f).background(colors.paper.copy(alpha = 0.92f)).padding(horizontal = 16.dp, vertical = 8.dp).testTag("player-overlay-panel")) {
+                Column(Modifier.align(Alignment.TopEnd).width(PlayerSpec.MARGIN + side).fillMaxHeight(0.66f).background(colors.paper.copy(alpha = 0.92f)).padding(start = 16.dp, end = 16.dp + side, top = 8.dp, bottom = 8.dp).testTag("player-overlay-panel")) {
                     PanelBody(panel, play, snap, danmaku, slots, art, position, close = { opened = null })
                 }
             }
@@ -511,13 +530,16 @@ private fun ErrorPage(play: PlaySession, snap: PlayerSnapshot) {
     val g = LocalGraph.current
     val colors = Guga.colors
     val view = snap.errorView
+    // M2-14（D-lead-16）：整条回退链为空（找不到 libmpv）时，出错页就用上游那句 NO_ENGINE_MESSAGE。
+    val noEngine = snap.error == PlayController.NO_ENGINE_MESSAGE
     val controller = play.controller
     Box(Modifier.fillMaxSize().background(colors.paper).testTag("player-error")) {
         Row(Modifier.fillMaxSize().padding(start = 72.dp, end = 48.dp, top = 40.dp, bottom = 28.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 BasicText("放映事故 · PLAYBACK ERROR", style = Guga.kicker(), maxLines = 1)
-                BasicText(view?.title ?: "这一集没放出来", Modifier.padding(top = 8.dp), style = Guga.song(30.sp, FontWeight.Black), maxLines = 2)
-                BasicText(view?.hint ?: "换个版本，或者让服务器转一下，通常就好了。", Modifier.padding(top = 10.dp), style = Guga.song(14.sp, color = colors.dim, lineHeight = 24.sp), maxLines = 3)
+                // 找不到内核 = 上游那句「这台设备上没有可用的播放内核」（不另写壳文案）；别的失败仍照上游安静出错页（T35 B）。
+                BasicText(if (noEngine) PlayController.NO_ENGINE_MESSAGE else (view?.title ?: "这一集没放出来"), Modifier.padding(top = 8.dp), style = Guga.song(30.sp, FontWeight.Black), maxLines = 2)
+                if (!noEngine) BasicText(view?.hint ?: "换个版本，或者让服务器转一下，通常就好了。", Modifier.padding(top = 10.dp), style = Guga.song(14.sp, color = colors.dim, lineHeight = 24.sp), maxLines = 3)
                 Row(Modifier.padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     val actions = view?.actions ?: listOf(ErrorActionId.Retry, ErrorActionId.Exit)
                     for ((i, a) in actions.filter { it != ErrorActionId.UseWeb }.take(4).withIndex()) {
@@ -578,3 +600,42 @@ fun androidx.compose.foundation.layout.BoxScope.NewItemCover(itemId: String?, ph
 /** 纯函数：要不要盖。[shownFor] = 最近一次出过画面的那一部；出错 / 播完 / 外部播放器时不盖（那些状态有自己的画面）。 */
 fun coverNewItem(itemId: String?, shownFor: String?, phase: PlayPhase): Boolean =
     itemId != null && itemId != shownFor && (phase == PlayPhase.Preparing || phase == PlayPhase.Loading)
+
+/** 顶栏的画中画钮：和 [BoxButton] 同一个方框（40 dp、墨底细边），图形是电脑版的画框 + 小画面（[com.gugaart.ui.desktop.PipGlyph]）。 */
+@Composable
+private fun PipBoxButton(active: Boolean, onClick: () -> Unit) {
+    val colors = Guga.colors
+    val press = rememberPressState()
+    Box(Modifier.size(48.dp).pressable(press, label = if (active) "收回画中画" else "画中画", onClick = onClick).testTag("player-pip"), contentAlignment = Alignment.Center) {
+        Box(Modifier.pressGraphics(press).size(40.dp).background(colors.inkWell).border(1.dp, colors.ink.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+            com.gugaart.ui.desktop.PipGlyph(if (active) colors.seal else colors.ink, 20.dp)
+        }
+    }
+}
+
+/**
+ * 画中画期间画面那一格（D-lead-24：画面搬走时不留黑洞，纸面说明；时间轴和功能词留着，没有她）。字和电脑版同一份
+ * （[com.gugaart.ui.desktop.DesktopPipNote]），按手机的字号排。
+ */
+@Composable
+private fun PhonePipNote(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = Guga.colors
+    Box(modifier.background(colors.paper).testTag("player-pip-note"), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 420.dp).padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            BasicText("PICTURE IN PICTURE · 画中画", style = Guga.song(10.sp, FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
+            BasicText("画面在小窗里", Modifier.padding(top = 8.dp, bottom = 10.dp), style = Guga.song(26.sp, FontWeight.Black, letterSpacing = 0.1.em), maxLines = 1)
+            BasicText(
+                "这一集正在画中画窗口里继续放，字幕跟着过去了；弹幕留在这一页，回来接着飘。",
+                style = Guga.song(12.sp, color = colors.dim, lineHeight = 20.sp).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                maxLines = 3,
+            )
+            val press = rememberPressState()
+            Box(
+                Modifier.padding(top = 16.dp).pressGraphics(press).border(1.dp, colors.ink.copy(alpha = 0.6f)).pressable(press, label = "回到这里", onClick = onBack)
+                    .padding(horizontal = 18.dp, vertical = 9.dp).testTag("player-pip-back"),
+            ) {
+                BasicText("回到这里", style = Guga.song(13.sp, FontWeight.Bold, letterSpacing = 0.2.em), maxLines = 1)
+            }
+        }
+    }
+}

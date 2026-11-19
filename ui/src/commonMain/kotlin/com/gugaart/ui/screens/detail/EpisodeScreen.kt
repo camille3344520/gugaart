@@ -2,7 +2,6 @@ package com.gugaart.ui.screens.detail
 
 import com.gugaart.ui.player.formatBadges
 import com.gugaart.ui.player.FormatBadgeRow
-import com.gugaart.ui.player.DeviceAv
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -199,7 +198,7 @@ fun EpisodeScreen(episode: Title, day: Int) {
                     }
                 }
                 Rule()
-                FormatBadgeRow(formatBadges(episode.sources.firstOrNull(), null, DeviceAv.caps), 1.15f, Modifier.padding(top = 16.dp), notes = false)
+                FormatBadgeRow(formatBadges(episode.sources.firstOrNull(), null, null), 1.15f, Modifier.padding(top = 16.dp), notes = false)
                 PrimaryButton(
                     (if (episode.progress > 0f) "续看" else "播放") + (no?.let { " 第 $it 集" }.orEmpty()),
                     { graph.play(episode.id, episode.positionSec?.times(1000)) },

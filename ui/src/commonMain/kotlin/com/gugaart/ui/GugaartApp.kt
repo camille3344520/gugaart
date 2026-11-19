@@ -14,6 +14,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import com.gugaart.ui.input.isBackButtonRelease
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +76,14 @@ import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.theme.GugaColors
 import com.gugaart.ui.theme.GugaFonts
 import com.gugaart.ui.theme.GugaTheme
+import com.gugaart.ui.theme.HapticStyle
+import com.gugaart.ui.theme.LocalPhoneHost
+import com.gugaart.ui.theme.feel
+import com.gugaart.ui.components.EdgeBackState
+import com.gugaart.ui.components.edgeBackGesture
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.testTag
+import androidx.compose.runtime.rememberCoroutineScope
 import com.gugugaga.app.AppGraph
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.platform.localUtcOffsetMs
@@ -242,6 +251,12 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
     val route = graph.nav.route
     val session by graph.session.session.collectAsState()
     LaunchedEffect(route, tab) { chrome.resetScroll() }
+    // 手机宿主（M4-1）：安卓壳不给 = 默认（再按一次返回、没有左缘返回、没有触感、不点状态栏）
+    val phoneHost = LocalPhoneHost.current
+    // 点状态栏回顶（iOS，D-lead-27）：壳每报一次，正露着的那一页滚回顶
+    LaunchedEffect(phoneHost.statusBarTaps) { phoneHost.statusBarTaps?.collect { chrome.requestScrollTop() } }
+    val edge = remember { EdgeBackState() }
+    val edgeScope = rememberCoroutineScope()
     // 「没人动」的那只钟：应用里才有（测试可以从外面给一只）。电脑 / 电视：不在首页也不在播放，10 分钟没有输入 → 翻回首页
     val outerClock = com.gugaart.ui.idle.LocalIdleClock.current
     val idle = remember(outerClock, today.live) { outerClock ?: if (today.live) com.gugaart.ui.idle.IdleClock() else null }
@@ -273,6 +288,15 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
     // 没有海报的页面（片库、搜索、设置…）= 兜底朱红
     GugaTheme(spot = chrome.spot.takeIf { prefs.spotColorFollowsCover }) {
         CompositionLocalProvider(LocalChrome provides chrome, LocalGugaPrefs provides prefs, LocalHour provides today.hour, LocalPreset provides preset, LocalWideNav provides wide, com.gugaart.ui.idle.LocalIdleClock provides idle) {
+            // 菜单栏（M2-4）经这个接收者调命令表；菜单命令是 AWT 事件，顺手刷新闲置钟（X05）
+            androidx.compose.runtime.DisposableEffect(graph, wide, chrome, idle) {
+                com.gugaart.ui.desktop.DesktopCommandSink.sink = { cmd -> com.gugaart.ui.desktop.DesktopCommands.run(cmd, graph, wide, chrome, idle) }
+                com.gugaart.ui.desktop.DesktopCommandSink.reprintReady = { wide.onReprint != null }
+                onDispose {
+                    com.gugaart.ui.desktop.DesktopCommandSink.sink = null
+                    com.gugaart.ui.desktop.DesktopCommandSink.reprintReady = null
+                }
+            }
             val mode = Guga.uiMode
             val phone = mode == UiMode.Phone
             val playing = route is Route.Play
@@ -295,7 +319,22 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                                 }
                             },
                     )
-                    .then(if (mode == UiMode.Tv) Modifier.tvRoot(graph, wide) else Modifier).focusable().onKeyEvent { e ->
+                    // 鼠标侧键（M2-7 / B29）：后退键抬起 = 返回上一页（和 Esc 同一条上游导航，先收浮层再回退）。
+                    // 前进键不消费：上游 NavController 没有前进栈（不另造，和命令表「前进」永远灰一致）。
+                    // 触控板双指横滑 AWT 拿不到（没有对应的按钮 / 事件），不做，列在 docs/acceptance-mac.md「需要人看」。
+                    .pointerInput(graph) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                // 哪个键抬起只有桌面 / iOS 报得出（PointerButton 不在安卓的 Jetpack Compose 里）：按平台判断，见 input/PointerBack.kt
+                                if (e.isBackButtonRelease()) {
+                                    if (graph.nav.handleBack()) e.changes.forEach { it.consume() }
+                                }
+                            }
+                        }
+                    }
+                    .then(if (mode == UiMode.Tv) Modifier.tvRoot(graph, wide) else Modifier)
+                    .focusable().onKeyEvent { e ->
                     // 返回键 / Esc：交给上游的导航（先收浮层，再回上一页）
                     if (e.type == KeyEventType.KeyUp && (e.key == Key.Back || e.key == Key.Escape)) graph.nav.handleBack() else false
                 },
@@ -333,16 +372,25 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                                     val homeShown = pageRoute == Route.Home && tab == PhoneTab.Home
                                     var homeKept by remember { mutableStateOf(false) }
                                     LaunchedEffect(homeShown) { if (homeShown) homeKept = true }
+                                    // 左缘右滑返回（M4-2，只在 edgeBack 时）：有上一页才接手。上一页是首页（留在组合里的那一份）时，拖动中把它垫在底下
+                                    val edgeOn = phoneHost.edgeBack && graph.nav.canGoBack && !inPlayer
+                                    val under = graph.nav.routes().let { it.getOrNull(it.size - 2) }
+                                    val homeUnder = edgeOn && edge.active && homeKept && !homeShown && under == Route.Home && tab == PhoneTab.Home
+                                    Box(Modifier.fillMaxSize().edgeBackGesture(edge, edgeOn, edgeScope) { graph.nav.handleBack() }) {
                                     if (homeShown || homeKept) {
-                                        KeptPage(homeShown) {
-                                            CompositionLocalProvider(com.gugaart.ui.idle.LocalPageShown provides (homeShown && !inPlayer)) {
-                                                HomeScreen(today.volume, today.date, today.day)
+                                        KeptPage(homeShown || homeUnder) {
+                                            Box(Modifier.fillMaxSize().then(if (phoneHost.edgeBack) Modifier.graphicsLayer { if (!homeShown) translationX = EdgeBackState.underOffset(edge.offset.value, edge.width) } else Modifier)) {
+                                                CompositionLocalProvider(com.gugaart.ui.idle.LocalPageShown provides (homeShown && !inPlayer)) {
+                                                    HomeScreen(today.volume, today.date, today.day)
+                                                }
                                             }
+                                            // 底下那一页压一层纸色（拖得越远越淡）；没有投影
+                                            if (!homeShown) Box(Modifier.fillMaxSize().graphicsLayer { alpha = EdgeBackState.UNDER_DIM * (1f - edge.fraction) }.background(Guga.colors.paper))
                                         }
                                     }
                                     // 返回栈上的每一页记住自己的滚动位置：片库进详情再返回，回到进去的那一屏（PageStates）
                                     val pages = rememberPageStates(graph.nav)
-                                    if (!homeShown) pages.Page(graph.nav, if (pageRoute == Route.Home) tab.ordinal else 7) { when (pageRoute) {
+                                    if (!homeShown) Box(Modifier.fillMaxSize().then(if (phoneHost.edgeBack) Modifier.graphicsLayer { translationX = edge.offset.value }.background(Guga.colors.paper).testTag(if (edge.active) "edge-back-dragging" else "page") else Modifier)) { pages.Page(graph.nav, if (pageRoute == Route.Home) tab.ordinal else 7) { when (pageRoute) {
                                         Route.Home -> when (tab) {
                                             PhoneTab.Home -> Unit
                                             PhoneTab.Library -> WallScreen(null)
@@ -359,7 +407,8 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                                         Route.Discover -> DiscoverScreen(today)
                                         Route.Servers, is Route.Login -> LoginScreen(today)
                                         else -> ComingPage(today, "这一页")
-                                    } }
+                                    } } }
+                                    }
                                 }
                             }
                         }
@@ -371,6 +420,7 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                         PhoneTabBar(
                             active = if (pageRoute == Route.Home) tab else if (pageRoute is Route.Library) PhoneTab.Library else null,
                             onSelect = {
+                                phoneHost.feel(HapticStyle.Selection)
                                 tab = it
                                 if (route != Route.Home) graph.nav.reset(Route.Home)
                             },
@@ -385,7 +435,8 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                     if (mode == UiMode.Tv && session != null) TvChrome(pageRoute)
                 } } }
                 // 根上的两样：「再按一次返回」小条（贴在标签栏上方）和更新号外（纸片，不在播放画面上出现）
-                if (!playing && phone) ExitBar(Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp))
+                // 「再按一次返回」只在系统有返回键的手机上（安卓）；iOS 没有，应用不拦退出（M4-1）
+                if (!playing && phone && phoneHost.systemBack) ExitBar(Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp))
                 if (!playing) when (mode) {
                     UiMode.Phone -> UpdateExtra()
                     UiMode.Desktop -> DesktopUpdateExtra()

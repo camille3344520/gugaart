@@ -76,6 +76,8 @@ import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.play
 import com.gugaart.ui.screens.toggleFavorite
 import com.gugaart.ui.theme.Guga
+import com.gugaart.ui.theme.coverScale
+import com.gugaart.ui.theme.feel
 import com.gugugaga.app.data.rememberImage
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.ui.LocalGraph
@@ -96,8 +98,19 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
     val type = Guga.type
     val scroll = rememberScrollState(initialScroll)
     ReportScroll(scroll)
+    // 矮屏收紧封面区（D-lead-23）：412 × 905 的参考安卓机 = 1（一个像素不变）；402 × 874 → 0.96；375 × 812 → 0.86。字号不变
+    val k = coverScale(com.gugugaga.ds.theme.LocalWindowDp.current.height.value - dimens.statusBar.value)
     val covers = data.covers
     val flow = rememberCoverFlowState(covers.size, initialIssue)
+    // 触感（M4-3）：翻期号 = 选择（翻到新的一期才响，进首页时不响）
+    val phoneHost = com.gugaart.ui.theme.LocalPhoneHost.current
+    val lastIssue = remember { intArrayOf(flow.settled) }
+    LaunchedEffect(flow.settled) {
+        if (flow.settled != lastIssue[0]) {
+            lastIssue[0] = flow.settled
+            phoneHost.feel(com.gugaart.ui.theme.HapticStyle.Selection)
+        }
+    }
     val issue = covers.getOrNull(flow.settled)
     val voice = rememberNoteVoice()
     val hour = LocalHour.current
@@ -128,7 +141,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                 // ---- 封面区 ----
                 Box(Modifier.fillMaxWidth()) {
                     // 背后的整幅图：这一期的剧照（没有就海报），虚化压暗；换期交叉淡入
-                    FullBleed(issue.art, 560.dp, Modifier.testTag("home-backdrop"), framing = Framing.of(issue.seriesId ?: issue.id), soften = true, dim = 0.52f)
+                    FullBleed(issue.art, 560.dp * k, Modifier.testTag("home-backdrop"), framing = Framing.of(issue.seriesId ?: issue.id), soften = true, dim = 0.52f)
                     Column(Modifier.fillMaxWidth()) {
                         Spacer(Modifier.height(dimens.statusBar + 8.dp))
                         if (offline) OfflineBar(onRetry = onRefresh)
@@ -136,7 +149,8 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                         CoverFlow(
                             flow,
                             covers.map { it.art.poster },
-                            Modifier.padding(top = 18.dp),
+                            Modifier.padding(top = 18.dp * k),
+                            cardWidth = 220.dp * k,
                             names = covers.map { it.displayName },
                             onClick = { i -> covers.getOrNull(i)?.let { graph.open(it.seriesId ?: it.id) } },
                         )
@@ -145,8 +159,8 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                         TitleLogo(
                             issue.displayName,
                             issue.art.logo,
-                            width = 260.dp,
-                            height = 76.dp,
+                            width = 260.dp * k,
+                            height = 76.dp * k,
                             modifier = Modifier.align(Alignment.CenterHorizontally).offset(y = (-26).dp).graphicsLayer {
                                 translationX = -flow.pointer.x * shift
                                 translationY = -flow.pointer.y * shift
@@ -169,7 +183,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                         }
                         Column(Modifier.padding(horizontal = dimens.margin)) {
                             Rule(Modifier.padding(top = 4.dp))
-                            Row(Modifier.padding(top = 14.dp).height(118.dp), verticalAlignment = Alignment.Top) {
+                            Row(Modifier.padding(top = 14.dp * k).height(118.dp), verticalAlignment = Alignment.Top) {
                                 IssueOdometer(flow.position, covers.size, Modifier.width(118.dp))
                                 Box(Modifier.padding(top = 6.dp).width(1.dp).height(100.dp).background(colors.line))
                                 Column(Modifier.weight(1f).padding(start = 16.dp)) {
@@ -237,7 +251,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
             }
             EndOfPage(seed = day)
             // 底部安全区：末尾内容能滚到标签栏上方
-            Spacer(Modifier.height(150.dp))
+            Spacer(Modifier.height(150.dp + dimens.tabLift))
         }
         // 状态栏：滚动 2 dp 就变实心，内容从它下面硬切
         StatusBand(solid = scroll.value > with(LocalDensity.current) { 2.dp.toPx() })

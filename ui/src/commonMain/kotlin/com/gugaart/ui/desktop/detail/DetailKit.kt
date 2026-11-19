@@ -31,6 +31,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import com.gugaart.ui.desktop.isContextPress
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -158,11 +160,12 @@ fun Modifier.hover(state: MutableState<Boolean>): Modifier = pointerInput(state)
 /** 右键 = 条目的纸片菜单（Host 由外壳画）。[title] = null 时不接。 */
 fun Modifier.contextClick(title: Title?): Modifier = if (title == null) this else composed {
     var origin by remember { mutableStateOf(Offset.Zero) }
+    val ctrlCtx by rememberUpdatedState(com.gugaart.ui.desktop.ctrlClickIsContext())
     onGloballyPositioned { origin = it.positionInWindow() }.pointerInput(title.id) {
         awaitPointerEventScope {
             while (true) {
                 val e = awaitPointerEvent(PointerEventPass.Initial)
-                if (e.type == PointerEventType.Press && e.buttons.isSecondaryPressed) {
+                if (e.isContextPress(ctrlCtx)) {
                     DesktopContextMenu.open(title, origin + e.changes.first().position)
                     e.changes.forEach { it.consume() }
                 }

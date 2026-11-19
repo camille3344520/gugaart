@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>咕嘎画报 · B1 · iOS（iPhone）</title>
+<link rel="stylesheet" href="../phone/css/shell.css">
+<link rel="stylesheet" href="../phone/css/hb.css">
+<link rel="stylesheet" href="../phone/css/b1.css">
+<link rel="stylesheet" href="../phone/css/phone.css">
+<link rel="stylesheet" href="../phone/css/phone2.css">
+<link rel="stylesheet" href="css/ios.css">
+<link rel="stylesheet" href="css/ios-gallery.css">
+</head>
+<body>
+<aside>
+  <h1>咕嘎画报<small>B1 · iOS（iPhone）。手机这一端的平台变体：版式、纸面语言、专色、玻璃范围、她的规矩沿用安卓手机 demo（../phone），这里只画 iOS 真正不同的地方——安全区（灵动岛 / home 条）、左边缘右滑返回、长按纸片菜单、触感、AirPlay / 画中画、App Store 号外、系统键盘。画板套的 iPhone 外框（圆角、灵动岛、状态栏、home 条）是系统外壳示意。鼠标 = 手指。</small></h1>
+  <div id="err"></div>
+  <h2>DEVICE　参考机</h2>
+  <div id="sz"></div>
+  <a id="dev" href="device.html?p=home"><b>真机 / 模拟器模式 ↗</b>device.html：按真实视口排版，用 env(safe-area-inset-*) 让位，标签栏切页、推入 / 边缘右滑返回、进播放器转横屏，都在一个页面里。<code>http://127.0.0.1:8765/design/ios/device.html?p=home</code></a>
+  <h2>CONTENTS　界面</h2>
+  <nav id="toc"></nav>
+  <h2>PLAY　可以玩的</h2>
+  <ul id="plays"></ul>
+</aside>
+<main id="main"></main>
+<script src="../phone/js/assets.js"></script>
+<script src="../phone/js/data.js"></script>
+<script src="../phone/js/engine.js"></script>
+<script src="../phone/js/core.js"></script>
+<script src="../phone/js/glass.js"></script>
+<script src="../phone/js/sprite.js"></script>
+<script src="../phone/js/icons.js"></script>
+<script src="../phone/js/app.js"></script>
+<script src="../phone/js/mascot.js"></script>
+<script src="../phone/js/poses.js"></script>
+<script src="../phone/js/kit.js"></script>
+<script src="../phone/js/s-home.js"></script>
+<script src="../phone/js/s-browse.js"></script>
+<script src="../phone/js/s-detail.js"></script>
+<script src="../phone/js/s-me.js"></script>
+<script src="../phone/js/s-player.js"></script>
+<script src="js/ios.js"></script>
+<script src="js/ios-gallery.js"></script>
+<script>APP.boot();</script>
+</body>
+</html>

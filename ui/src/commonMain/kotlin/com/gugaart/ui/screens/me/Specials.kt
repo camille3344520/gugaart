@@ -220,7 +220,7 @@ object Specials {
 
 /** 连着几天都看了片（本地日期）。 */
 internal fun consecutiveDays(f: WatchFacts): Int {
-    val days = f.records.mapNotNull { it.lastPlayedMs }.map { f.localDay(it) }.toSortedSet()
+    val days = f.records.mapNotNull { it.lastPlayedMs }.map { f.localDay(it) }.distinct().sorted()
     var best = 0
     var run = 0
     var prev: Long? = null
@@ -242,7 +242,7 @@ internal fun consecutiveWeekends(f: WatchFacts): Int {
             6 -> day - 1
             else -> null
         }
-    }.toSortedSet()
+    }.distinct().sorted()
     var best = 0
     var run = 0
     var prev: Long? = null

@@ -40,7 +40,8 @@ internal fun BackupGroup() {
     val scope = rememberCoroutineScope()
     val files = LocalBackupFiles.current
     val prefs = LocalGugaSettings.current ?: remember(g) { GugaSettingsStore(g.deps.local) }
-    val c = remember(g, files) { BackupController(g, prefs, files, scope) }
+    val platformName = com.gugaart.ui.desktop.LocalDesktopHost.current.platformName
+    val c = remember(g, files, platformName) { BackupController(g, prefs, files, scope, platformName) }
     LaunchedEffect(c) { c.load() }
 
     SettingGroup("备份与还原", "BACKUP")

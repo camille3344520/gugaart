@@ -10,6 +10,8 @@ plugins {
     alias(libs.plugins.android.kmp.library)
 }
 
+val iosTargets = gradle.extra.properties["gugaartIos"] == true
+
 kotlin {
     jvm("desktop") {
         compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
@@ -21,6 +23,11 @@ kotlin {
         compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
         androidResources { enable = true }
         withHostTest {}
+    }
+    // M3-3：iOS（iPhone + Apple 芯片的模拟器）。开不开由 settings.gradle.kts 定（macOS 主机 + 上游有 iOS 目标）；jvmShared 不挂到 iOS。
+    if (iosTargets) {
+        iosArm64()
+        iosSimulatorArm64()
     }
 
     sourceSets {
@@ -37,6 +44,15 @@ kotlin {
         val jvmShared by creating { dependsOn(commonMain.get()) }
         getByName("desktopMain").dependsOn(jvmShared)
         getByName("androidMain").dependsOn(jvmShared)
+        // iOS：上面手写了 dependsOn，默认的层级模板就不套了，iosMain / iosTest 也手写（两个 iOS 目标共用）
+        if (iosTargets) {
+            val iosMain by creating { dependsOn(commonMain.get()) }
+            getByName("iosArm64Main").dependsOn(iosMain)
+            getByName("iosSimulatorArm64Main").dependsOn(iosMain)
+            val iosTest by creating { dependsOn(commonTest.get()) }
+            getByName("iosArm64Test").dependsOn(iosTest)
+            getByName("iosSimulatorArm64Test").dependsOn(iosTest)
+        }
         getByName("desktopTest").dependencies {
             implementation(libs.compose.ui.test)
             implementation(compose.desktop.currentOs)

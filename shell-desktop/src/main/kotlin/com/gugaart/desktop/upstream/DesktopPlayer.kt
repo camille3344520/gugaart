@@ -2,7 +2,7 @@
  * 复制自上游壳（docs/adr/0002-player-wiring-in-repo.md §6，登记在 docs/upstream-sync.md §5.1）：
  *   来源  gugugagaemby/native/desktopApp/src/main/kotlin/com/gugugaga/desktop/DesktopPlayer.kt
  *   提交  1e19741a（upstream.lock）
- *   改动  只改了 package
+ *   改动  package；macOS（ADR 0004 §2.7）：shortcutKeys / keepAwake 的 Win32 调用包 Platform.isWindows() 守卫（M1-3 加的 MpvHost.sessionDeps 参数已在 MP-5 还原）
  * 不要在这里改行为：上游改了来源文件就把同样的改动搬过来（git -C <上游> diff <lock>..HEAD -- <来源文件>）。
  */
 package com.gugaart.desktop.upstream
@@ -345,6 +345,7 @@ class DesktopPlayerPlatform(
      * context attached this way, so the [on] side detaches explicitly too - both directions are deterministic.
      */
     override fun shortcutKeys(on: Boolean) {
+        if (!com.sun.jna.Platform.isWindows()) return
         SwingUtilities.invokeLater {
             val w = keyWindow() ?: return@invokeLater
             val focused = w.focusOwner ?: w
@@ -383,6 +384,7 @@ class DesktopPlayerPlatform(
 
     /** `SetThreadExecutionState` on the (long-lived) event thread: the display stays on while something plays. */
     override fun keepAwake(on: Boolean) {
+        if (!com.sun.jna.Platform.isWindows()) return
         SwingUtilities.invokeLater {
             runCatching {
                 val flags = if (on) WinBase.ES_CONTINUOUS or WinBase.ES_DISPLAY_REQUIRED or WinBase.ES_SYSTEM_REQUIRED else WinBase.ES_CONTINUOUS

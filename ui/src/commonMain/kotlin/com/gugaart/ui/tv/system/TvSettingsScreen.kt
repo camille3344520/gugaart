@@ -89,8 +89,10 @@ fun TvSettings(section: String?, today: Today) {
     val settings by g.settings.state.collectAsState()
     val status by g.update.status.collectAsState()
 
-    var current by remember { mutableStateOf(GugaSection.of(section) ?: GugaSection.Look) }
-    var picker by remember { mutableStateOf(preset.state?.takeIf { it.startsWith("pick:") }?.removePrefix("pick:")) }
+    // `Route.Settings("licenses")`（菜单 / 关于页的那一行）= 「关于」分区 + 开源许可那一列已经推开
+    val openLicenses = section == com.gugaart.ui.screens.settings.OpenSourceLicenses.KEY
+    var current by remember { mutableStateOf(if (openLicenses) GugaSection.About else GugaSection.of(section) ?: GugaSection.Look) }
+    var picker by remember { mutableStateOf(preset.state?.takeIf { it.startsWith("pick:") }?.removePrefix("pick:") ?: TV_LICENSES.takeIf { openLicenses }) }
     var confirming by remember { mutableStateOf<String?>(null) }
     // 系统安全存储里的两条密钥（弹幕服务器地址、TMDB 令牌）：上游的 SecretsStore，和手机 / 电脑读写的是同一份
     val secrets by g.secrets.state.collectAsState()
@@ -141,6 +143,7 @@ fun TvSettings(section: String?, today: Today) {
     }
     val focusRows = rows.filter { it.focusable }
     val picked = rows.firstOrNull { it.id == picker } as? TvChoice
+    val panel = rows.firstOrNull { it.id == picker } as? TvPanel
 
     // ---- 排顺序（[TvOrder]）：页边的一列里「确定拿起 → 上下移动 → 确定放下」
     val ordering = rows.firstOrNull { it.id == picker } as? TvOrder
@@ -259,7 +262,7 @@ fun TvSettings(section: String?, today: Today) {
                 Column(Modifier.width(440.dp)) {
                     for (s in GugaSection.entries) {
                         val on = s == current
-                        TvBlockFocus("sec-${s.key}", { groups.enter("rows", g.focus) }, Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = s.title, default = on) { focused ->
+                        TvBlockFocus("sec-${s.key}", { groups.enter("rows", g.focus) }, Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = s.title, default = on && panel == null) { focused ->
                             val ink = if (focused) colors.onInk else if (on) colors.spot else colors.ink
                             Row(Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically) {
                                 BasicText(s.number, Modifier.width(64.dp), style = Guga.numeral(25.sp, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot), maxLines = 1)
@@ -271,7 +274,7 @@ fun TvSettings(section: String?, today: Today) {
                 }
                 Spacer(Modifier.width(84.dp))
                 // ---- 右页：这一分区的行 ----
-                Column(Modifier.weight(1f).padding(end = if (picked != null || ordering != null) 604.dp else 0.dp)) {
+                Column(Modifier.weight(1f).padding(end = if (picked != null || ordering != null || panel != null) 604.dp else 0.dp)) {
                     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                         BasicText(current.number, style = Guga.numeral(36.sp, colors.spot), maxLines = 1)
                         BasicText(current.title, style = Guga.song(38.sp, FontWeight.Black), maxLines = 1)
@@ -306,6 +309,7 @@ fun TvSettings(section: String?, today: Today) {
                                     is TvToggle -> r.set(!r.on)
                                     is TvChoice -> picker = r.id
                                     is TvOrder -> picker = r.id
+                                    is TvPanel -> picker = r.id
                                     is TvText -> editing = r.id
                                     is TvAction -> if (r.confirm != null && confirming != r.id) confirming = r.id else {
                                         confirming = null
@@ -316,7 +320,7 @@ fun TvSettings(section: String?, today: Today) {
                             }
                         }
                     }
-                    if (first + visible < rows.size) BasicText("⌄ 下面还有 ${rows.drop(first + visible).count { it.focusable }} 项", Modifier.padding(start = 26.dp, top = 12.dp), style = Guga.song(22.sp, color = colors.faint), maxLines = 1)
+                    if (first + visible < rows.size && rows.drop(first + visible).any { it.focusable }) BasicText("⌄ 下面还有 ${rows.drop(first + visible).count { it.focusable }} 项", Modifier.padding(start = 26.dp, top = 12.dp), style = Guga.song(22.sp, color = colors.faint), maxLines = 1)
                 }
             }
         }
@@ -341,6 +345,9 @@ fun TvSettings(section: String?, today: Today) {
                 }
                 BasicText(if (picked.multi) "确定 = 勾选 / 去掉；返回收起。" else "确定选中并收起；返回不改。", Modifier.padding(top = 30.dp), style = Guga.song(21.sp, color = colors.faint), maxLines = 1)
             }
+        } else if (panel != null) {
+            // ---- 开源许可：右边页边（纸面）的一列，只读；上下翻看，返回 / 左收起 ----
+            TvLicensesPanel(Modifier.align(Alignment.TopEnd), groups)
         } else if (ordering != null) {
             // ---- 排顺序：右边页边（纸面）。确定拿起 → 上下移动（挪的是这一项）→ 确定放下；返回 = 放回原处 / 收起 ----
             Column(
@@ -420,6 +427,10 @@ private fun TvSettingLine(r: TvSetting, confirming: Boolean, open: Boolean, onOk
                     Icon(if (open) GuguIcon.ChevronRight else GuguIcon.ChevronDown, ink.copy(alpha = 0.6f), 26.dp)
                 }
                 is TvAction -> BasicText(r.value, style = Guga.song(26.sp, FontWeight.Bold, if (focused) colors.onInk else colors.spot), maxLines = 1)
+                is TvPanel -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    BasicText(r.value, style = Guga.song(26.sp, color = if (focused) colors.onInk else colors.dim), maxLines = 1)
+                    Icon(if (open) GuguIcon.ChevronRight else GuguIcon.ChevronDown, ink.copy(alpha = 0.6f), 26.dp)
+                }
                 is TvOrder -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     BasicText("${r.items.size} 项", style = Guga.song(26.sp, color = if (focused) colors.onInk else colors.dim), maxLines = 1)
                     Icon(if (open) GuguIcon.ChevronRight else GuguIcon.ChevronDown, ink.copy(alpha = 0.6f), 26.dp)
@@ -436,4 +447,82 @@ private fun TvSettingLine(r: TvSetting, confirming: Boolean, open: Boolean, onOk
     }
     val line = Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }
     if (r.focusable) TvBlockFocus("row-${r.id}", onOk, line, label = r.label) { body(it) } else Box(line) { body(false) }
+}
+
+/** 开源许可那一列里的一项：组标题（不接焦点）、组说明（不接焦点）或一个组件（接焦点：遥控器靠焦点往下翻）。 */
+private sealed interface TvLicenseItem {
+    val key: String
+    data class Head(override val key: String, val title: String, val english: String) : TvLicenseItem
+    data class Note(override val key: String, val text: String) : TvLicenseItem
+    data class Line(override val key: String, val entry: com.gugaart.ui.screens.settings.LicenseEntry) : TvLicenseItem
+}
+
+/** 页边一列里同时排得下几项（组标题、说明也占一项）。 */
+private const val LICENSES_VISIBLE = 6
+
+/**
+ * 开源许可（电视）：内容和手机 / 电脑同一份 [com.gugaart.ui.screens.settings.OpenSourceLicenses]，排成页边的一列——
+ * 每个组件一行（左 名字和出处，右 许可证），组标题和组说明夹在中间；焦点在组件行上走，列表跟着焦点滑（和选择器同一个窗口算法）。
+ */
+@Composable
+private fun TvLicensesPanel(modifier: Modifier, groups: TvGroups) {
+    val colors = Guga.colors
+    val (platform, list) = com.gugaart.ui.screens.settings.rememberLicenses()
+    val items = remember(list) {
+        buildList<TvLicenseItem> {
+            list.forEachIndexed { gi, group ->
+                add(TvLicenseItem.Head("lic-h$gi", group.title, group.english))
+                group.note?.let { add(TvLicenseItem.Note("lic-n$gi", it)) }
+                group.entries.forEachIndexed { i, e -> add(TvLicenseItem.Line("lic-$gi-$i", e)) }
+            }
+        }
+    }
+    val keys = items.filterIsInstance<TvLicenseItem.Line>().map { it.key }
+    Column(
+        modifier.width(1920.dp - TvDetailSpec.SIDE_LEFT).fillMaxHeight().background(Color(0xFF14120E))
+            .drawBehind { drawLine(colors.line, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx()) }
+            .padding(start = 48.dp, end = TvSpec.RIGHT, top = 150.dp).testTag("tv-settings-licenses"),
+    ) {
+        TvSecHead("开源许可", "LICENSES")
+        TvGroup("picker", keys, horizontal = false, default = keys.firstOrNull())
+        val focusKey = groups.lastOf("picker") ?: keys.firstOrNull()
+        val at = items.indexOfFirst { it.key == focusKey }.coerceAtLeast(0)
+        val next = items.indices.firstOrNull { it > at && items[it] is TvLicenseItem.Line } ?: at
+        // 第一个组件行之前的组标题也要看得见：焦点在第一行时从头排
+        val first = if (focusKey == keys.firstOrNull()) 0 else windowStart(at, items.size, LICENSES_VISIBLE, next)
+        for (item in items.drop(first).take(LICENSES_VISIBLE)) key(item.key) {
+            when (item) {
+                // 组标题下面留出焦点校对角的位置（角伸出行外）
+                is TvLicenseItem.Head -> Row(Modifier.fillMaxWidth().height(70.dp).padding(start = 22.dp, bottom = 14.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    BasicText(item.title, style = Guga.song(26.sp, FontWeight.Black, colors.dim), maxLines = 1)
+                    BasicText(item.english, style = Guga.numeral(19.sp, colors.spot), maxLines = 1)
+                }
+                is TvLicenseItem.Note -> BasicText(item.text, Modifier.padding(start = 22.dp, top = 8.dp, bottom = 6.dp), style = Guga.song(21.sp, color = colors.faint, lineHeight = 32.sp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                is TvLicenseItem.Line -> TvBlockFocus(
+                    item.key, {},
+                    Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) },
+                    label = item.entry.name,
+                    // 从路由直接进来（那一列一开始就推开着）时，进页面的默认焦点 = 第一个组件，不是左页的分区
+                    default = item.key == keys.firstOrNull(),
+                    kind = com.gugaart.ui.tv.TvFocusKind.Row,
+                ) { focused ->
+                    val ink = if (focused) colors.onInk else colors.ink
+                    // 页边一列不宽：名字、许可证、出处上下三行（许可证不和名字抢一行的宽度，长的也看得全）
+                    Column(Modifier.fillMaxWidth().heightIn(min = 84.dp).padding(horizontal = 22.dp, vertical = 10.dp)) {
+                        BasicText(item.entry.name, style = Guga.song(27.sp, FontWeight.Bold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        BasicText(item.entry.license, Modifier.padding(top = 2.dp), style = Guga.note(23.sp, if (focused) colors.onInk else colors.dim), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        item.entry.note?.let { BasicText(it, Modifier.padding(top = 2.dp), style = Guga.song(20.sp, color = if (focused) colors.onInk.copy(alpha = 0.7f) else colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                }
+            }
+        }
+        val below = items.drop(first + LICENSES_VISIBLE).count { it is TvLicenseItem.Line }
+        BasicText(
+            if (below > 0) "⌄ 下面还有 $below 项 · 返回收起" else com.gugaart.ui.screens.settings.OpenSourceLicenses.footer(platform) ?: "返回收起。",
+            Modifier.padding(top = 24.dp),
+            style = Guga.song(21.sp, color = colors.faint),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }

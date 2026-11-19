@@ -194,7 +194,7 @@ fun DiscoverScreen(today: Today) {
                 }
             }
             // 给底部的玻璃标签栏让出位置
-            Spacer(Modifier.height(128.dp))
+            Spacer(Modifier.height(128.dp + dimens.tabLift))
         }
         // 滚动 2 dp 之后状态栏垫实心纸色（docs/platforms.md）
         StatusBand(solid = scroll.value > 6)

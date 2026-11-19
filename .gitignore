@@ -64,3 +64,9 @@ dist/
 design/generated/v3/
 # 用户给的原型参考图：来源不明，不放进公开仓库
 design/brand/proto-3d.png
+
+# ---- iOS 宿主（shell-ios/xcode）：Xcode 的个人状态和构建产物 ----
+shell-ios/xcode/**/xcuserdata/
+shell-ios/xcode/build/
+*.xcarchive
+*.ipa

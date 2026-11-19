@@ -144,7 +144,7 @@ class ImportedFontStore(private val local: LocalStore, private val host: FontImp
 fun fontFileProblem(bytes: ByteArray): FontImportError? {
     if (bytes.size.toLong() > ImportedFontStore.MAX_BYTES) return FontImportError.TooLarge
     if (bytes.size < 12) return FontImportError.NotAFont
-    val tag = String(CharArray(4) { (bytes[it].toInt() and 0xFF).toChar() })
+    val tag = CharArray(4) { (bytes[it].toInt() and 0xFF).toChar() }.concatToString()
     val trueType = bytes[0].toInt() == 0 && bytes[1].toInt() == 1 && bytes[2].toInt() == 0 && bytes[3].toInt() == 0
     return if (trueType || tag == "true" || tag == "OTTO") null else FontImportError.NotAFont
 }

@@ -29,6 +29,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.em
 import com.gugaart.ui.res.Res
 import com.gugaart.ui.res.pose_g03
@@ -66,6 +69,10 @@ fun Masthead(
     leading: String? = null,
     /** 右端日期那一格换成别的（首页 = 称号，见 `screens/me/RankChip`）；参数是日期本来的字样式。 */
     dateSlot: (@Composable (androidx.compose.ui.text.TextStyle) -> Unit)? = null,
+    /** macOS 红绿灯让位：左端文字从这条 inset 起（上下两条线不动）；默认 0 = 逐像素不变。 */
+    leadingInset: Dp = 0.dp,
+    /** 窗口失焦时文字的不透明度（线不变淡）；默认 1 = 不变。 */
+    contentAlpha: Float = 1f,
 ) {
     val colors = Guga.colors
     val dimens = Guga.dimens
@@ -84,15 +91,15 @@ fun Masthead(
         val side = Guga.numeral(type.kicker, colors.dim, letterSpacing = 0.14.em)
         if (issue != null && leading == null) {
             val rolled by animateFloatAsState(issue.toFloat(), tween(900), label = "volume")
-            Row(Modifier.align(Alignment.CenterStart).testTag("masthead-volume"), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.align(Alignment.CenterStart).padding(start = leadingInset).alpha(contentAlpha).testTag("masthead-volume"), verticalAlignment = Alignment.CenterVertically) {
                 BasicText("VOL. ", style = side, maxLines = 1)
                 RollingNumber(rolled, side, minDigits = 1)
             }
         } else {
-            BasicText(leading ?: volume, Modifier.align(Alignment.CenterStart), style = side, maxLines = 1)
+            BasicText(leading ?: volume, Modifier.align(Alignment.CenterStart).padding(start = leadingInset).alpha(contentAlpha), style = side, maxLines = 1)
         }
         Row(
-            Modifier.align(Alignment.Center).semantics(mergeDescendants = true) { heading(); contentDescription = title ?: "咕咕嘎嘎" },
+            Modifier.align(Alignment.Center).alpha(contentAlpha).semantics(mergeDescendants = true) { heading(); contentDescription = title ?: "咕咕嘎嘎" },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val word = Guga.song(type.masthead, FontWeight.Black, colors.ink, letterSpacing = MASTHEAD_TRACKING_EM.em)
@@ -112,7 +119,7 @@ fun Masthead(
                 BasicText("嘎嘎", style = word, maxLines = 1)
             }
         }
-        Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dimens.gutter / 2)) {
+        Row(Modifier.align(Alignment.CenterEnd).alpha(contentAlpha), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dimens.gutter / 2)) {
             val dateStyle = Guga.song(type.kicker, FontWeight.Normal, colors.dim, letterSpacing = 0.14.em)
             if (dateSlot != null) dateSlot(dateStyle) else BasicText(date, style = dateStyle, maxLines = 1)
             trailing?.invoke()

@@ -1,0 +1,68 @@
+/* 咕咕嘎嘎 · 咕嘎画报（B1）· macOS 端 —— 窗口本体的适配层（加载在 ../desktop/css/d*.css 之后）。
+ * 只换「窗口」这一层：报头左端的红绿灯与让位、播放器顶栏、窗口失焦、系统全屏、刘海屏全屏播放、画中画。
+ * 版式、纸面语言、专色、玻璃全部沿用电脑端，数值一个没改。
+ * 红绿灯是 macOS 画的（系统元素，尺寸是固定的 pt，不随画报的 rem 伸缩），所以这里全部用 px；它不是玻璃——报头本来就是纸面（docs/glass.md §1）。
+ * 类名 .tlights，避开播放器时间轴的 .tl。
+ */
+
+/* ---- 红绿灯：关闭 / 最小化 / 缩放。12 pt、间距 8 pt、第一颗左边 12 pt（macOS 11+ 的标准几何） ---- */
+.tlights{display:flex;align-items:center;gap:8px;z-index:7;pointer-events:auto}
+.tlights a{width:12px;height:12px;border-radius:50%;display:block;position:relative;cursor:default;flex:none;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.25)}
+.tlights a.c{background-color:#FF5F57}
+.tlights a.m{background-color:#FEBC2E}
+.tlights a.z{background-color:#28C840}
+/* 符号平时藏着，指针移到这一组上三颗一起露出来（系统行为）；单颗按下变暗 */
+.tlights a svg{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity .1s}
+.tlights a svg path{stroke:rgba(0,0,0,.6);stroke-width:1.2;fill:none;stroke-linecap:round}
+.tlights a.z svg path{fill:rgba(0,0,0,.55);stroke:none}
+.tlights:hover a svg{opacity:1}
+.tlights a:active{filter:brightness(.72)}
+/* 窗口失焦：三颗变灰、报头的字变淡（系统对非活跃窗口标题栏的处理）；玻璃排和正文不变 */
+body.unfocused .tlights a{background-color:#4b4b4d}
+body.unfocused .tlights a svg path{stroke:rgba(0,0,0,.45)}
+body.unfocused .tlights a.z svg path{fill:rgba(0,0,0,.4)}
+body.unfocused .mast .in,body.unfocused .mast .ttl{opacity:.55}
+body.unfocused .ptop .t,body.unfocused .ptop .pbtn{opacity:.6}
+
+/* ---- 报头 = 透明标题栏（内容延伸到窗口最顶）。红绿灯在左端、在报头的上下线之间垂直居中；VOL. 让位 ---- */
+.mast .tlights{position:absolute;left:12px;top:.6rem;height:calc(var(--top) - .6rem)}
+/* 上下线仍从页边 --m 起（红绿灯坐在线里，是这一行的第一件东西）；文字从 85 px 起——页边比 85 窄时才让，宽窗口（--m ≥ 85）VOL. 照旧对齐页边 */
+.mast .in{left:var(--m);right:var(--m);padding-left:max(0px,calc(85px - var(--m)))}
+.mast .win{display:none}
+.hero-on .mast:not(.solid) .tlights{filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+/* 系统全屏（绿灯 / ⌃⌘F）：红绿灯归系统收走；报头仍然是报头（它是画报的，不只是标题栏） */
+body.fs .tlights,body.tl0 .tlights{display:none}
+body.fs .mast .in,body.tl0 .mast .in{padding-left:0}
+
+/* ---- 播放器顶栏：红绿灯也在左端（返回钮让位到 85 px），右端不再留 Windows 键的位置 ---- */
+.ptop .tlights{position:absolute;left:12px;top:0;height:6.4rem}
+.ptop{padding-left:85px;padding-right:2rem}
+.ptop .win{display:none}
+/* 播放器进了系统全屏：三颗收起（同 Windows 版收起窗口键），顶栏回到 2rem 页边 */
+.pl.full .ptop .tlights,body.tl0 .ptop .tlights{display:none}
+.pl.full .ptop,body.tl0 .ptop{padding-left:2rem;padding-right:2rem}
+@media(max-width:900px){.ptop{padding-left:85px}.ptop .tlights{height:5.2rem}.pl.full .ptop{padding-left:1.6rem}}
+
+/* ---- 刘海屏 MacBook 上的全屏播放（body.notch 由 ?notch=1 打开，只在 p=player 用）：
+ * 顶上 37 pt 是刘海那一条（菜单栏的位置），画面矩形永远不与它相交：
+ *   · 画面上下各留 37 px 再居中 → 16:9 的片在 1512 × 982 上黑边各 65.75，画面恰好以整块面板为中心、顶边在刘海条以下；
+ *   · 4:3 这类高片受高度限制，顶边正好贴在刘海条下沿，一个像素不进去；字幕、弹幕都在画面矩形里，跟着走。
+ *   · 控件出现时顶栏从刘海条下面开始；信箱黑边和刘海条同为纯黑，看不出接缝。
+ * ---- */
+body.notch .pl{background-color:#000;--pt:calc(37px + 6.4rem)}
+body.notch .pl.idle{--pt:37px;--pb:37px}
+body.notch .ptop{top:37px}
+body.notch .pl.idle .ptop{transform:translateY(calc(-100% - 37px))}
+
+/* ---- 画中画（st=pip，能力待定：取决于上游在 macOS 上接的内核）：画面搬进系统的画中画小窗，主窗口这里留一页纸面说明 ---- */
+.pl.pip .pv .fr>img,.pl.pip .pv .fr .dmk,.pl.pip .pv .fr .subline{visibility:hidden}
+.pl.pip .pv .fr{background-color:#14110d}
+.pip-note{position:absolute;inset:0;display:grid;place-items:center;text-align:center;font-family:var(--cn)}
+.pip-note .kick{font-family:Georgia,serif;font-style:italic;font-size:1.05rem;letter-spacing:.24em;color:var(--red)}
+.pip-note h3{font-size:3.2rem;font-weight:900;letter-spacing:.1em;margin:1rem 0 1.2rem}
+.pip-note p{font-size:1.4rem;line-height:1.8;color:var(--dim);max-width:46rem}
+.pip-note .btn{margin-top:2.4rem;display:inline-flex}
+
+/* ---- ⌘ 键位 hint：和电脑端同一种 kbd 样式，只换了字 ---- */
+.mac-keys{margin-top:2.4rem}
+.mac-keys h5{margin-bottom:.4rem}

@@ -385,7 +385,7 @@ class MainActivity : ComponentActivity() {
             }
             AutoCloseable { runCatching { lock.release() } }
         }
-        // 开播的效果标签要知道这台设备的屏幕能显示什么：HDR 类型（Display）+ 有没有杜比视界解码器（MediaCodecList）
+        // 播放器里开播的提示（徽章下面那一行；徽章本身哪里都不变灰，decisions.md D-mac-6）要知道这台设备的屏幕能显示什么：HDR 类型（Display）+ 有没有杜比视界解码器（MediaCodecList）
         com.gugaart.ui.player.DeviceAv.caps = runCatching {
             @Suppress("DEPRECATION")
             val types = windowManager.defaultDisplay.hdrCapabilities?.supportedHdrTypes?.toSet().orEmpty()

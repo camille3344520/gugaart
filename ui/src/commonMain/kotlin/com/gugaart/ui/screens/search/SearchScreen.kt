@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.HatchPlate
+import com.gugaart.ui.components.typingTarget
 import com.gugaart.ui.components.Masthead
 import com.gugaart.ui.components.PersonChip
 import com.gugaart.ui.components.Rule
@@ -186,7 +187,7 @@ fun SearchScreen(initial: String?) {
                     BasicTextField(
                         query,
                         { query = it },
-                        Modifier.fillMaxWidth().testTag("search-field"),
+                        Modifier.fillMaxWidth().testTag("search-field").typingTarget(),
                         textStyle = Guga.song(if (Rules.titleUnits(query) > 6) type.title else type.display * 0.86f, FontWeight.Black),
                         singleLine = true,
                         cursorBrush = SolidColor(colors.spot),
@@ -267,7 +268,7 @@ fun SearchScreen(initial: String?) {
                     if (star == null && people.isNotEmpty()) PeopleSection(dimens.sectionGap)
                 }
             }
-            Spacer(Modifier.height(150.dp))
+            Spacer(Modifier.height(150.dp + dimens.tabLift))
         }
         StatusBand(solid = scroll.value > with(LocalDensity.current) { 2.dp.toPx() })
     }

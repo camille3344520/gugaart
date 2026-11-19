@@ -1,7 +1,6 @@
 package com.gugaart.ui.tv.detail
 
 import com.gugaart.ui.player.formatBadges
-import com.gugaart.ui.player.DeviceAv
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -197,7 +196,7 @@ fun TvMovie(movie: Title, today: Today) {
         TvBackdrop(movie.art, deep = screen > 0, sided = side != null)
         TvScreens(screen, if (hasStills) 3 else 2) { index ->
             if (index == 0) Box(Modifier.fillMaxSize()) {
-                TvRunHead(badges = formatBadges(source, audio, DeviceAv.caps), english = if (movie.kind == Kind.Episode) "EPISODE" else "FILM", caption = if (movie.art.backdrop != null) "剧照｜主视觉" else "没有剧照｜用海报虚化代替", today = today)
+                TvRunHead(badges = formatBadges(source, audio, null), english = if (movie.kind == Kind.Episode) "EPISODE" else "FILM", caption = if (movie.art.backdrop != null) "剧照｜主视觉" else "没有剧照｜用海报虚化代替", today = today)
                 Column(Modifier.align(Alignment.BottomStart).padding(start = TvSpec.LEFT, bottom = TvDetailSpec.HERO_BOTTOM).width(TvDetailSpec.HERO_WIDTH)) {
                     TvKick(tvKickOf(movie, tvKindName(movie.kind)))
                     TvTitle(movie, Modifier.padding(top = 14.dp, bottom = 16.dp))

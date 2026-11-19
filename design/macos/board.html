@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>咕咕嘎嘎</title>
+<script>
+// 一扇窗口 = 这个视口。要看「整块屏幕」上的东西（菜单栏、刘海那一条、系统的画中画小窗、「正在播放」）→ 交给 screen.html，它把这个窗口放进 iframe
+(function () { const q = new URLSearchParams(location.search); if (!q.get('inner') && (q.get('menu') || q.get('notch') || q.get('np') || q.get('pipwin'))) location.replace('screen.html' + location.search); })();
+</script>
+<link rel="stylesheet" href="../desktop/css/d.css">
+<link rel="stylesheet" href="../desktop/css/d2.css">
+<link rel="stylesheet" href="../desktop/css/d3.css">
+<link rel="stylesheet" href="../desktop/css/d4.css">
+<link rel="stylesheet" href="macos.css">
+</head>
+<body>
+<script src="../desktop/js/lib.js"></script>
+<script src="../desktop/js/engine.js"></script>
+<script src="../desktop/js/core.js"></script>
+<script src="../desktop/js/glass.js"></script>
+<script src="../desktop/js/sprite.js"></script>
+<script src="../desktop/js/app.js"></script>
+<script src="../desktop/js/blur.js"></script>
+<script src="../desktop/js/mascot.js"></script>
+<script src="../desktop/js/poses.js"></script>
+<script src="../desktop/js/screens-a.js"></script>
+<script src="../desktop/js/screens-a2.js"></script>
+<script src="../desktop/js/screens-b.js"></script>
+<script src="../desktop/js/screens-c.js"></script>
+<script src="macos.js"></script>
+<script>APP.boot();</script>
+</body>
+</html>

@@ -26,7 +26,10 @@ subprojects {
         }
     }
     // 上游模块的测试属于上游仓库（它们要 Mock、金样目录、图标源目录），在那边跑；这里不跑，免得拿错路径得出假结论。
-    if (name in upstreamModules) {
+    // 例外（开发开关，默认关）：-Pgugaart.upstreamTests=app,core 让点名的上游模块的测试在这边跑——给在上游分支上改了上游模块、
+    // 又没法在本机跑上游自己那套构建的情况用（Mac 上的 :player-apple 分支改 :app 的回退链）。只跑不依赖 Mock / 金样的测试类（--tests）。
+    val upstreamTestsAllowed = (findProperty("gugaart.upstreamTests") as String?).orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    if (name in upstreamModules && name !in upstreamTestsAllowed) {
         tasks.withType<Test>().configureEach {
             onlyIf("上游模块的测试在 gugugagaemby/native 里跑（docs/upstream-sync.md）") { false }
         }

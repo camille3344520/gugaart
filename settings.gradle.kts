@@ -27,6 +27,12 @@ val nativeDir: File = run {
     f
 }
 gradle.extra["gugaartNativeDir"] = nativeDir
+// iOS（M3-3 / M4-6）：只在 macOS 主机、且挂的上游已经有 iOS 目标（上游分支 `mac/ios-targets`，U-ios-1）时才开——
+// Windows、挂着没有 iOS 目标的上游的 Mac 都和原来一模一样。`-Pgugu.ios=false`（和上游同一个开关）在 Mac 上也关掉。
+val withIos = System.getProperty("os.name").startsWith("Mac") &&
+    providers.gradleProperty("gugu.ios").orNull?.trim()?.lowercase() != "false" &&
+    File(nativeDir, "app/build.gradle.kts").readText().contains("iosSimulatorArm64()")
+gradle.extra["gugaartIos"] = withIos
 
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
@@ -58,9 +64,19 @@ for (name in mounted) {
     project(":$name").projectDir = File(nativeDir, name)
 }
 gradle.extra["gugaartUpstreamModules"] = mounted
+// :player-apple —— macOS（以后 iOS）的 libmpv 进程内内核（ADR 0006，任务单 MP）。只在 macOS 主机、且上游那边有这个模块时挂：
+// 上游还没合进去、nativeDir 指着主检出时目录不存在 → 自动不挂，Windows 和别的工作区不受影响。
+// 它不进上面那张 mounted 表：那张表里的模块测试在上游跑（要 Mock / 金样 / 图标源目录）；这个模块的测试只有假 MpvClient 的单测和
+// 系统属性门禁的 libmpv 集成测试，不靠那些，就在这边跑（上游在 Mac 上的构建入口要读它的 .env，我们不碰）。
+val withPlayerApple = System.getProperty("os.name").startsWith("Mac") && File(nativeDir, "player-apple/build.gradle.kts").isFile
+if (withPlayerApple) {
+    include(":player-apple")
+    project(":player-apple").projectDir = File(nativeDir, "player-apple")
+}
+gradle.extra["gugaartPlayerApple"] = withPlayerApple
 // 构建输出改道：<本仓库>/build/upstream/<模块>/。必须在各模块的构建脚本求值之前设好。
 gradle.beforeProject {
-    if (name in mounted && projectDir.canonicalFile.startsWith(nativeDir)) {
+    if ((name in mounted || (withPlayerApple && name == "player-apple")) && projectDir.canonicalFile.startsWith(nativeDir)) {
         layout.buildDirectory.set(File(rootDir, "build/upstream/$name"))
     }
 }
@@ -69,3 +85,4 @@ gradle.beforeProject {
 include(":ui")            // 三端共用的「咕嘎画报」界面（KMP：desktop JVM + Android）
 include(":shell-desktop") // Windows 壳
 if (withAndroid) include(":shell-android") // Android 壳：mobile / tv 两个 flavor
+if (withIos) include(":shell-ios") // iOS 壳（M4-6）：一个 KMP 模块出 framework，Xcode 宿主在 shell-ios/xcode/

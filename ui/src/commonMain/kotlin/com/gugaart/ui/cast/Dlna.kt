@@ -108,4 +108,7 @@ fun parseStatus(transportXml: String?, positionXml: String?): CastStatus? {
 interface CastHost {
     suspend fun discover(timeoutMs: Long): List<CastDevice>
     suspend fun action(device: CastDevice, action: String, args: List<Pair<String, String>>): String?
+
+    /** 一台都没找到时补在说明后面的一句（iOS：组播权利 / 本地网络权限，D-lead-30）；null = 不补（安卓、电脑照旧）。 */
+    fun emptyHint(): String? = null
 }

@@ -299,7 +299,7 @@ fun InputLine(value: String, onChange: (String) -> Unit, placeholder: String, mo
         BasicTextField(
             value,
             onChange,
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().typingTarget(),
             textStyle = style,
             singleLine = true,
             cursorBrush = SolidColor(colors.ink),

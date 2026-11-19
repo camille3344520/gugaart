@@ -181,6 +181,7 @@ fun Modifier.leftRule(color: androidx.compose.ui.graphics.Color, width: androidx
 fun rememberPresetScroll(): ScrollState {
     val target = LocalPreset.current.scroll
     val scroll = rememberScrollState(target)
+    ScrollsToTop { scroll.animateScrollTo(0) }
     if (target > 0) {
         androidx.compose.runtime.LaunchedEffect(scroll.maxValue) {
             val to = minOf(target, scroll.maxValue)

@@ -33,10 +33,21 @@ fun engineShort(id: EngineId?): String = when (id) {
 @Immutable
 data class CoreOption(val pref: EnginePref, val label: String, val note: String)
 
+/** 安卓（手机 / 电视）列内核的顺序。 */
+val ANDROID_CORE_ORDER = listOf(EngineId.Exoplayer, EngineId.Vlc, EngineId.Mpv)
+
+/** 电脑（Windows / macOS）列内核的顺序；iOS 只有 MPV（M5-6，`available` 里只有它）。 */
+val DESKTOP_CORE_ORDER = listOf(EngineId.Mpv, EngineId.Vlc)
+
 /** 这台设备能选的：自动 + 真有的内核（安卓 EXO · VLC · MPV，Windows MPV · VLC）。纯函数，有单测。 */
-fun coreOptions(available: List<EngineId>, android: Boolean): List<CoreOption> = buildList {
+fun coreOptions(available: List<EngineId>, android: Boolean): List<CoreOption> = coreOptions(available, if (android) ANDROID_CORE_ORDER else DESKTOP_CORE_ORDER)
+
+/**
+ * M5-6：按壳报上来的内核排（[order] = 这一端列内核的顺序，只列 [available] 里有的）。macOS / iOS 只报 MPV → 「自动 · MPV」；
+ * 一个都没有 → 只有「自动」。安卓 / Windows 的列表和标签和原来逐项相同。纯函数，有单测。
+ */
+fun coreOptions(available: List<EngineId>, order: List<EngineId>): List<CoreOption> = buildList {
     add(CoreOption(EnginePref.Auto, "自动", "放不了自动换"))
-    val order = if (android) listOf(EngineId.Exoplayer, EngineId.Vlc, EngineId.Mpv) else listOf(EngineId.Mpv, EngineId.Vlc)
     for (e in order) if (e in available) add(
         when (e) {
             EngineId.Exoplayer -> CoreOption(EnginePref.Exoplayer, "EXO", "硬解 · 省电")
@@ -49,7 +60,8 @@ fun coreOptions(available: List<EngineId>, android: Boolean): List<CoreOption> =
 /** 这台设备上的内核选项（读壳报上来的可用内核）。 */
 fun coreOptionsFor(play: PlaySession, graph: AppGraph): List<CoreOption> {
     val ctx = EngineSelect.selectContext(play.platform.platformFacts())
-    return coreOptions(ctx.native, android = graph.deps.uiMode != com.gugugaga.ds.theme.UiMode.Desktop)
+    // 手机（安卓 / iOS）和电视按安卓的顺序，电脑按电脑的；iOS / macOS 只报 MPV，所以都是「自动 · MPV」
+    return coreOptions(ctx.native, if (graph.deps.uiMode == com.gugugaga.ds.theme.UiMode.Desktop) DESKTOP_CORE_ORDER else ANDROID_CORE_ORDER)
 }
 
 /** 设置里现在的首选引擎。 */

@@ -6,7 +6,7 @@
 
 **把你的 Emby 片库，排成一份每天出刊的画报。**
 
-安卓手机 · 安卓电视 · Windows
+安卓手机 · 安卓电视 · Windows · macOS · iPhone（测试版）
 
 [![最新版本](https://img.shields.io/github/v/release/camille3344520/gugaart?include_prereleases&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=d8432a)](https://github.com/camille3344520/gugaart/releases)
 [![下载量](https://img.shields.io/github/downloads/camille3344520/gugaart/total?label=%E4%B8%8B%E8%BD%BD&color=efe6d4&labelColor=100e0b)](https://github.com/camille3344520/gugaart/releases)
@@ -26,7 +26,8 @@
 播放、弹幕、Emby 连接沿用「咕咕嘎嘎」原生播放器的内核：
 
 - 安卓：ExoPlayer → VLC → mpv 自动回退；
-- Windows：内置 mpv，也可以用本机装的 VLC。
+- Windows：内置 mpv，也可以用本机装的 VLC；
+- macOS：内置 libmpv（MPVKit），画面直接画在应用窗口里。
 
 ## 截图
 
@@ -102,6 +103,8 @@
 | 📱 安卓手机 / 平板 | `gugaart-<版本>-phone.apk` | Android 13 及以上 |
 | 📺 安卓电视 / 盒子 | `gugaart-<版本>-tv.apk` | Android 9 及以上（ARM） |
 | 💻 Windows | `gugaart-<版本>-windows.msi` | Windows 10 / 11，64 位 |
+| 🍎 macOS | `gugaart-<版本>-macos.dmg` | macOS 27.2 及以上，Apple 芯片（1.3.0 起） |
+| 📱 iPhone（测试版） | `gugaart-<版本>-ios-unsigned.ipa` | iOS 15 及以上；**未签名**，要自己签名后安装（1.3.0 起） |
 
 - 每个版本都附 `SHA256SUMS.txt`。
 - 安卓包都用同一张专用证书签名，以后的版本可以直接覆盖安装（证书指纹见[常见问题](#常见问题)）。
@@ -134,6 +137,13 @@
 
 - 装在当前用户下，不需要管理员权限；开始菜单里叫 `GugaArt`。
 - 第一次运行如果出现「Windows 已保护你的电脑」：点「更多信息」→「仍要运行」。安装包还没有购买代码签名证书。
+
+**macOS**：双击 `…-macos.dmg`，把「咕咕嘎嘎」拖到「应用程序」。
+
+- 安装包没有经过 Apple 的公证。**第一次打开**会被系统拦下：先点「完成」，再到「系统设置 › 隐私与安全性」里找到「已阻止使用“咕咕嘎嘎”」，点「仍要打开」并确认；以后就不用了。会用终端的也可以 `xattr -dr com.apple.quarantine /Applications/咕咕嘎嘎.app`。
+- 有新版时号外的「下载安装包」会下载并打开新的 `.dmg`，应用退出，再拖一次替换就好；登录和设置都会保留（令牌在钥匙串里）。
+
+**iPhone（测试版）**：`…-ios-unsigned.ipa` 是**未签名**的（不上 App Store），用 AltStore、Sideloadly 或你自己的开发者证书签名后安装；用免费 Apple ID 签的 7 天后要重新签。
 
 **第一次打开**：
 

@@ -120,6 +120,7 @@ import com.gugugaga.app.player.PlayerKeyCommand
 import com.gugugaga.app.player.PlayerKeyRouter
 import com.gugugaga.app.player.PlayerKeys
 import com.gugugaga.app.player.PlayerSlots
+import com.gugugaga.app.player.PlayController
 import com.gugugaga.app.player.PlayerSnapshot
 import com.gugugaga.app.player.VeilLayer
 import com.gugugaga.app.player.VideoSurface
@@ -156,6 +157,8 @@ object DesktopPlayerSpec {
     const val GIVE_WAY_MS = 450
     /** 页边的底色（比纸色再深一点，画面的黑边融进去）。 */
     val MARGIN = Color(0xFF0B0A08)
+    /** 画中画期间画面那一格的纸色（设计稿 `macos.css` 的 `.pl.pip .pv .fr`，和出错页同一张纸）。 */
+    val PIP_PAPER = Color(0xFF14110D)
     /** 进度条悬停预览在测试 / 截图里固定的位置。 */
     const val HOVER_SAMPLE = 0.72f
 }
@@ -205,7 +208,18 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val render = remember(settings) { danmaku.prefsNow().render }
     val controls = remember { ControlsVisibility(scope, 3_000) }
     val window = g.deps.windowControls
+    // 画中画（MP-7、D-lead-20）：平台有能力才有钮；进了画中画，画面那一格换成纸面说明、弹幕不画
+    val pip = play.platform.pictureInPicture
+    val inPip = pip?.active == true
     var opened by remember { mutableStateOf(PlayerPanel.of(preset.playerPanel)) }
+    // 菜单栏「播放 › 投屏（DLNA）…」（macOS）：打开投屏面板
+    val castAsked = PlayerCommandSink.castPanelRequested
+    LaunchedEffect(castAsked) {
+        if (castAsked) {
+            PlayerCommandSink.castPanelRequested = false
+            if (com.gugaart.ui.cast.Cast.host != null) opened = PlayerPanel.Cast
+        }
+    }
     LocalPlayerPanelDriver.current?.let { driver -> LaunchedEffect(driver.value) { opened = PlayerPanel.of(driver.value) } }
     var dismissedNext by remember(snap.itemId) { mutableStateOf(false) }
     val playing = snap.phase == PlayPhase.Ready && !snap.paused
@@ -300,7 +314,12 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     }
     DisposableEffect(handleKey, handleBack) {
         val detach = PlayerKeyRouter.attach { e -> handleKey(e) || handleBack(e) }
-        onDispose { detach() }
+        // 菜单栏的「播放」组经这个接收者把命令交给当前播放器（M2-3 / M2-4）
+        PlayerCommandSink.sink = { cmd -> run(cmd) }
+        onDispose {
+            detach()
+            PlayerCommandSink.sink = null
+        }
     }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
@@ -330,7 +349,12 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val pb by animateDpAsState(if (show && insetMode) bottomH else 0.dp, spec, label = "pb")
     val px by animateDpAsState(if (show && insetMode) edgeW else 0.dp, spec, label = "px")
     val side by animateDpAsState(if (panel != null && insetMode) sideW else 0.dp, spec, label = "side")
-    val bg = DesktopPlayerSpec.MARGIN
+    // M2-6：macOS 系统全屏时底色纯黑（和系统涂黑的刘海那一条接上）；全屏又有不可用的顶条（safeTop > 0）时，画面上下各让出这一条、居中，
+    // 顶栏排在这一条之下。壳现在给的 safeTop 是 0（全屏窗口本来就在刘海之下，探针 S3），这段逻辑由离屏测试 player-full-notch 拿假宿主证明
+    val deskHost = LocalDesktopHost.current
+    val macFull = window?.fullscreen == true && deskHost.windowKeys == WindowKeysStyle.SystemLeft
+    val safe = if (macFull) deskHost.safeTop else 0.dp
+    val bg = if (macFull) DesktopSpec.FULLSCREEN_BLACK else DesktopPlayerSpec.MARGIN
     val chromeBg = if (insetMode) bg else bg.copy(alpha = 0.9f)
 
     Box(
@@ -340,6 +364,14 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
             .onKeyEvent { handleBack(it) }
             .focusRequester(focus)
             .focusable()
+            // 不可用的顶条和对称的底条：涂底色（画面不进去）
+            .drawBehind {
+                val sp = safe.toPx()
+                if (sp > 0.5f) {
+                    drawRect(bg, Offset.Zero, Size(size.width, sp))
+                    drawRect(bg, Offset(0f, size.height - sp), Size(size.width, sp))
+                }
+            }
             // 鼠标动一下 = 控件出来（只看，不吃事件）
             .pointerInput(Unit) {
                 awaitPointerEventScope {
@@ -355,7 +387,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
             .testTag("player-desktop"),
     ) {
         // ---- 画面：在让出来的矩形里按片子的比例放（黑边由页边色补上；画面那一块不画底——下面是原生视频层）
-        BoxWithConstraints(Modifier.fillMaxSize().padding(start = px, top = pt, end = px + side, bottom = pb)) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(start = px, top = pt + safe, end = px + side, bottom = pb + safe)) {
             val v = snap.resolved?.mediaSource?.mediaStreams?.firstOrNull { it.type == "Video" }
             val vw = v?.width ?: 0
             val vh = v?.height ?: 0
@@ -384,10 +416,11 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                     controller.togglePlay()
                     controls.bump()
                 }, onDoubleClick = { window?.let { it.setFullscreen(!it.fullscreen) } })
+                if (inPip && pip != null) DesktopPipNote(onBack = { pip.toggle() })
             }
             // ---- 弹幕：从画面上方那条黑边的顶上开始排（宽银幕的黑边、开面板时画面让出来的空），黑边不够再接着压到画面顶上；
             //      所以它不在画面那一格里，而是一块「黑边 + 画面」的格子（上游的弹幕层从格子顶往下排 area 那么高）。不接鼠标。
-            (com.gugaart.ui.player.LocalDanmakuSlotOverride.current ?: slots.danmaku)?.let { dm ->
+            (com.gugaart.ui.player.LocalDanmakuSlotOverride.current ?: slots.danmaku)?.takeIf { !inPip }?.let { dm ->
                 val holding = rememberUpdatedState(snap.holding)
                 val dur = rememberUpdatedState(duration)
                 Box(Modifier.align(Alignment.TopCenter).size(fw, gapTop + fh).clipToBounds().testTag("player-danmaku")) {
@@ -397,8 +430,11 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
         }
 
         if (show) {
+            val host = LocalDesktopHost.current
+            // macOS 非全屏：返回钮让位红绿灯（M2-2）；全屏时红绿灯被系统收走，让位归零
+            val macInset = host.windowKeys == WindowKeysStyle.SystemLeft && window?.fullscreen != true
             // ---- 顶栏（页边里）：返回｜logo + 集名 + 规格｜她的一格（暂停才有）｜印章位 + 收藏｜置顶｜窗口键
-            Row(Modifier.align(Alignment.TopStart).fillMaxWidth().height(topH).background(chromeBg).padding(start = Guga.rem(2f)).testTag("player-top"), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.align(Alignment.TopStart).padding(top = safe).fillMaxWidth().height(topH).background(chromeBg).padding(start = if (macInset) maxOf(Guga.rem(2f), host.leadingInsetPx.dp) else Guga.rem(2f)).testTag("player-top"), verticalAlignment = Alignment.CenterVertically) {
                 EdgeButton(GuguIcon.ChevronLeft, "返回", play.exit, tag = "player-back")
                 Spacer(Modifier.width(Guga.rem(1.6f)))
                 val title: @Composable () -> Unit = {
@@ -421,23 +457,30 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                     Spacer(Modifier.width(Guga.rem(1f)))
                 }
                 EdgeButton(GuguIcon.Heart, if (snap.favorite == true) "取消收藏" else "收藏", { controller.toggleFavorite() }, selected = snap.favorite == true, tag = "player-fav")
+                // 画中画（设计稿 design/macos/ 的 st=pip：收藏的右边）：有能力才画
+                if (pip != null) {
+                    Spacer(Modifier.width(Guga.rem(1.6f)))
+                    EdgeFrame(if (inPip) "回到窗口" else "画中画", { pip.toggle() }, tag = "player-pip") { hover ->
+                        PipGlyph(if (inPip) colors.seal else if (hover) colors.onInk else colors.ink, Guga.rem(2f))
+                    }
+                }
                 // 置顶：有窗口才画（不能用的控件不画）
                 if (window != null) {
                     Spacer(Modifier.width(Guga.rem(1.6f)))
                     EdgeButton(if (window.alwaysOnTop) GuguIcon.PinOff else GuguIcon.Pin, if (window.alwaysOnTop) "取消置顶" else "窗口置顶", { window.setAlwaysOnTop(!window.alwaysOnTop) }, tag = "player-pin")
                 }
                 Spacer(Modifier.width(Guga.rem(1.6f)))
-                if (window?.fullscreen != true) Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.TopEnd) { WindowKeys() }
+                if (host.windowKeys != WindowKeysStyle.SystemLeft && window?.fullscreen != true) Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.TopEnd) { WindowKeys() }
             }
             // ---- 左缘图注、右缘音量（页边里）
             if (px > 0.dp && !narrow) {
-                Box(Modifier.align(Alignment.TopStart).padding(top = pt, bottom = pb).width(px).fillMaxHeight().background(chromeBg), contentAlignment = Alignment.Center) {
+                Box(Modifier.align(Alignment.TopStart).padding(top = pt + safe, bottom = pb + safe).width(px).fillMaxHeight().background(chromeBg), contentAlignment = Alignment.Center) {
                     val caption = listOfNotNull(snap.item?.parentIndexNumber?.let { "第 $it 季" }, snap.item?.indexNumber?.takeIf { snap.item?.seriesName != null }?.let { "第 $it 集" }, snap.item?.name?.let { "《$it》" } ?: snap.title).joinToString(" · ")
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         for (cell in verticalCells(caption).take(26)) BasicText(cell, style = Guga.song(rsp(1.15f), color = colors.faint, lineHeight = rsp(1.75f)), maxLines = 1)
                     }
                 }
-                Box(Modifier.align(Alignment.TopEnd).padding(top = pt, bottom = pb, end = side).width(px).fillMaxHeight().background(chromeBg), contentAlignment = Alignment.Center) {
+                Box(Modifier.align(Alignment.TopEnd).padding(top = pt + safe, bottom = pb + safe, end = side).width(px).fillMaxHeight().background(chromeBg), contentAlignment = Alignment.Center) {
                     val vol = if (prefs.muted) 0.0 else prefs.volume
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.testTag("player-volume")) {
                         BasicText("${kotlin.math.round(vol * 100).toInt()}", style = Guga.numeral(rsp(1.2f), colors.dim), maxLines = 1)
@@ -606,12 +649,19 @@ private fun BoxScope.Picture(play: PlaySession, snap: PlayerSnapshot, engine: Pl
 @Composable
 private fun EdgeButton(icon: GuguIcon, label: String, onClick: () -> Unit, selected: Boolean = false, tag: String = "player-edge-button") {
     val colors = Guga.colors
+    EdgeFrame(label, onClick, tag) { hover -> Icon(icon, if (selected) colors.seal else if (hover) colors.onInk else colors.ink, Guga.rem(2f), filled = selected) }
+}
+
+/** [EdgeButton] 的方框本身，里面画什么由 [content] 定（参数 = 悬停中）。 */
+@Composable
+private fun EdgeFrame(label: String, onClick: () -> Unit, tag: String, content: @Composable (Boolean) -> Unit) {
+    val colors = Guga.colors
     val press = rememberPressState()
     val hover = rememberHover()
     Box(
         Modifier.size(Guga.rem(4f)).hover(hover).pressGraphics(press).then(if (hover.value) Modifier.background(colors.ink) else Modifier).border(1.dp, colors.faint).deskFocusRing(press).pressable(press, label = label, onClick = onClick).testTag(tag),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, if (selected) colors.seal else if (hover.value) colors.onInk else colors.ink, Guga.rem(2f), filled = selected) }
+    ) { content(hover.value) }
 }
 
 /** 控制坞中段的键（图标；悬停 = 反白）。[enabled] = false：没有上一集 / 下一集时变淡、点不动（位置留着，三段才对称）。 */
@@ -770,13 +820,15 @@ private fun DesktopPlayerError(play: PlaySession, snap: PlayerSnapshot) {
     val g = LocalGraph.current
     val colors = Guga.colors
     val view = snap.errorView
+    // M2-14（D-lead-16）：整条回退链为空（找不到 libmpv）= 上游那句 NO_ENGINE_MESSAGE（电脑版式同手机）。
+    val noEngine = snap.error == PlayController.NO_ENGINE_MESSAGE
     val controller = play.controller
     Box(Modifier.fillMaxSize().background(Color(0xFF14110D)).testTag("player-error")) {
         Row(Modifier.align(Alignment.Center).widthIn(max = Guga.rem(96f)).padding(horizontal = Guga.rem(6f)), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 BasicText("PLAYBACK ERROR · 放映中断", style = Guga.song(rsp(1.2f), FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
-                BasicText(view?.title ?: "这一集放不出来", Modifier.padding(top = Guga.rem(1f), bottom = Guga.rem(1.6f)), style = Guga.song(rsp(4f), FontWeight.Black, lineHeight = rsp(5.2f), letterSpacing = 0.1.em), maxLines = 2)
-                BasicText(view?.hint ?: "换个版本，或者让服务器转一下，通常就好了。", style = Guga.song(rsp(1.5f), color = colors.dim, lineHeight = rsp(2.8f)), maxLines = 4)
+                BasicText(if (noEngine) PlayController.NO_ENGINE_MESSAGE else (view?.title ?: "这一集放不出来"), Modifier.padding(top = Guga.rem(1f), bottom = Guga.rem(1.6f)), style = Guga.song(rsp(4f), FontWeight.Black, lineHeight = rsp(5.2f), letterSpacing = 0.1.em), maxLines = 2)
+                if (!noEngine) BasicText(view?.hint ?: "换个版本，或者让服务器转一下，通常就好了。", style = Guga.song(rsp(1.5f), color = colors.dim, lineHeight = rsp(2.8f)), maxLines = 4)
                 Row(Modifier.padding(top = Guga.rem(2.8f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.4f)), verticalAlignment = Alignment.CenterVertically) {
                     val actions = view?.actions ?: listOf(ErrorActionId.Retry, ErrorActionId.Exit)
                     for ((i, a) in actions.filter { it != ErrorActionId.UseWeb }.take(4).withIndex()) {
@@ -806,10 +858,12 @@ private fun DesktopPlayerError(play: PlaySession, snap: PlayerSnapshot) {
                 }
             }
         }
-        Row(Modifier.align(Alignment.TopStart).fillMaxWidth().height(Guga.rem(DesktopPlayerSpec.TOP)).padding(start = Guga.rem(2f)), verticalAlignment = Alignment.CenterVertically) {
+        val errHost = LocalDesktopHost.current
+        val errMacInset = errHost.windowKeys == WindowKeysStyle.SystemLeft
+        Row(Modifier.align(Alignment.TopStart).fillMaxWidth().height(Guga.rem(DesktopPlayerSpec.TOP)).padding(start = if (errMacInset) maxOf(Guga.rem(2f), errHost.leadingInsetPx.dp) else Guga.rem(2f)), verticalAlignment = Alignment.CenterVertically) {
             EdgeButton(GuguIcon.ChevronLeft, "返回", play.exit, tag = "player-back")
             Spacer(Modifier.weight(1f))
-            Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.TopEnd) { WindowKeys() }
+            if (!errMacInset) Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.TopEnd) { WindowKeys() }
         }
     }
 }
