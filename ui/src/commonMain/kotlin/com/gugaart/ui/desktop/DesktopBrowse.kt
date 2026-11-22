@@ -39,6 +39,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -104,6 +105,7 @@ import com.gugaart.ui.screens.play
 import com.gugaart.ui.screens.search.RemoteHits
 import com.gugaart.ui.screens.search.TitleHit
 import com.gugaart.ui.screens.search.loadSearchIndex
+import com.gugaart.ui.screens.search.remoteResultsReady
 import com.gugaart.ui.screens.search.searchRemote
 import com.gugaart.ui.screens.search.searchTitles
 import com.gugaart.ui.screens.sets.loadSets
@@ -114,6 +116,10 @@ import com.gugaart.ui.screens.wall.WallSort
 import com.gugaart.ui.screens.wall.WatchState
 import com.gugaart.ui.screens.wall.genreOptions
 import com.gugaart.ui.screens.wall.loadWall
+import com.gugaart.ui.screens.wall.toFilter
+import com.gugaart.ui.screens.wall.toPref
+import com.gugaart.ui.screens.wall.toSort
+import com.gugaart.ui.screens.settings.LocalGugaSettings
 import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.wide.LocalWideNav
 import com.gugaart.ui.wide.WideTab
@@ -350,12 +356,23 @@ private fun DesktopWall(lib: LibraryEntry, today: Today) {
     val preset = LocalPreset.current
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { chrome.spot = null }
-    var sort by remember { mutableStateOf(if (preset.state == "az") WallSort.Name else WallSort.Added) }
-    var filter by remember { mutableStateOf(WallFilter(genres = preset.wallGenres, decades = Decade.entries.filter { it.label in preset.wallDecades }.toSet())) }
-    var minRating by remember { mutableStateOf<Int?>(null) }
+    // 1.3.1：筛选 / 排序 / 评分线按片库记住（进详情返回、重开应用都还在）；测试预置优先于存着的
+    val settings = LocalGugaSettings.current
+    val saved = settings?.prefs?.value?.wall?.get(lib.id)
+    var sort by remember(lib.id) { mutableStateOf(if (preset.state == "az") WallSort.Name else saved?.toSort(WallSort.Added) ?: WallSort.Added) }
+    var filter by remember(lib.id) {
+        mutableStateOf(
+            if (preset.wallGenres.isNotEmpty() || preset.wallDecades.isNotEmpty()) WallFilter(genres = preset.wallGenres, decades = Decade.entries.filter { it.label in preset.wallDecades }.toSet())
+            else saved?.toFilter() ?: WallFilter(),
+        )
+    }
+    var minRating by remember(lib.id) { mutableStateOf(saved?.minRating) }
+    LaunchedEffect(filter, sort, minRating, lib.id) {
+        settings?.update { p -> p.copy(wall = p.wall + (lib.id to filter.toPref(sort, minRating))) }
+    }
     var panel by remember { mutableStateOf(preset.state == "filter") }
     var sortOpen by remember { mutableStateOf(preset.state == "sort") }
-    var listView by remember { mutableStateOf(preset.state == "list") }
+    var listView by rememberSaveable { mutableStateOf(preset.state == "list") }
     val wall = rememberLoad(lib.id, sort) { loadWall(it, lib, sort) }
     val all = wall.value?.first.takeIf { preset.state != "loading" }
     val total = lib.titles ?: wall.value?.second
@@ -717,35 +734,25 @@ fun DesktopSearchScreen(q: String?, today: Today) {
     val win = LocalWindowDp.current
     val preset = LocalPreset.current
     LaunchedEffect(Unit) { chrome.spot = null }
-    var query by remember { mutableStateOf(preset.query ?: q.orEmpty()) }
+    // 1.3.1：返回保持位置——搜索词 / 是否按过 Enter / 联想选中项都记住（rememberSaveable，跟着返回栈条目走，PageStates）
+    var query by rememberSaveable { mutableStateOf(preset.query ?: q.orEmpty()) }
     // 按过 Enter：左栏从联想换成最佳匹配
-    var submitted by remember { mutableStateOf(preset.state != "typing" && query.isNotEmpty()) }
-    var picked by remember { mutableIntStateOf(if (preset.state == "typing") 1 else 0) }
+    var submitted by rememberSaveable { mutableStateOf(preset.state != "typing" && query.isNotEmpty()) }
+    var picked by rememberSaveable { mutableIntStateOf(if (preset.state == "typing") 1 else 0) }
     val index = rememberLoad("search-index") { loadSearchIndex(it) }
     val hits = remember(index.value, query) { index.value?.let { searchTitles(it.titles, query) } }
-    var remote by remember { mutableStateOf(RemoteHits(emptyList(), emptyList())) }
+    // 服务器那一路的结果走 rememberLoad（按词缓存）：返回时第一帧就是上次这个词的结果，页面够长，滚动位置才还原得了。
+    var settled by rememberSaveable { mutableStateOf(query) }
+    LaunchedEffect(query) { delay(220); settled = query }
+    val remote = rememberLoad("search-remote", settled) { searchRemote(it, settled) }
+    val remoteHits = remote.value.takeIf { remoteResultsReady(settled, query, remote.valueKeys) } ?: RemoteHits(emptyList(), emptyList())
     // 演员：本地人名单（名字 / 拼音缩写）+ 服务器的人物搜索；打名字正好是某位演员 → 演员和 ta 的作品排在前面，缩写照旧片子在前
     val peopleIndex = rememberLoad("search-people") { com.gugaart.ui.screens.search.loadPeopleIndex(it) }
     val localPeople = remember(peopleIndex.value, query) { com.gugaart.ui.screens.search.searchPeopleLocal(peopleIndex.value.orEmpty(), query) }
-    val people = remember(localPeople, remote) { com.gugaart.ui.screens.search.mergePeople(localPeople, remote.people, query) }
+    val people = remember(localPeople, remoteHits) { com.gugaart.ui.screens.search.mergePeople(localPeople, remoteHits.people, query) }
     val star = people.firstOrNull()?.person?.takeIf { com.gugaart.ui.screens.search.peopleFirst(query, hits.orEmpty(), people) }
     val worksLoad = rememberLoad("search-works", star?.id) { c -> star?.let { com.gugaart.ui.screens.search.loadPersonWorks(c, it.id) }.orEmpty() }
     val works = worksLoad.value.orEmpty().takeIf { star != null }.orEmpty()
-    val client = graph.session.session.value?.client
-    LaunchedEffect(query, client) {
-        if (client == null || query.isBlank()) {
-            remote = RemoteHits(emptyList(), emptyList())
-            return@LaunchedEffect
-        }
-        delay(220)
-        remote = try {
-            searchRemote(client, query)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            RemoteHits(emptyList(), emptyList())
-        }
-    }
     val field = remember { FocusRequester() }
     LaunchedEffect(graph.searchFocusTick) { runCatching { field.requestFocus() } }
     val suggestions = hits.orEmpty().take(7)
@@ -844,7 +851,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
             query.isBlank() -> DesktopSearchIdle(index.value?.titles.orEmpty(), peopleIndex.value.orEmpty(), recents.items, cloud, today.day, ::pick, recents::clear)
             index.value == null && index.error != null -> ErrorView(index.error!!, index::retry)
             index.value == null -> if (index.showSkeleton) LoadingView(seed = today.day)
-            titles.isEmpty() && remote.episodes.isEmpty() && people.isEmpty() -> SearchNoneView(query, {
+            titles.isEmpty() && remoteHits.episodes.isEmpty() && people.isEmpty() -> SearchNoneView(query, {
                 query = ""
                 submitted = false
             })
@@ -873,7 +880,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                     }
                     // 右栏：结果
                     Column(Modifier.weight(DeskBrowseSpec.SEARCH_RIGHT)) {
-                        val all = titles.size + remote.episodes.size + people.size
+                        val all = titles.size + remoteHits.episodes.size + people.size
                         val rightW = (win.width.value - dimens.margin.value * 2 - dimens.gutter.value * 2) * DeskBrowseSpec.SEARCH_RIGHT / (DeskBrowseSpec.SEARCH_LEFT + DeskBrowseSpec.SEARCH_RIGHT)
                         val cols = if (win.width.value >= DeskSpec.XL_FROM) 8 else if (win.width.value <= 1280f) 4 else 5
                         val cardW = ((rightW - dimens.gutter.value * (cols - 1)) / cols).dp
@@ -906,9 +913,9 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                             val ranges = rest.associate { it.title.id to it.range }
                             Grid(rest.map { it.title }) { ranges[it.id] }
                         }
-                        if (remote.episodes.isNotEmpty()) {
-                            DeskSection(null, "单集", "EPISODES", Modifier.padding(top = Guga.rem(2.4f))) { SectionNote("${remote.episodes.size} 集") }
-                            for ((i, e) in remote.episodes.take(8).withIndex()) {
+                        if (remoteHits.episodes.isNotEmpty()) {
+                            DeskSection(null, "单集", "EPISODES", Modifier.padding(top = Guga.rem(2.4f))) { SectionNote("${remoteHits.episodes.size} 集") }
+                            for ((i, e) in remoteHits.episodes.take(8).withIndex()) {
                                 DeskTocRow(Rules.episodeNo(i + 1), e.name, listOfNotNull(e.seriesName, e.episodeNo?.let { "第 $it 集" }).joinToString(" · "), e.art.thumb ?: e.art.backdrop, e.progress, { openHit(e.id) }, menu = e, highlight = Pinyin.match(e.name, query))
                             }
                         }

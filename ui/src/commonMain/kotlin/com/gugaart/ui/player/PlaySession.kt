@@ -176,8 +176,13 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
     val memory = remember { SubtitleMemory(g.deps.local) }
     val explicit = rememberUpdatedState(route.subtitle != null)
     LaunchedEffect(play) {
-        fun tracksOf(snap: com.gugugaga.app.player.PlayerSnapshot): List<SubTrack> =
-            snap.resolved?.mediaSource?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }.map { SubTrack(it.index, it.language, it.title ?: it.displayTitle) }
+        fun tracksOf(snap: com.gugugaga.app.player.PlayerSnapshot): List<SubTrack> {
+            val emby = snap.resolved?.mediaSource?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }
+            if (emby.isNotEmpty()) return emby.map { SubTrack(it.index, it.language, it.title ?: it.displayTitle, it.isExternal == true) }
+            // 1.3.1：Emby 流表空（《谷雨》这类源）→ 用内核 track-list 的内嵌轨，编号 = ordinal（和上游空表回落同一套）
+            return play.controller.engineFlow.value?.tracks?.value?.subtitle.orEmpty().filter { !it.external }
+                .mapIndexed { i, t -> SubTrack(i, t.lang, t.label, false) }
+        }
         fun keyOf(snap: com.gugugaga.app.player.PlayerSnapshot): String = snap.item?.seriesId ?: snap.itemId
         play.onSubtitleChosen = { index ->
             val snap = play.controller.value
@@ -191,7 +196,8 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
             // 以前一拿到播放信息就选：那时内核还没加载 / 正在加载，选择先挂起，内核的 load() 一开始就把挂起的选择清掉——
             // 控制器记着「开」，内核里其实没开。换内核、重新协商也会再 load 一次，同样会丢。
             if (snap.phase != com.gugugaga.app.player.PlayPhase.Ready) return@collect
-            val id = snap.itemId + "|" + resolved.mediaSource.id
+            // _guard 带上内核轨数量：流表空的源要等 track-list 到了再选一次（第一次到时轨还没报上来）
+            val id = snap.itemId + "|" + resolved.mediaSource.id + "|" + (play.controller.engineFlow.value?.tracks?.value?.subtitle?.size ?: -1)
             if (done == id) return@collect
             done = id
             if (explicit.value) {
@@ -200,7 +206,8 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
             }
             val streams = resolved.mediaSource.mediaStreams
             val audio = streams.firstOrNull { it.type == "Audio" && it.index == resolved.audioStreamIndex } ?: streams.firstOrNull { it.type == "Audio" && it.isDefault == true } ?: streams.firstOrNull { it.type == "Audio" }
-            val pick = pickSubtitle(gugaPrefs.value.subtitleDefault, memory.get(keyOf(snap)), audio?.language, item.productionLocations, tracksOf(snap))
+            val audioLang = audio?.language ?: play.controller.engineFlow.value?.tracks?.value?.audio?.firstOrNull()?.lang
+            val pick = pickSubtitle(gugaPrefs.value.subtitleDefault, memory.get(keyOf(snap)), audioLang, item.productionLocations, tracksOf(snap))
             play.subtitleWhy = pick.why
             if (snap.subtitleIndex != pick.index) play.controller.selectSubtitle(pick.index)
         }

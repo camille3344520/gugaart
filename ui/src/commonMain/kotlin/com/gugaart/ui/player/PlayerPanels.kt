@@ -84,6 +84,15 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 PanelSection("版本")
                 for (v in snap.versions) PanelOption(v.name?.takeIf { it.isNotBlank() } ?: "未命名", v.id == snap.sourceId, { v.id?.let(controller::setSource) }, note = specLine(v)?.substringBefore(" · "))
             }
+            // 着色器增强（Anime4K / FSR）：只有 mpv 系内核 + 能写文件的平台才画；选择记在画报自己的键里，点完立即应用（RememberShaderApply）
+            val shaderEngine by controller.engineFlow.collectAsState()
+            val shaderStore = com.gugaart.ui.screens.settings.rememberGugaStore()
+            val shaderPrefs by shaderStore.prefs.collectAsState()
+            val shaderHost = com.gugaart.ui.data.LocalFontImport.current
+            if (shaderEntryVisible(shaderEngine?.shaders != null, shaderHost != null)) {
+                PanelSection("着色器增强")
+                for (s in ShaderPreset.entries) PanelOption(s.label, shaderPrefs.shader == s, { shaderStore.update { it.copy(shader = s) } }, note = s.note)
+            }
         }
         PlayerPanel.Core -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-core")) {
             PanelHeader(panel)

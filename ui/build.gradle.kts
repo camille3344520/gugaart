@@ -69,6 +69,11 @@ val gugaResources = tasks.register<Sync>("gugaResources") {
         include("*.ttf", "OFL.txt")
         into("files/fonts")
     }
+    // 画质增强着色器（Anime4K / FSR）：third_party/shaders → files/shaders/（照 fonts 先例；原件与许可证见 third_party/shaders/README.md）
+    from(rootProject.layout.projectDirectory.dir("third_party/shaders")) {
+        include("Anime4K/*.glsl", "Anime4K/LICENSE", "FSR/FSR.glsl", "FSR/LICENSE")
+        into("files/shaders")
+    }
     into(layout.buildDirectory.dir("gugaResources/commonMain"))
 }
 
@@ -86,6 +91,8 @@ tasks.withType<Test>().configureEach {
     providers.gradleProperty("gugu.mock.url").orNull?.let { systemProperty("gugu.mock.url", it) }
     // 用户真实服务器的离屏实拍（只读；运行时读仓库根的 .env）：默认不跑，-Pgugaart.realEmby=true 才跑
     providers.gradleProperty("gugaart.realEmby").orNull?.let { systemProperty("gugaart.realEmby", it) }
+    // 只读复现探针（SearchReproTest）在 worktree 里向上找不到主检出的 .env：-Pgugaart.envFile=<文件> 指给它（测试自己读，值不打印）
+    providers.gradleProperty("gugaart.envFile").orNull?.let { systemProperty("gugaart.envFile", it) }
     // 换一个数据包（README 截图用 scripts/art/mock-pack.py 生成的全虚构数据包）：-Pgugaart.fixture=<目录>
     providers.gradleProperty("gugaart.fixture").orNull?.let { systemProperty("gugaart.fixture", it) }
     maxHeapSize = "2g"

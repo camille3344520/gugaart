@@ -82,8 +82,6 @@ object PhoneItemMenu {
                 MenuRow(if (fav) "取消收藏" else "收藏", { g.toggleFavorite(chrome, favId, fav); close() }, icon = GuguIcon.Heart)
                 if (t.kind != Kind.BoxSet) MenuRow(if (seen) "标成没看" else "标记已看", { g.togglePlayed(chrome, t.id, seen); close() }, icon = GuguIcon.Check)
                 if (manage) {
-                    Rule(Modifier.padding(vertical = 4.dp))
-                    BasicText("管理 · 会改动服务器上的条目", Modifier.padding(vertical = 4.dp), style = Guga.note(Guga.type.caption, colors.faint), maxLines = 1)
                     MenuRow("刷新元数据", {
                         status = "正在请求…"
                         g.scope.launch { status = ItemManage.refresh(g, t.id) }

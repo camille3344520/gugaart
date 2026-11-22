@@ -18,6 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,9 +107,11 @@ fun TvSearchScreen(q: String?, today: Today) {
     val hour = LocalHour.current
     LaunchedEffect(Unit) { chrome.spot = null }
     val index = rememberLoad("tv-search-index") { loadSearchIndex(it) }
-    var query by remember { mutableStateOf((preset.query ?: q).orEmpty().uppercase().take(TvSearchSpec.MAX_QUERY)) }
-    var digits by remember { mutableStateOf(false) }
-    var lastKey by remember { mutableStateOf("key-A") }
+    // 1.3.1：返回保持位置——打过的词 / 数字盘 / 字母盘上最后的键都记住（rememberSaveable，跟着返回栈条目走）；
+    // 返回时词还在，本地索引（缓存）第一帧就排得出结果，焦点才落回原来那条（PageStates + RouteFocusMemory）。
+    var query by rememberSaveable { mutableStateOf((preset.query ?: q).orEmpty().uppercase().take(TvSearchSpec.MAX_QUERY)) }
+    var digits by rememberSaveable { mutableStateOf(false) }
+    var lastKey by rememberSaveable { mutableStateOf("key-A") }
     val titles = index.value?.titles
     val hits = remember(titles, query) { titles?.let { searchTitles(it, query.trim(), TvSearchSpec.MAX_ROWS) }.orEmpty() }
     // 演员（用户 2026-11-16：「搜索也支持按演员名字搜索，不过缩写的话还是影片排在前面」）：本地人名单按名字 / 拼音缩写找；

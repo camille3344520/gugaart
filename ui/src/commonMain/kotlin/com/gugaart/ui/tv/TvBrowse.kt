@@ -65,6 +65,10 @@ import com.gugaart.ui.screens.wall.WallSort
 import com.gugaart.ui.screens.wall.WatchState
 import com.gugaart.ui.screens.wall.genreOptions
 import com.gugaart.ui.screens.wall.loadWall
+import com.gugaart.ui.screens.wall.toFilter
+import com.gugaart.ui.screens.wall.toPref
+import com.gugaart.ui.screens.wall.toSort
+import com.gugaart.ui.screens.settings.LocalGugaSettings
 import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.wide.LocalWideNav
 import com.gugugaga.app.nav.Route
@@ -272,8 +276,19 @@ private fun TvWallScreen(lib: LibraryEntry, today: Today) {
     val preset = LocalPreset.current
     val chrome = LocalChrome.current
     LaunchedEffect(Unit) { chrome.spot = null }
-    var sort by remember { mutableStateOf(WallSort.Added) }
-    var filter by remember { mutableStateOf(WallFilter(genres = preset.wallGenres, decades = Decade.entries.filter { it.label in preset.wallDecades }.toSet())) }
+    // 1.3.1：筛选 / 排序按片库记住（返回、重开都还在）；测试预置优先于存着的
+    val settings = LocalGugaSettings.current
+    val saved = settings?.prefs?.value?.wall?.get(lib.id)
+    var sort by remember(lib.id) { mutableStateOf(saved?.toSort(WallSort.Added) ?: WallSort.Added) }
+    var filter by remember(lib.id) {
+        mutableStateOf(
+            if (preset.wallGenres.isNotEmpty() || preset.wallDecades.isNotEmpty()) WallFilter(genres = preset.wallGenres, decades = Decade.entries.filter { it.label in preset.wallDecades }.toSet())
+            else saved?.toFilter() ?: WallFilter(),
+        )
+    }
+    LaunchedEffect(filter, sort, lib.id) {
+        settings?.update { p -> p.copy(wall = p.wall + (lib.id to filter.toPref(sort))) }
+    }
     var panel by remember { mutableStateOf(preset.state == "filter" || preset.wallPanel != null) }
     var from by remember { mutableStateOf<PressState?>(null) }
     val load = rememberLoad("tv-wall", lib.id, sort) { loadWall(it, lib, sort) }

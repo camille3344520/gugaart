@@ -204,6 +204,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     val snap by controller.snapshot.collectAsState()
     val clock by controller.clock.collectAsState()
     val engine by controller.engineFlow.collectAsState()
+    com.gugaart.ui.player.RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（电视没有选择入口，但沿用本地键）
     val settings by danmaku.settingsState.collectAsState()
     val render = remember(settings) { danmaku.prefsNow().render }
     val controls = remember { ControlsVisibility(scope, TvPlayerSpec.HIDE_MS) }

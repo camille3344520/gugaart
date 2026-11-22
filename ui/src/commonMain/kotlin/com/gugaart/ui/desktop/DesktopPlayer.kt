@@ -202,6 +202,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val snap by controller.snapshot.collectAsState()
     val clock by controller.clock.collectAsState()
     val engine by controller.engineFlow.collectAsState()
+    com.gugaart.ui.player.RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（ShaderApply.kt）
     val settings by danmaku.settingsState.collectAsState()
     val appSettings by g.settings.state.collectAsState()
     val prefs by play.prefs.state.collectAsState()
@@ -523,7 +524,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                             if (p == PlayerPanel.Eps && com.gugaart.ui.player.LocalPlayerEpisodes.current == null && snap.episodes.isEmpty()) continue
                             val value = when (p) {
                                 PlayerPanel.Eps -> snap.item?.indexNumber?.let { n -> com.gugaart.ui.player.LocalPlayerEpisodes.current?.season?.number?.let { s -> "第 $s 季 · 第 $n 集" } ?: "第 $n 集" }
-                                PlayerPanel.Sub -> snap.subtitles.firstOrNull { it.selected }?.label?.takeIf { snap.subtitleIndex != null } ?: "关"
+                                PlayerPanel.Sub -> snap.subtitles.firstOrNull { it.selected || it.index == snap.subtitleIndex }?.label?.takeIf { snap.subtitleIndex != null } ?: "关"
                                 PlayerPanel.Audio -> snap.audio.firstOrNull { it.selected }?.label
                                 PlayerPanel.Speed -> rateLabel(snap.rate)
                                 PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"

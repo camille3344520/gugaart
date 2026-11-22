@@ -14,8 +14,8 @@ import kotlinx.serialization.json.put
  * 「有字幕的片」= 对白是中文的片子：国产剧 / 电影大多把字幕烧在画面里，再开一条外挂字幕就叠了两层。
  */
 
-/** 一条字幕轨里和选择有关的东西（上游 `MediaStream` 的 Index / Language / Title + DisplayTitle）。 */
-data class SubTrack(val index: Int, val language: String? = null, val title: String? = null)
+/** 一条字幕轨里和选择有关的东西（上游 `MediaStream` 的 Index / Language / Title + DisplayTitle）。[external] = 外挂（内嵌 = false）。 */
+data class SubTrack(val index: Int, val language: String? = null, val title: String? = null, val external: Boolean = false)
 
 /** 中文字幕的四类，按用户要的先后：简体 > 繁体 > 中英双语 > 其它中文。 */
 enum class ChineseKind(val short: String) { Simplified("简中"), Traditional("繁中"), Bilingual("双语"), Other("中文") }
@@ -80,9 +80,12 @@ data class SubChoice(val off: Boolean, val language: String? = null, val title: 
 /** 选出来的结果：[index] = 要开的字幕轨（null = 关）；[why] = 怎么选来的（顶部信息行写「字幕 简中 · 自动」）。 */
 data class SubPick(val index: Int?, val why: String)
 
-/** 「智能」：对白是中文 = 不开；否则最合适的中文字幕；没有中文字幕 = 关。 */
-fun smartSubtitle(audioLanguage: String?, productionLocations: List<String>, subs: List<SubTrack>): Int? =
-    if (dialogueIsChinese(audioLanguage, productionLocations)) null else bestChineseSubtitle(subs)?.index
+/** 「智能」：对白是中文且只有外挂字幕 = 不开（画面多半烧了字幕，用户 2026-11-15）；带内嵌字幕 = 内嵌不是烧录，照偏好开（1.3.1）；否则最合适的中文字幕。 */
+fun smartSubtitle(audioLanguage: String?, productionLocations: List<String>, subs: List<SubTrack>): Int? = when {
+    !dialogueIsChinese(audioLanguage, productionLocations) -> bestChineseSubtitle(subs)?.index
+    subs.any { !it.external } -> bestChineseSubtitle(subs.filter { !it.external })?.index
+    else -> null
+}
 
 /**
  * 这一条该开哪条字幕。[remembered] = 这部剧 / 电影上次的选择（没有记录 = null）。

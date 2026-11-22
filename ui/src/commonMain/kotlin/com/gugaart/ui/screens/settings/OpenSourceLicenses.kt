@@ -64,17 +64,17 @@ object OpenSourceLicenses {
                 LicenseEntry("libass", "ISC", "github.com/libass/libass"),
                 LicenseEntry("libplacebo", "LGPL-2.1-or-later", "code.videolan.org/videolan/libplacebo"),
                 LicenseEntry("dav1d", "BSD-2-Clause", "code.videolan.org/videolan/dav1d"),
-            ),
+            ) + SHADERS,
             note = "安装包在 resources/mpv/ 里带一份未经修改的 mpv.exe 和它自带的 DLL，应用把它当独立程序启动。" +
                 "所带二进制的确切条款以它的构建来源为准，见同一目录的 BUNDLE.json（source、version、sha256）。",
         )
         LicensePlatform.MacOS -> LicenseGroup(
-            "播放内核", "ENGINE", MPVKIT,
+            "播放内核", "ENGINE", MPVKIT + SHADERS,
             note = "应用包里的 libmpv.dylib 由 MPVKit 1.0.0（GPL 构建）各仓库正式发布的静态库链成，整体按 GNU GPL 第 3 版或更新版本分发" +
                 "（和本应用相同）。二进制出自 github.com/mpvkit 下各仓库的正式发布；各库的源码在每一行写的上游取得。",
         )
         LicensePlatform.Ios -> if (!iosPlayer) null else LicenseGroup(
-            "播放内核", "ENGINE", MPVKIT.filter { it.name !in NOT_IN_IOS },
+            "播放内核", "ENGINE", MPVKIT.filter { it.name !in NOT_IN_IOS } + SHADERS,
             note = "链进应用的 libmpv 来自 MPVKit 1.0.0（GPL 构建），整体按 GNU GPL 第 3 版或更新版本分发（和本应用相同）。" +
                 "二进制出自 github.com/mpvkit 下各仓库的正式发布；各库的源码在每一行写的上游取得。",
         )
@@ -108,7 +108,7 @@ object OpenSourceLicenses {
                 LicenseEntry("libass", "ISC", "github.com/libass/libass"),
                 LicenseEntry("dav1d", "BSD-2-Clause", "code.videolan.org/videolan/dav1d"),
                 LicenseEntry("其他宽松许可组件", "MIT / zlib 等宽松许可", "fontconfig、HarfBuzz、expat、libunibreak、libxml2"),
-            ),
+            ) + SHADERS,
         )
     }
 
@@ -147,6 +147,12 @@ object OpenSourceLicenses {
         LicenseEntry("uavs3d", "BSD-3-Clause", "1.2.1 · github.com/uavs3/uavs3d"),
         LicenseEntry("uchardet", "MPL-1.1 或 GPL-2.0-or-later 或 LGPL-2.1-or-later", "0.0.8 · freedesktop.org/wiki/Software/uchardet"),
         LicenseEntry("LuaJIT", "MIT", "2.1.0 · luajit.org"),
+    )
+
+    /** 画质面板随包的着色器增强（Anime4K / FSR，MIT）：各 mpv 平台的包都带（资源 files/shaders/），和 NOTICE.md「画质增强着色器」那张表一致。 */
+    val SHADERS: List<LicenseEntry> = listOf(
+        LicenseEntry("Anime4K", "MIT", "v4.0.1 · github.com/bloc97/Anime4K"),
+        LicenseEntry("FSR（FidelityFX Super Resolution）", "MIT", "v1.0.2 · gist.github.com/agyild/82219c545228d70c5604f865ce0b0ce5"),
     )
 
     /** 运行库与组件：和 `NOTICE.md`「安装目录 app/ 与 runtime/ 里的运行时和库」那张表一致，按包取舍（安卓 / iPhone 没有 Java 运行时、JNA）。 */

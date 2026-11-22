@@ -170,6 +170,7 @@ class VlcBackend(private val host: VlcHost) : NativePlayerBackend {
             is NativeCommand.Audio -> e.selectAudio(cmd.id)
             is NativeCommand.Subtitle -> e.selectSubtitle(cmd.id)
             is NativeCommand.SubDelay -> e.setSubtitleDelay(cmd.ms.toLong())
+            is NativeCommand.Shaders -> Unit // VLC has no GLSL shader chain (NativeEngine never offers one for it)
             is NativeCommand.Aspect -> e.setAspect(cmd.mode.id)
             is NativeCommand.Viewport -> e.setViewport(cmd.rect?.let { Viewport.Rect(it.x, it.y, it.w, it.h) } ?: Viewport.Fullscreen)
             NativeCommand.Snapshot, is NativeCommand.FrameSample -> null
@@ -218,6 +219,7 @@ class MpvBackend(private val host: MpvHost) : NativePlayerBackend {
             is NativeCommand.Audio -> e.command(MpvTransportCommand.Audio(cmd.id))
             is NativeCommand.Subtitle -> e.command(MpvTransportCommand.Subtitle(cmd.id))
             is NativeCommand.SubDelay -> e.command(MpvTransportCommand.SubDelay(cmd.ms))
+            is NativeCommand.Shaders -> e.command(MpvTransportCommand.Shaders(cmd.paths))
             is NativeCommand.Aspect -> e.command(MpvTransportCommand.Aspect(cmd.mode.id))
             is NativeCommand.Viewport -> e.setViewport(cmd.rect?.let { Viewport.Rect(it.x, it.y, it.w, it.h) } ?: Viewport.Fullscreen)
             NativeCommand.Snapshot -> {

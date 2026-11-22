@@ -81,6 +81,20 @@ xcrun clang -dynamiclib -arch arm64 -isysroot "$(xcrun --sdk macosx --show-sdk-p
 > 链接时一并给了，但 FFmpeg 的 TLS 走 GnuTLS，`-dead_strip` 之后 `libmpv.dylib` 里一个 OpenSSL 的符号都没有（`SSL_*` / `EVP_*` / `CRYPTO_*`），
 > 所以它不在随包的组件里。LuaJIT 在（这份 macOS 的 mpv 带 Lua）。
 
+## 画质增强着色器（随包：Anime4K / FSR）
+
+播放器「画质 › 着色器增强」用的 GLSL 着色器随包带在应用资源里（`files/shaders/`，原件与 SHA-256 在仓库 `third_party/shaders/`），
+由应用显式设置 mpv 的 `glsl-shaders` 属性加载——不是 mpv 的用户配置（上面「不读任何 mpv 用户配置」说的仍是用户自己的 `mpv.conf` / 着色器目录）。
+Windows / macOS / 安卓 / iPhone（带播放内核的包）带的是同一份；默认关，用户在画质面板里选。
+
+| 库 | 版本（发布标签） | 许可证 | 上游 |
+|---|---|---|---|
+| Anime4K | v4.0.1（GLSL 版） | MIT | <https://github.com/bloc97/Anime4K> |
+| FSR（FidelityFX Super Resolution） | v1.0.2（mpv 移植 by agyild） | MIT | <https://gist.github.com/agyild/82219c545228d70c5604f865ce0b0ce5> |
+
+> FSR 是 AMD FidelityFX FSR v1.0.2 的 mpv 移植（agyild，MIT；gist 修订 f1794d720013ccd9c5c86a0f20fddd71e0375f94），
+> AMD 上游 <https://github.com/GPUOpen-Effects/FidelityFX-FSR>。Anime4K Copyright (c) 2019 bloc97；FSR Copyright (c) 2021 Advanced Micro Devices, Inc.。
+> 许可证原文随原件放在 `third_party/shaders/Anime4K/LICENSE`、`third_party/shaders/FSR/LICENSE`。
 ## 安装目录 `app/` 与 `runtime/` 里的运行时和库
 
 | 组件 | 许可证 |

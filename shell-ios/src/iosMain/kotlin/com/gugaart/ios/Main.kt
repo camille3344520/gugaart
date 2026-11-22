@@ -43,7 +43,7 @@ fun onStatusBarTap() {
 }
 
 /** 播放内核（M5-1）：画面放在 [videoHost] 的最底下。 */
-private val engines by lazy { com.gugugaga.player.apple.AppleMpvEngines(hostView = { videoHost }, background = "#000000") }
+private val engines by lazy { com.gugugaga.player.apple.AppleMpvEngines(hostView = { videoHost }, background = "#000000", subFontsDir = subFontsDir()) }
 
 /** 整个进程一个应用图（会话、设置、导航、缓存）。 */
 private val graph: AppGraph by lazy {

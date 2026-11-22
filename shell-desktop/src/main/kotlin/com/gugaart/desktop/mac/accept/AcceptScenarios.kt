@@ -22,7 +22,7 @@ internal object AcceptScenarios {
     /** 输入框里打的：一个带 `/` `:` `?` `=` `.` 的地址 + 三个字母（j f k 在播放器里是快进 / 全屏 / 暂停——漏出去了一看就知道，也不写服务器）。 */
     const val PROBE_TEXT = "http://a.b/c?d=1jfk"
 
-    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib")
+    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib", "subs-first", "shader")
 
     fun all(host: AcceptHost): List<Scenario> = listOf(
         Scenario("window", "窗口外观：红绿灯、报头让位、深色、失焦变淡、全屏、改尺寸", listOf("X01", "X08", "B22", "P20", "G03"), 180) { window(it) },
@@ -36,6 +36,8 @@ internal object AcceptScenarios {
         Scenario("keychain", "钥匙串：令牌存储 = Keychain、会话目录里没有明文、钥匙串里有条目、这次的登录态来自钥匙串", listOf("C03", "T11"), 90) { keychain(it) },
         Scenario("pip", "画中画：按钮 → 1 秒内进小窗、30 秒帧间隔 / CPU、回到窗口画面回格位置不丢、声音输出没重开", listOf("P18"), 300) { pip(it) },
         Scenario("error-nolib", "出错：libmpv 指到不存在的路径时是出错页（不弹框）", listOf("P02", "P23"), 120) { errorNoLib(it) },
+        Scenario("subs-first", "1.3.1 字幕：带内嵌字幕的片第一次开播内核就选中字幕轨（不用关一次再开）", listOf("P06"), 180) { subsFirst(it) },
+        Scenario("shader", "1.3.1 画质增强：Anime4K / FSR 单选、下发 glsl-shaders、关恢复、重开沿用", listOf("P07"), 300) { shader(it) },
     )
 
     // ================================================================== 1. 窗口外观
@@ -1282,6 +1284,219 @@ internal object AcceptScenarios {
         val list = runBlocking { client.getItems(LibraryQuery(includeItemTypes = listOf("Series"), recursive = true, limit = 40)).items }
         list.take(12).firstOrNull { seasons(it.id) >= 2 }
     }.getOrNull()
+
+    // ================================================================== 1.3.1 内嵌字幕首开（主理人报：《谷雨》这类）
+
+    /** 只读找片 + 播放（会上报进度，主理人已接受）；不点收藏 / 已看 / 管理。 */
+    private fun subsFirst(c: Ctx) {
+        val d = c.d
+        c.reset()
+        val picked = runBlocking {
+            val cl = c.client()
+            val named = cl.getItems(LibraryQuery(searchTerm = "谷雨", includeItemTypes = listOf("Movie", "Series"), recursive = true, limit = 8)).items
+            named.firstOrNull() ?: cl.getItems(LibraryQuery(includeItemTypes = listOf("Movie"), recursive = true, limit = 40)).items.firstOrNull()
+        }
+        if (picked == null) {
+            c.skip("subs-first-sid", "带内嵌字幕的片第一次开播就有字幕（1.3.1）", "库里没找到可播的条目")
+            return
+        }
+        // 剧集要落到第一集：Series 本身没有可播的媒体源
+        val playId = if (picked.type == "Series") runBlocking {
+            c.client().getItems(LibraryQuery(parentId = picked.id, includeItemTypes = listOf("Episode"), recursive = true, limit = 1)).items.firstOrNull()?.id
+        } ?: picked.id else picked.id
+        c.nav(Route.Play(playId), 1_500)
+        val first = c.awaitFirstFrame(System.currentTimeMillis())
+        val streams = c.controller?.snapshot?.value?.resolved?.mediaSource?.mediaStreams.orEmpty()
+        val embyEmb = streams.filter { it.type == "Subtitle" && it.isExternal != true }
+        val engSubs = c.controller?.engineFlow?.value?.tracks?.value?.subtitle.orEmpty().filter { !it.external }
+        val embeddedIdx = if (embyEmb.isNotEmpty()) embyEmb.map { it.index } else engSubs.indices.toList()
+        val embeddedDesc = if (embyEmb.isNotEmpty()) embyEmb.joinToString { "${it.index}:${it.language}" } else engSubs.joinToString { "${it.id}:${it.lang}:${it.label}" }
+        val audioLang = streams.firstOrNull { it.type == "Audio" }?.language
+        if (embeddedIdx.isEmpty()) {
+            val engTracks = c.controller?.engineFlow?.value?.tracks?.value
+            val sh0 = d.shot("subs-first-nostreams", "Emby 流表为空时的播放器（看字幕面板有没有轨）")
+            c.skip(
+                "subs-first-sid", "带内嵌字幕的片第一次开播就有字幕（1.3.1）", "这条片源 Emby 流表里没有内嵌字幕轨（${picked.name}）",
+                values = mapOf(
+                    "片" to picked.name, "类型" to picked.type, "源" to c.controller?.snapshot?.value?.resolved?.mediaSource?.id,
+                    "放法" to c.controller?.snapshot?.value?.resolved?.mode,
+                    "Emby流" to streams.joinToString { "${it.index}:${it.type}:${it.language}:ext=${it.isExternal}" },
+                    "内核字幕轨" to engTracks?.subtitle?.joinToString { "${it.id}:${it.lang}:${it.label}:ext=${it.external}" },
+                    "内核sid" to c.mpv("sid"),
+                    "面板选项" to c.controller?.snapshot?.value?.subtitles?.joinToString { "${it.index}:${it.label}" },
+                ),
+                shots = listOf(sh0),
+            )
+            c.back(1_500)
+            return
+        }
+        Thread.sleep(2_000)
+        val sid = c.mpv("sid")
+        val idx = c.controller?.snapshot?.value?.subtitleIndex
+        val sh = d.shot("subs-first", "第一次开播：内嵌字幕应当在画面上（不用开关一次）")
+        // 片头logo卡没有对白：再等一段到对白处拍一张，字幕真的在画面上才看得見
+        Thread.sleep(18_000)
+        val shLate = d.shot("subs-first-late", "开播约 20 秒：对白处字幕在画面上")
+        c.expect(
+            "subs-first-sid", "带内嵌字幕的片第一次开播内核就选中字幕轨（sid ≠ no）", sid != null && sid != "no",
+            values = mapOf("片" to picked.name, "音轨语言" to audioLang, "sid" to sid, "控制器 subtitleIndex" to idx, "内嵌轨" to embeddedDesc, "首帧ms" to first),
+            shots = listOf(sh, shLate),
+        )
+        c.expect("subs-first-consistent", "控制器的字幕选择与内核一致（不是「界面开着、内核没开」）", idx != null && sid != null && sid != "no", values = mapOf("subtitleIndex" to idx, "sid" to sid))
+        // 用户报的 workaround：关一次再开——修好之后它应当仍然正常
+        c.controller?.selectSubtitle(null)
+        Thread.sleep(800)
+        val offSid = c.mpv("sid")
+        c.controller?.selectSubtitle(embeddedIdx.first())
+        Thread.sleep(2_000)
+        val onSid = c.mpv("sid")
+        val sh2 = d.shot("subs-toggle", "关一次再开：字幕回来")
+        val rNow = c.controller?.snapshot?.value?.resolved
+        c.expect(
+            "subs-toggle", "关一次再开：sid 先 no 再回到数字（workaround 仍有效）", offSid == "no" && onSid != null && onSid != "no",
+            values = mapOf(
+                "关" to offSid, "开" to onSid, "开后index" to c.controller?.snapshot?.value?.subtitleIndex,
+                "计划" to com.gugugaga.app.player.Tracks.planSubtitleSwitch(rNow?.mediaSource, rNow, c.controller?.engineFlow?.value?.id ?: com.gugugaga.core.EngineId.Mpv, embeddedIdx.first()).toString(),
+                "内核轨" to c.controller?.engineFlow?.value?.tracks?.value?.subtitle?.joinToString { "${it.id}:ext=${it.external}" },
+            ),
+            shots = listOf(sh2),
+        )
+        // 底部功能词条（1.3.1 修）：开 / 关 / 换轨各一张，词条应与实际选中的轨一致（面板收起、宽窗才写值）
+        fun stripSel(): Int? = c.controller?.snapshot?.value?.subtitles?.firstOrNull { it.selected }?.index
+        // 桌面版式窄窗（验收窗 1100pt）功能词收成图标、值还截断——拍字幕面板的选中项最清楚（面板与词条同一套选中状态）
+        fun subPanelShot(name: String, label: String): String? {
+            c.wakeControls()
+            if (!d.tree().has("panel-sub")) {
+                d.tree().nodes.firstOrNull { (it.tag == "word" || it.tag == "word-on") && it.desc.any { s -> s.startsWith("字幕") } }?.let { d.click(it) }
+                d.waitFor(3_000) { d.tree().has("panel-sub") }
+            }
+            Thread.sleep(700)
+            return d.shot(name, label)
+        }
+        val onIdx = c.controller?.snapshot?.value?.subtitleIndex
+        val shOn = subPanelShot("strip-on", "字幕面板·开：选中项应是实际选中的轨")
+        c.expect("strip-on", "词条/面板·开：选中项与 subtitleIndex 一致", onIdx != null && stripSel() == onIdx, values = mapOf("subtitleIndex" to onIdx, "选中项" to stripSel()), shots = listOf(shOn))
+        c.controller?.selectSubtitle(null); Thread.sleep(1_000)
+        val shOff = subPanelShot("strip-off", "字幕面板·关：选中项应是「关闭」")
+        c.expect("strip-off", "词条/面板·关：subtitleIndex 为空", c.controller?.snapshot?.value?.subtitleIndex == null, values = mapOf("sid" to c.mpv("sid")), shots = listOf(shOff))
+        // 换轨要 ≥2 条字幕轨：当前片不够就找一部电影（真服务器只读 + 播放）；放在最后，免得影响上面的开关 workaround
+        var swOpts = c.controller?.snapshot?.value?.subtitles.orEmpty().filter { it.index != null }
+        if (swOpts.size < 2) {
+            val movies = runBlocking { c.client().getItems(LibraryQuery(includeItemTypes = listOf("Movie"), recursive = true, limit = 30)).items }
+            for (m in movies.take(6)) {
+                c.nav(Route.Play(m.id), 1_500); c.awaitFirstFrame(System.currentTimeMillis())
+                val opts = c.controller?.snapshot?.value?.subtitles.orEmpty().filter { it.index != null }
+                if (opts.size >= 2) { swOpts = opts; break }
+                c.back(1_000)
+            }
+        }
+        val target = swOpts.firstOrNull { it.index != null && it.index != c.controller?.snapshot?.value?.subtitleIndex }?.index
+        if (target != null) {
+            c.controller?.selectSubtitle(target); Thread.sleep(1_500)
+            val shSw = subPanelShot("strip-switch", "字幕面板·换轨：选中项应是新轨")
+            c.expect("strip-switch", "词条/面板·换轨：subtitleIndex = 新轨", c.controller?.snapshot?.value?.subtitleIndex == target, values = mapOf("换到" to target, "选中项" to stripSel()), shots = listOf(shSw))
+        } else {
+            c.skip("strip-switch", "词条·换轨", "前几部电影里没找到 ≥2 条字幕轨的片（iOS 侧已验换轨）")
+        }
+        c.back(1_500)
+    }
+
+    // ================================================================== 1.3.1 画质增强（Anime4K / FSR）
+
+    /** 只读找片 + 播放（会上报进度，主理人已接受）；不点收藏 / 已看 / 管理。跑完把着色器偏好还原成「关」。 */
+    private fun shader(c: Ctx) {
+        val d = c.d
+        c.reset()
+        val picked = runBlocking {
+            val cl = c.client()
+            val named = cl.getItems(LibraryQuery(searchTerm = "围棋少年", includeItemTypes = listOf("Series", "Movie"), recursive = true, limit = 5)).items
+            named.firstOrNull() ?: cl.getItems(LibraryQuery(includeItemTypes = listOf("Series"), recursive = true, limit = 20)).items.firstOrNull()
+        }
+        if (picked == null) {
+            c.skip("shader-a4k", "画质面板的着色器增强（1.3.1）", "库里没找到可播的动画 / 剧集")
+            return
+        }
+        val playId = if (picked.type == "Series") runBlocking {
+            c.client().getItems(LibraryQuery(parentId = picked.id, includeItemTypes = listOf("Episode"), recursive = true, limit = 1)).items.firstOrNull()?.id
+        } ?: picked.id else picked.id
+        fun openQuality(): Boolean {
+            d.tree().nodes.firstOrNull { (it.tag == "word" || it.tag == "word-on") && it.desc.any { s -> s.contains("画质") } }?.let { d.click(it) }
+            return d.waitFor(4_000) { d.tree().has("panel-quality") }
+        }
+        fun pickOption(label: String): Boolean {
+            fun find() = d.tree().nodes.firstOrNull { (it.tag == "panel-option" || it.tag == "panel-option-on") && it.desc.any { s -> s.contains(label) } }
+            val panel = d.tree().tag("panel-quality") ?: return false
+            var n = find() ?: return false
+            // 语义树给的是不裁剪的位置：面板滚viewport 外的行点了会落空——先滚进可见区再点
+            if (n.bounds.cy > panel.bounds.y + panel.bounds.h - 24) {
+                d.wheel(panel.bounds.cx, panel.bounds.cy, 3)
+                n = find() ?: return false
+            } else if (n.bounds.cy < panel.bounds.y + 24) {
+                d.wheel(panel.bounds.cx, panel.bounds.cy, -3)
+                n = find() ?: return false
+            }
+            d.click(n)
+            return true
+        }
+        fun shaders(): String = c.mpv("glsl-shaders").orEmpty()
+        fun snap(name: String, label: String): String? {
+            var s = d.shot(name, label)
+            if (s == null) { d.activate(); Thread.sleep(900); s = d.shot(name, label) }
+            return s
+        }
+        fun enter() {
+            c.nav(Route.Play(playId), 1_500)
+            c.awaitFirstFrame(System.currentTimeMillis())
+        }
+        enter()
+        val panelOk = openQuality()
+        val hasSection = panelOk && d.tree().nodes.any { it.desc.any { s -> s.contains("Anime4K 模式 A") } }
+        c.expect("shader-entry", "mpv 系内核的画质面板有着色器单选（关 / Anime4K A·B·C / FSR）", hasSection, values = mapOf("片" to picked.name, "内核" to c.controller?.engineFlow?.value?.id, "面板开了" to panelOk))
+        if (!hasSection) {
+            c.back(1_500)
+            return
+        }
+        val drops0 = c.mpv("frame-drop-count")?.toIntOrNull() ?: 0
+        fun shaderPaths(): List<String> = shaders().split(":").filter { it.isNotBlank() }
+        val clickedA = pickOption("Anime4K 模式 A")
+        val aOk = clickedA && d.waitFor(8_000) { shaderPaths().size == 6 }
+        Thread.sleep(6_000)
+        val dropsA = (c.mpv("frame-drop-count")?.toIntOrNull() ?: 0) - drops0
+        val shA = snap("shader-a4k", "Anime4K 模式 A 开着")
+        c.expect(
+            "shader-a4k", "选 Anime4K 模式 A：glsl-shaders 下发官方 A 链（6 个文件）", aOk,
+            values = mapOf("链长" to shaderPaths().size, "6秒掉帧" to dropsA, "点到了" to clickedA), shots = listOf(shA),
+        )
+        val clickedF = pickOption("FSR")
+        val fOk = clickedF && d.waitFor(8_000) { shaderPaths().size == 1 }
+        Thread.sleep(6_000)
+        val dropsF = (c.mpv("frame-drop-count")?.toIntOrNull() ?: 0) - drops0 - dropsA
+        val shF = snap("shader-fsr", "FSR 开着")
+        c.expect(
+            "shader-fsr", "选 FSR：glsl-shaders 只剩 1 个文件", fOk,
+            values = mapOf("链长" to shaderPaths().size, "6秒掉帧" to dropsF, "点到了" to clickedF, "面板还在" to d.tree().has("panel-quality"), "选中" to d.tree().nodes.filter { it.tag == "panel-option-on" }.flatMap { it.desc }), shots = listOf(shF),
+        )
+        val clickedOff = pickOption("关")
+        val offOk = clickedOff && d.waitFor(8_000) { shaders().isEmpty() }
+        val shOff = snap("shader-off", "关掉着色器：恢复原画面")
+        c.expect("shader-off", "选关：glsl-shaders 清空", offOk, values = mapOf("glsl-shaders" to shaders()), shots = listOf(shOff))
+        // 记住选择：再开 FSR，退出播放器重进，应当沿用
+        pickOption("FSR")
+        d.waitFor(8_000) { shaderPaths().size == 1 }
+        c.back(2_000)
+        enter()
+        openQuality()
+        val selFsr = d.tree().nodes.any { it.tag == "panel-option-on" && it.desc.any { s -> s.contains("FSR") } }
+        val persist = selFsr && shaderPaths().size == 1
+        val shP = snap("shader-persist", "重开播放器：沿用上次选的 FSR")
+        c.expect("shader-persist", "重开播放器沿用上次选择（FSR）", persist, values = mapOf("链长" to shaderPaths().size, "面板选中FSR" to selFsr), shots = listOf(shP))
+        // 还原成关：别把主理人的偏好留在 FSR
+        openQuality()
+        pickOption("关")
+        d.waitFor(8_000) { shaders().isEmpty() }
+        c.human("shader-look", "Anime4K / FSR 的画面观感与掉帧体感（截图存不下 EDR）", "看 shader-a4k / shader-fsr / shader-off 三张：线条锐度、噪点、暗部与掉帧体感", shots = listOf(shA, shF, shOff))
+        c.back(1_500)
+    }
 }
 
 internal data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

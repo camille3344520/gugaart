@@ -1,12 +1,15 @@
 package com.gugaart.ui.data
 
 import com.gugugaga.app.platform.LocalStore
+import com.gugaart.ui.player.ShaderPreset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
@@ -34,6 +37,40 @@ enum class MascotPref(val id: String) {
 }
 
 /**
+ * 一个片库上次用的筛选 / 排序（1.3.1：进详情返回、重开应用都还在；「全部重置」回到默认）。
+ * 存字符串（题材名 / 年代标签 / 状态枚举名 / 排序枚举名），读不懂的项丢回默认；不碰上游的键。
+ */
+data class WallPref(
+    val genres: Set<String> = emptySet(),
+    val decades: Set<String> = emptySet(),
+    val states: Set<String> = emptySet(),
+    val sort: String? = null,
+    val minRating: Int? = null,
+) {
+    companion object {
+        fun parse(o: JsonObject?): WallPref {
+            if (o == null) return WallPref()
+            fun strs(k: String): Set<String> = (o[k] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }?.toSet().orEmpty()
+            return WallPref(
+                genres = strs("genres"),
+                decades = strs("decades"),
+                states = strs("states"),
+                sort = (o["sort"] as? JsonPrimitive)?.takeIf { it.isString }?.content,
+                minRating = (o["minRating"] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull,
+            )
+        }
+    }
+
+    fun encode(): JsonObject = buildJsonObject {
+        put("genres", buildJsonArray { genres.forEach { add(JsonPrimitive(it)) } })
+        put("decades", buildJsonArray { decades.forEach { add(JsonPrimitive(it)) } })
+        put("states", buildJsonArray { states.forEach { add(JsonPrimitive(it)) } })
+        sort?.let { put("sort", it) }
+        minRating?.let { put("minRating", it) }
+    }
+}
+
+/**
  * 画报自己的设置（docs/decisions.md Q4）：存在**独立的键** `gugaart.settings.v1` 里，不碰上游 `gugu.settings.v1` 的任何键。
  * 读不懂的值按默认；未知的键原样保留（以后的版本加了键，旧版本写回时不丢）。
  */
@@ -48,6 +85,8 @@ data class GugaPrefs(
     val editorNotes: Boolean = true,
     /** 「字幕默认」：跟随上次（默认）/ 智能 / 总是关闭 / 总是中文（[SubtitleDefault]）。 */
     val subtitleDefault: SubtitleDefault = SubtitleDefault.Follow,
+    /** 画质面板的「着色器增强」：关（默认）/ Anime4K 模式 A/B/C / FSR（[ShaderPreset]）。只在 mpv 系内核出现，下次开播沿用。 */
+    val shader: ShaderPreset = ShaderPreset.Off,
     /** 闲置回首页（电脑、电视）：不在首页也不在播放时 10 分钟没有输入，翻回封面。 */
     val idleHome: Boolean = true,
     /** 首页封面自动翻页。 */
@@ -56,6 +95,8 @@ data class GugaPrefs(
     val danmakuSeeded: Boolean = false,
     /** 第一次进首页时「目录在下面」的提示已经看过了。 */
     val tocHintSeen: Boolean = false,
+    /** 每个片库上次的筛选 / 排序（键 = 片库 id；1.3.1）。 */
+    val wall: Map<String, WallPref> = emptyMap(),
 ) {
     /** 她的格子出不出现。 */
     val showMascot: Boolean get() = mascot != MascotPref.Off
@@ -73,10 +114,12 @@ data class GugaPrefs(
                 mascot = MascotPref.of((o["mascot"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
                 editorNotes = bool("editorNotes", true),
                 subtitleDefault = SubtitleDefault.of((o["subtitleDefault"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
+                shader = ShaderPreset.of((o["shader"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
                 idleHome = bool("idleHome", true),
                 coverAutoFlip = bool("coverAutoFlip", true),
                 danmakuSeeded = bool("danmakuSeeded", false),
                 tocHintSeen = bool("tocHintSeen", false),
+                wall = (o["wall"] as? JsonObject)?.mapValues { (_, v) -> WallPref.parse(v as? JsonObject) }.orEmpty(),
             )
         }
 
@@ -95,10 +138,12 @@ data class GugaPrefs(
         put("mascot", mascot.id)
         put("editorNotes", editorNotes)
         put("subtitleDefault", subtitleDefault.id)
+        put("shader", shader.id)
         put("idleHome", idleHome)
         put("coverAutoFlip", coverAutoFlip)
         put("danmakuSeeded", danmakuSeeded)
         put("tocHintSeen", tocHintSeen)
+        put("wall", buildJsonObject { wall.forEach { (k, v) -> put(k, v.encode()) } })
     }.toString()
 }
 

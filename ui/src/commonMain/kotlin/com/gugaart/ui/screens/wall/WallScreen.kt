@@ -67,6 +67,8 @@ import com.gugaart.ui.data.rememberLoad
 import com.gugaart.ui.data.titleOf
 import com.gugaart.ui.data.loadLibraries
 import com.gugaart.ui.data.libraryItemTypes
+import com.gugaart.ui.data.WallPref
+import com.gugaart.ui.screens.settings.LocalGugaSettings
 import com.gugaart.ui.screens.LocalChrome
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.StatusBand
@@ -133,6 +135,23 @@ data class WallFilter(val genres: Set<String> = emptySet(), val decades: Set<Dec
     }
 }
 
+/** 1.3.1：筛选 / 排序 ↔ 持久化模型（[WallPref]）；读不懂的枚举名 / 标签丢回默认。纯函数，有单测。 */
+fun WallFilter.toPref(sort: WallSort, minRating: Int? = null): WallPref = WallPref(
+    genres = genres,
+    decades = decades.map { it.label }.toSet(),
+    states = states.map { it.name }.toSet(),
+    sort = sort.name,
+    minRating = minRating,
+)
+
+fun WallPref.toFilter(): WallFilter = WallFilter(
+    genres = genres,
+    decades = decades.mapNotNull { l -> Decade.entries.firstOrNull { it.label == l } }.toSet(),
+    states = states.mapNotNull { n -> WatchState.entries.firstOrNull { it.name == n } }.toSet(),
+)
+
+fun WallPref.toSort(default: WallSort): WallSort = WallSort.entries.firstOrNull { it.name == sort } ?: default
+
 /** 这个库里出现过的题材，按出现次数从多到少，最多 [limit] 个（筛选面板的选项来自真实数据，不是写死的）。 */
 fun genreOptions(titles: List<Title>, limit: Int = 8): List<String> =
     titles.flatMap { it.genres }.groupingBy { it }.eachCount().entries.sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key }).take(limit).map { it.key }
@@ -140,14 +159,31 @@ fun genreOptions(titles: List<Title>, limit: Int = 8): List<String> =
 // CommunityRating：Emby 4.9 只有点名要才给评分（实测：不点名 285 部里 0 部有评分）
 private val WALL_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "DateCreated", "SortName", "ProductionYear", "CommunityRating"))
 
-/** 一个媒体库里的片子（只读）。合集库取 BoxSet，其余取电影和剧集。一次最多 [limit] 部——更大的库的分页加载在下一阶段。 */
+/**
+ * 一个媒体库里的片子（只读）。合集库取 BoxSet，其余取电影和剧集。
+ * 1.3.1：**分页取全**（每页 [limit] 部，服务器按 [sort] 排好序再给），不再只取前 600 部——
+ * 排序要对全部条目排：翻到 600 条之后顺序仍对。内存只留片名 / 年份 / 题材 / 评分 / 图地址这些轻字段，
+ * 一万部约几 MB；取数期间旧结果留着（rememberLoad），不闪。
+ */
 suspend fun loadWall(client: EmbyClient, library: LibraryEntry, sort: WallSort, limit: Int = 600): Pair<List<Title>, Int> {
     val types = libraryItemTypes(library.kind)
-    val r = client.getItems(
-        LibraryQuery(parentId = library.id, includeItemTypes = types, recursive = true, sortBy = listOf(sort.sortBy), sortOrder = if (sort.descending) "Descending" else "Ascending", limit = limit),
-        WALL_FIELDS,
-    )
-    return r.items.map { client.titleOf(it) } to maxOf(r.totalRecordCount, r.items.size)
+    val out = ArrayList<Title>()
+    var total = 0
+    while (true) {
+        val r = client.getItems(
+            LibraryQuery(
+                parentId = library.id, includeItemTypes = types, recursive = true,
+                sortBy = listOf(sort.sortBy), sortOrder = if (sort.descending) "Descending" else "Ascending",
+                limit = limit, startIndex = out.size.takeIf { it > 0 },
+            ),
+            WALL_FIELDS,
+        )
+        total = maxOf(total, r.totalRecordCount)
+        if (r.items.isEmpty()) break
+        out += r.items.map { client.titleOf(it) }
+        if (r.items.size < limit || out.size >= total) break
+    }
+    return out to maxOf(total, out.size)
 }
 
 /**
@@ -165,18 +201,27 @@ fun WallScreen(libraryId: String?) {
     val type = Guga.type
     LaunchedEffect(Unit) { chrome.spot = null }
     val preset = LocalPreset.current
+    val settings = LocalGugaSettings.current
     val initialFilter = remember { WallFilter(genres = preset.wallGenres, decades = Decade.entries.filter { it.label in preset.wallDecades }.toSet()) }
     val initialPanel = preset.wallPanel
     val libs = rememberLoad("libraries") { c -> loadLibraries(c) }
     var picked by rememberSaveable { mutableStateOf(libraryId ?: preset.wallLibrary) }
-    var sort by remember { mutableStateOf(WallSort.Added) }
-    var filter by remember { mutableStateOf(initialFilter) }
+    val library = libs.value?.let { list -> list.firstOrNull { it.id == picked } ?: list.firstOrNull() }
+    // 1.3.1：筛选 / 排序按片库记住（进详情返回、重开应用都还在）；测试预置优先于存着的
+    val saved = settings?.prefs?.value?.wall?.get(library?.id)
+    var sort by remember(library?.id) { mutableStateOf(saved?.toSort(WallSort.Added) ?: WallSort.Added) }
+    var filter by remember(library?.id) {
+        mutableStateOf(if (preset.wallGenres.isNotEmpty() || preset.wallDecades.isNotEmpty()) initialFilter else saved?.toFilter() ?: WallFilter())
+    }
+    LaunchedEffect(filter, sort, library?.id) {
+        val id = library?.id ?: return@LaunchedEffect
+        settings?.update { p -> p.copy(wall = p.wall + (id to filter.toPref(sort))) }
+    }
     // 哪一块推开着：filter / sort / null
     var panel by remember { mutableStateOf(initialPanel) }
-    val library = libs.value?.let { list -> list.firstOrNull { it.id == picked } ?: list.firstOrNull() }
     val wall = rememberLoad(library?.id, sort) { c -> library?.let { loadWall(c, it, sort) } }
     val all = wall.value?.first
-    // 总数 = 这次查询的 TotalRecordCount（一次最多取 600 部；库更大时墙上先是前 600 部）；还没取到时先用库名上的那个数
+    // 总数 = 这次查询的 TotalRecordCount（1.3.1 分页取全）；还没取到时先用库名上的那个数
     val total = wall.value?.second ?: library?.titles
     // 长按菜单里删掉的先藏起来（ItemManage）
     val deletedCount = com.gugaart.ui.data.ItemManage.deleted.size
@@ -232,7 +277,7 @@ fun WallScreen(libraryId: String?) {
                                 Modifier
                                     .onGloballyPositioned { tabX[lib.id] = it.positionInParent().x.toInt() to it.size.width }
                                     .pressGraphics(press)
-                                    .pressable(press, label = lib.name) { picked = lib.id; filter = WallFilter(); panel = null }
+                                    .pressable(press, label = lib.name) { picked = lib.id; panel = null }
                                     .drawBehind { if (on) drawLine(colors.spot, Offset(0f, size.height - 1.dp.toPx()), Offset(size.width, size.height - 1.dp.toPx()), 2.dp.toPx()) }
                                     .padding(bottom = 12.dp)
                                     .testTag(if (on) "lib-on" else "lib-off"),

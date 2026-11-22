@@ -24,6 +24,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,9 +77,9 @@ import kotlinx.coroutines.delay
 @Immutable
 data class SearchIndex(val titles: List<Title>, val total: Int)
 
-/** 服务器那一半：单集和人物（它们数量大，不建本地索引）。 */
+/** 服务器那一半：片 / 剧（1.3.1 起也问）、单集和人物（它们数量大，不建本地索引）。 */
 @Immutable
-data class RemoteHits(val episodes: List<Title>, val people: List<Person>)
+data class RemoteHits(val episodes: List<Title>, val people: List<Person>, val titles: List<Title> = emptyList())
 
 /** 命中的一部片 + 命中的字的范围（上专色）。 */
 @Immutable
@@ -86,9 +87,21 @@ data class TitleHit(val title: Title, val range: IntRange?)
 
 private val INDEX_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "Overview", "CommunityRating"))
 
-suspend fun loadSearchIndex(client: EmbyClient): SearchIndex {
-    val r = client.getItems(LibraryQuery(includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("SortName"), sortOrder = "Ascending", limit = 5000), INDEX_FIELDS)
-    return SearchIndex(r.items.map { client.titleOf(it) }, maxOf(r.totalRecordCount, r.items.size))
+suspend fun loadSearchIndex(client: EmbyClient, pageSize: Int = 5000): SearchIndex {
+    // 1.3.1：分页取全（不再截断在 5000 部）——截断之外的片子以前本地永远搜不到。[pageSize] 只为单测能强制走多页。
+    val out = ArrayList<Title>()
+    var total = 0
+    while (true) {
+        val r = client.getItems(
+            LibraryQuery(includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("SortName"), sortOrder = "Ascending", limit = pageSize, startIndex = out.size.takeIf { it > 0 }),
+            INDEX_FIELDS,
+        )
+        total = maxOf(total, r.totalRecordCount)
+        if (r.items.isEmpty()) break
+        out += r.items.map { client.titleOf(it) }
+        if (r.items.size < pageSize || out.size >= total) break
+    }
+    return SearchIndex(out, maxOf(total, out.size))
 }
 
 /**
@@ -113,11 +126,16 @@ fun searchTitles(index: List<Title>, query: String, limit: Int = 30): List<Title
 
 suspend fun searchRemote(client: EmbyClient, query: String): RemoteHits {
     val q = query.trim()
-    // 只打了拼音首字母（纯字母）时服务器帮不上忙：单集和人物不查
-    if (q.isEmpty() || Pinyin.isInitialsQuery(q) && q.length <= 6 && q.all { it.isLetter() }) return RemoteHits(emptyList(), emptyList())
+    if (q.isEmpty()) return RemoteHits(emptyList(), emptyList())
+    // 1.3.1：片 / 剧**任何词都问服务器**。以前「≤6 个纯字母」整段跳过（本意是挡拼音首字母 yxj），
+    // 把 dune / up / her 这类英文片名也一起挡了：本地索引只有中文片名时就「搜不到」。
+    // 片 + 剧这一路条目少，拼音首字母问过去也只是 0 条，不亏。
+    val titles = client.searchItems(q, LibraryQuery(includeItemTypes = listOf("Movie", "Series"), limit = 30), INDEX_FIELDS).items.map { client.titleOf(it) }
+    // 单集和人物数量大：只打了拼音首字母（纯字母短词）时不查
+    if (Pinyin.isInitialsQuery(q) && q.length <= 6 && q.all { it.isLetter() }) return RemoteHits(emptyList(), emptyList(), titles)
     val episodes = client.searchItems(q, LibraryQuery(includeItemTypes = listOf("Episode"), limit = 30), ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio"))).items.map { client.titleOf(it) }
     val people = client.searchPeople(q, limit = 12).map { Person(it.id, it.name, photo = client.personImage(it.id, it.imageTag, ImageUrlOptions(maxWidth = 360))) }
-    return RemoteHits(episodes, people)
+    return RemoteHits(episodes, people, titles)
 }
 
 /** 结果的一行小计：「30 条结果：片 2 · 单集 27 · 演员 1」。 */
@@ -125,6 +143,12 @@ fun searchTally(titles: Int, episodes: Int, people: Int): String {
     val parts = listOfNotNull("片 $titles".takeIf { titles > 0 }, "单集 $episodes".takeIf { episodes > 0 }, "演员 $people".takeIf { people > 0 })
     return "${titles + episodes + people} 条结果：" + parts.joinToString(" · ")
 }
+
+/** 服务器那一路的结果能不能算「当前这个词的」：词已经停稳（settled == query），而且留着的这份结果就是按这个词取来的
+ *  （[com.gugaart.ui.data.Load.valueKeys] 的最后一个参数 == settled）。返回搜索页时缓存种子和当前词一致，第一帧就能用，
+ *  滚动位置才还原得了；换了词、新请求还在路上时旧结果不算数（1.3.1）。纯函数，有单测。 */
+fun remoteResultsReady(settled: String, query: String, valueKeys: List<Any?>?): Boolean =
+    settled == query && valueKeys?.lastOrNull() == settled
 
 /**
  * 搜索（`Route.Search(q)`，设计稿 `p=search`）：报头的页名版「检索」；一个大号宋体的输入行（这一页不铺图）；
@@ -139,20 +163,31 @@ fun SearchScreen(initial: String?) {
     val dimens = Guga.dimens
     val type = Guga.type
     LaunchedEffect(Unit) { chrome.spot = null }
-    var query by remember { mutableStateOf(preset.query ?: initial.orEmpty()) }
+    // 返回需要记住搜索词（进详情再返回，词和结果还在，滚动位置才还原得了）：rememberSaveable，跟着返回栈条目走（PageStates）
+    var query by rememberSaveable { mutableStateOf(preset.query ?: initial.orEmpty()) }
     // 打字时不每个字都去问服务器：停 250 ms 才查
-    var settled by remember { mutableStateOf(query) }
+    var settled by rememberSaveable { mutableStateOf(query) }
     LaunchedEffect(query) {
         delay(250)
         settled = query
     }
     val index = rememberLoad("search-index") { loadSearchIndex(it) }
     val remote = rememberLoad("search-remote", settled) { searchRemote(it, settled) }
-    val hits = remember(index.value, query) { searchTitles(index.value?.titles.orEmpty(), query) }
+    // 1.3.1：服务器那一路的结果，只在「就是当前这个词、而且这份结果就是按这个词取来的」时算数（remoteResultsReady）。
+    // 以前只看 settled == query：换了词、新请求还在路上时，上一个词的结果会被当成当前词的结果画出来
+    // （快速连打时搜出来的不是打的词；该搜到的被旧结果挤掉）。返回时缓存种子就是当前词，第一帧即用（位置还原）；换词期间旧结果不冒充。
+    val remoteReady = remoteResultsReady(settled, query, remote.valueKeys)
+    // 本地命中 + 服务器片名兜底（去重，本地优先）
+    val remoteTitles = remote.value?.titles.orEmpty().takeIf { remoteReady }.orEmpty()
+    val hits = remember(index.value, remoteTitles, query) {
+        val local = searchTitles(index.value?.titles.orEmpty(), query)
+        val seen = local.map { it.title.id }.toSet()
+        local + remoteTitles.filter { it.id !in seen }.map { TitleHit(it, Pinyin.match(it.name, query)) }
+    }
     // 演员：本地人名单（名字 / 拼音缩写）+ 服务器的人物搜索；打名字正好是某位演员 → 演员和 ta 的作品排在前面，缩写照旧片子在前
     val peopleIndex = rememberLoad("search-people") { loadPeopleIndex(it) }
     val localPeople = remember(peopleIndex.value, query) { searchPeopleLocal(peopleIndex.value.orEmpty(), query) }
-    val remotePeople = remote.value?.people.orEmpty().takeIf { settled == query }.orEmpty()
+    val remotePeople = remote.value?.people.orEmpty().takeIf { remoteReady }.orEmpty()
     val people = remember(localPeople, remotePeople) { mergePeople(localPeople, remotePeople, query) }
     val first = peopleFirst(query, hits, people)
     val star = people.firstOrNull()?.person?.takeIf { first }
@@ -198,14 +233,19 @@ fun SearchScreen(initial: String?) {
                 if (query.isNotEmpty()) TextLink("清除", { query = "" }, Modifier.padding(start = 12.dp), color = colors.dim)
             }
             Rule(strong = true)
-            val episodes = remote.value?.episodes.orEmpty().takeIf { settled == query }.orEmpty()
+            val episodes = remote.value?.episodes.orEmpty().takeIf { remoteReady }.orEmpty()
             when {
                 q.isEmpty() -> PhoneSearchIdle(recents.items, cloud, ::pick, recents::clear)
                 hits.isEmpty() && episodes.isEmpty() && people.isEmpty() ->
-                    if (index.pending || remote.refreshing || settled != query) {
-                        BasicText("正在找……", Modifier.padding(top = 16.dp), style = Guga.note(type.caption, colors.faint))
-                    } else {
-                        SearchNoneView(q, { query = "" })
+                    when {
+                        index.pending || remote.refreshing || settled != query ->
+                            BasicText("正在找……", Modifier.padding(top = 16.dp), style = Guga.note(type.caption, colors.faint))
+                        // 1.3.1：取数失败不是「搜不到」：给一句话 + 再试（以前失败也摆摊手图，且没有重试）
+                        index.error != null || remote.error != null -> Column(Modifier.padding(top = 16.dp)) {
+                            BasicText(index.error ?: remote.error!!, style = Guga.note(type.caption, colors.dim), maxLines = 2)
+                            TextLink("再试", { index.retry(); remote.retry() }, Modifier.padding(top = 8.dp))
+                        }
+                        else -> SearchNoneView(q, { query = "" })
                     }
                 else -> {
                     BasicText(searchTally((hits.map { it.title.id } + works.map { it.id }).toSet().size, episodes.size, people.size), Modifier.padding(top = 12.dp).testTag("search-tally"), style = Guga.note(type.caption, colors.faint), maxLines = 1)

@@ -41,6 +41,11 @@ class Load<T> internal constructor() {
     /** 这份结果是哪个账号取的（服务器 id / 用户 id）。换了账号 = 上一个账号的内容不能再显示。 */
     internal var account: String? = null
 
+    /** 这份 [value] 是按哪组参数取来的（[LoadCache] 的种子也算）。返回一页时种子和当前参数一致，第一帧就能用，
+     *  滚动位置才还原得了；换了参数（比如换了搜索词）旧结果不算数（1.3.1 返回保持位置）。 */
+    var valueKeys: List<Any?>? = null
+        internal set
+
     /** 还没有任何结果、也没失败。 */
     val pending: Boolean get() = value == null && error == null
 
@@ -124,18 +129,20 @@ fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load
     val keyList = keys.toList()
     // 回到这一页：先拿上次的内容（LoadCache），随后照常重新取
     @Suppress("UNCHECKED_CAST")
-    val load = remember { Load<T>().also { l -> (LoadCache.get(listOf(account, site) + keyList) as T?)?.let { l.value = it; l.account = account } } }
+    val load = remember { Load<T>().also { l -> (LoadCache.get(listOf(account, site) + keyList) as T?)?.let { l.value = it; l.account = account; l.valueKeys = keyList } } }
     LaunchedEffect(client, load.generation, *keys) {
         if (client == null) return@LaunchedEffect
         if (accountSwitched(load.account, account)) {
             load.value = null
             load.error = null
+            load.valueKeys = null
         }
         load.account = account
         load.refreshing = true
         try {
             val v = loader(client)
             load.value = v
+            load.valueKeys = keyList
             load.error = null
             LoadCache.put(listOf(account, site) + keyList, v)
         } catch (e: CancellationException) {

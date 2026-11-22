@@ -85,10 +85,9 @@ object DeskMenuSpec {
     const val ACCOUNT_R = 1.8f
     const val ACCOUNT_ROW = 4f
 
-    /** 右键菜单：宽 23.2、行高 3.6；管理面板宽 27。 */
+    /** 右键菜单：宽 23.2、行高 3.6（1.3.1：管理三项并到同一级，不再有子面板）。 */
     const val CTX_W = 23.2f
     const val CTX_ROW = 3.6f
-    const val MNG_W = 27f
 
     /** 「换一个片库」对话框的宽。 */
     const val SWITCH_W = 64f
@@ -380,12 +379,13 @@ fun PaperDialog(tag: String, onDismiss: () -> Unit, width: Float, closable: Bool
 }
 
 /**
- * 条目的右键菜单（纸片，不是玻璃；设计稿 `p=dialogs`：`ctx` 右键菜单 / `mng` 管理 / `del` 删除二次确认）。
- * 日常（播放 / 从头播放 / 收藏 / 标记已看 / 查看详情）和「管理」分开；「删除媒体…」在原地变成红边的二次确认，不弹第二个窗口。
+ * 条目的右键菜单（纸片，不是玻璃；设计稿 `p=dialogs` 的 `ctx` / `del`）。
+ * 1.3.1（主理人）：刷新元数据 / 扫描文件 / 删除媒体… 从「管理」子面板里拿出来，和收藏 / 标记已看同一级，
+ * 不再有 `mng` 这一层；「删除媒体…」在原地变成红边的二次确认，不弹第二个窗口。
  * 任何界面在卡片 / 行的右键处调 [open]；[Host] 由电脑的根（`GugaartFrame`）画一次。
  *
- * 「管理」只给管理员（[ItemManage]；用户 2026-11-16：「之前可以管理emby的」）：刷新元数据 / 扫描文件，结果写在管理纸片的头一行；
- * 「删除媒体…」原地变成红边的二次确认，「删除文件」才真的删（连服务器上的媒体文件），删掉的条目从各页的列表里藏起来。
+ * 「管理」只给管理员（[ItemManage]；用户 2026-11-16：「之前可以管理emby的」）：1.3.1 起刷新元数据 / 扫描文件 / 删除媒体…
+ * 和收藏 / 标记已看同一级（不再进子菜单），刷新 / 扫描结果写在纸片底下；
  * 编辑信息、重新识别这类要打字填表的，在 Emby 网页控制台里做，这里不排（点了不能用的行比没有更糟）。
  * 设计稿里的「加入待看清单」没有对应的上游功能，不画。
  */
@@ -395,10 +395,10 @@ object DesktopContextMenu {
     var at: Offset by mutableStateOf(Offset.Zero)
         private set
 
-    /** 开到哪一层：`ctx` 只有日常菜单；`mng` 管理面板推开；`del` 管理面板里的删除变成了二次确认。 */
+    /** 开到哪一层：`ctx` 菜单（管理三项和收藏同一级）；`del` 删除那一行原地变成二次确认。 */
     var stage: String by mutableStateOf("ctx")
 
-    /** 管理面板里的一句说明（点了还没接上的那几行）。 */
+    /** 刷新 / 扫描 / 删除的结果，写在纸片底下（[notice] 没有就不占地方）。 */
     private var notice: String? by mutableStateOf(null)
 
     /** [windowPos]：鼠标在窗口里的位置（px）。 */
@@ -418,7 +418,7 @@ object DesktopContextMenu {
     /** 删除进行中（按钮变「正在删除…」，不能再点）。 */
     private var busy: Boolean by mutableStateOf(false)
 
-    /** 「删除文件」：调上游的删除；成功就收起菜单（条目从列表里藏起来），失败把原因写在管理纸片的头一行。 */
+    /** 「删除文件」：调上游的删除；成功就收起菜单（条目从列表里藏起来），失败把原因写在纸片底下。 */
     private fun confirmDelete(g: com.gugugaga.app.AppGraph, title: Title) {
         if (busy) return
         busy = true
@@ -427,7 +427,7 @@ object DesktopContextMenu {
             busy = false
             if (err == null) close() else {
                 notice = err
-                stage = "mng"
+                stage = "ctx"
             }
         }
     }
@@ -440,7 +440,6 @@ object DesktopContextMenu {
         val colors = Guga.colors
         val density = LocalDensity.current
         var mainSize by remember { mutableStateOf(IntSize.Zero) }
-        var subSize by remember { mutableStateOf(IntSize.Zero) }
         val favId = if (t.kind == Kind.Episode) t.seriesId ?: t.id else t.id
         val fav = chrome.isFavorite(favId, t.favorite && t.kind != Kind.Episode)
         val seen = chrome.isPlayed(t.id, t.played)
@@ -495,25 +494,9 @@ object DesktopContextMenu {
                 }
                 Spacer(Modifier.height(Guga.rem(0.6f)))
                 SlipRule()
-                if (manage) CtxRow(GuguIcon.SlidersHorizontal, "管理", trailingIcon = GuguIcon.ChevronRight, selected = stage != "ctx", tag = "ctx-manage", height = 4.6f) { stage = if (stage == "ctx") "mng" else "ctx" }
-            }
-            if (stage != "ctx") {
-                val gap = with(density) { 2.dp.toPx() }
-                val lift = with(density) { Guga.rem(2f).toPx() }
-                val right = x + mainSize.width + gap
-                val sx = if (right + subSize.width + edge <= maxW) right else (x - subSize.width - gap).coerceAtLeast(edge)
-                val sy = (y + lift).coerceAtMost(maxH - subSize.height - edge).coerceAtLeast(edge)
-                Slip(Modifier.offset { IntOffset(sx.toInt(), sy.toInt()) }.width(Guga.rem(DeskMenuSpec.MNG_W)).onSizeChanged { subSize = it }.testTag("desktop-context-manage")) {
-                    BasicText(
-                        notice ?: "管理 · 会改动服务器上的条目",
-                        Modifier.padding(horizontal = Guga.rem(1.6f), vertical = Guga.rem(1.3f)).testTag("ctx-notice"),
-                        style = Guga.note(rsp(1.15f), if (notice != null) colors.ink else colors.faint),
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    SlipRule()
-                    Spacer(Modifier.height(Guga.rem(0.6f)))
-                    CtxRow(GuguIcon.RotateCw, "刷新元数据", tag = "ctx-refresh") {
+                if (manage) {
+                    // 1.3.1：管理三项和收藏 / 标记已看同一级（不再进「管理」子菜单）；刷新 / 扫描的结果写在纸片底下
+                    CtxRow(GuguIcon.RefreshCw, "刷新元数据", tag = "ctx-refresh") {
                         notice = "正在请求…"
                         g.scope.launch { notice = ItemManage.refresh(g, t.id) }
                     }
@@ -521,8 +504,6 @@ object DesktopContextMenu {
                         notice = "正在请求…"
                         g.scope.launch { notice = ItemManage.scan(g, t.id) }
                     }
-                    Spacer(Modifier.height(Guga.rem(0.6f)))
-                    SlipRule()
                     if (stage == "del") {
                         // 原地变成红边的二次确认，不弹第二个窗口
                         Column(
@@ -535,13 +516,22 @@ object DesktopContextMenu {
                             BasicText("确定删除「${t.displayName}」？", style = Guga.song(rsp(1.5f), FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
                             BasicText("会从服务器删除媒体文件，无法撤销。", Modifier.padding(top = Guga.rem(0.6f)), style = Guga.song(rsp(1.25f), color = colors.dim), maxLines = 2)
                             Row(Modifier.fillMaxWidth().padding(top = Guga.rem(1.4f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1f), Alignment.End)) {
-                                DeskButton("取消", { stage = "mng" }, icon = null, small = true, outline = true)
+                                DeskButton("取消", { stage = "ctx" }, icon = null, small = true, outline = true)
                                 DeskButton(if (busy) "正在删除…" else "删除文件", { confirmDelete(g, t) }, icon = null, small = true, danger = true)
                             }
                         }
                     } else {
                         CtxRow(GuguIcon.Trash, "删除媒体…", danger = true, tag = "ctx-delete", height = 4.6f) { stage = "del" }
                     }
+                }
+                notice?.let {
+                    BasicText(
+                        it,
+                        Modifier.padding(horizontal = Guga.rem(1.6f), vertical = Guga.rem(1.0f)).testTag("ctx-notice"),
+                        style = Guga.note(rsp(1.15f), colors.ink),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }

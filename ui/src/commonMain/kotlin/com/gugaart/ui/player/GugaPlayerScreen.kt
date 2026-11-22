@@ -199,6 +199,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val snap by controller.snapshot.collectAsState()
     val clock by controller.clock.collectAsState()
     val engine by controller.engineFlow.collectAsState()
+    RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（ShaderApply.kt）
     val settings by danmaku.settingsState.collectAsState()
     val render = remember(settings) { danmaku.prefsNow().render }
     val controls = remember { ControlsVisibility(scope, 3_000) }
@@ -281,7 +282,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                     if (p == PlayerPanel.Eps && LocalPlayerEpisodes.current == null && snap.episodes.isEmpty()) continue
                     val value = when (p) {
                         PlayerPanel.Eps -> snap.item?.indexNumber?.let { "第 $it 集" }
-                        PlayerPanel.Sub -> snap.subtitles.firstOrNull { it.selected }?.label?.takeIf { snap.subtitleIndex != null } ?: "关"
+                        PlayerPanel.Sub -> snap.subtitles.firstOrNull { it.selected || it.index == snap.subtitleIndex }?.label?.takeIf { snap.subtitleIndex != null } ?: "关"
                         PlayerPanel.Audio -> snap.audio.firstOrNull { it.selected }?.label
                         PlayerPanel.Speed -> rateLabel(snap.rate)
                         PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"

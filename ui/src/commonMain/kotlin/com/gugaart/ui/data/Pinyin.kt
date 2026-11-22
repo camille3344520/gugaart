@@ -31,6 +31,17 @@ object Pinyin {
         if (q.isEmpty()) return null
         val at = name.indexOf(q, ignoreCase = true)
         if (at >= 0) return at until at + q.length
+        // 1.3.1：空格容忍——片名和查询词里的空白都不算数，两个方向都认：
+        // 「star  wars」→「Star Wars」、「沙丘 2」→「沙丘2」、「钢之炼金术师FA」→「钢之炼金术师 FA」。
+        // 命中范围映射回原片名的下标（给命中的字上专色用）。
+        val cq = q.filterNot { it.isWhitespace() }
+        if (cq.isNotEmpty()) {
+            val keep = ArrayList<Int>(name.length)
+            val cn = StringBuilder(name.length)
+            for ((i, ch) in name.withIndex()) if (!ch.isWhitespace()) { keep += i; cn.append(ch) }
+            val hit = cn.indexOf(cq, ignoreCase = true)
+            if (hit >= 0) return keep[hit]..keep[hit + cq.length - 1]
+        }
         if (!isInitialsQuery(q)) return null
         // 名字里每个「有首字母的字符」的位置
         val pos = ArrayList<Int>(name.length)
