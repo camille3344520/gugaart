@@ -47,7 +47,13 @@ object GithubUpdate {
      * 另外记下「什么时候交给了系统安装器」和上游听安装结果的回调——安装确认被放到后台时由 [UpdateStall] 把卡住的状态报掉。
      */
     fun wrap(host: UpdateHost): UpdateHost = object : UpdateHost by host {
-        override val rangeSource: RangeSource = RangeSource { url, from, to -> host.rangeSource.get(rewrite(url), from, to) }
+        // 下载：主地址（GitHub Releases）+ 国内备用镜像顺序兜底，第一个 ok 的 chunk 赢（UpdateMirrors.firstOk）
+        override val rangeSource: RangeSource = RangeSource { url, from, to ->
+            val primary = rewrite(url)
+            UpdateMirrors.firstOk(listOf(primary) + UpdateMirrors.alternates(primary), UpdateMirrors.DOWNLOAD_ATTEMPT_MS, { it.ok }) { u ->
+                host.rangeSource.get(u, from, to)
+            }
+        }
 
         override fun setInstallListener(listener: ((InstallOutcome) -> Unit)?) {
             UpdateStall.listen(listener)

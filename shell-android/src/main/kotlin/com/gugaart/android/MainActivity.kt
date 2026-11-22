@@ -434,6 +434,8 @@ class MainActivity : ComponentActivity() {
             updateHost = if (BuildConfig.DEBUG) null else com.gugaart.ui.update.GithubUpdate.wrap(com.gugugaga.app.update.AndroidUpdateHost(this, tv)),
             updateConfig = if (BuildConfig.DEBUG) com.gugugaga.app.update.UpdateConfig(versionName = BuildConfig.VERSION_NAME, versionCode = BuildConfig.VERSION_CODE)
             else com.gugaart.ui.update.GithubUpdate.config(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, if (tv) "android-tv" else "android-mobile"),
+            // 更新检查的传输层：国内备用镜像 + 超时转普通异常（修「检查中…」卡死；ui/update/UpdateMirrors.kt）
+            updateTransport = if (BuildConfig.DEBUG) null else com.gugaart.ui.update.UpdateCheckTransport(com.gugugaga.core.KtorTransport(com.gugugaga.core.platformHttpClient())),
             meteredNetwork = {
                 runCatching { (getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered }.getOrDefault(false)
             },

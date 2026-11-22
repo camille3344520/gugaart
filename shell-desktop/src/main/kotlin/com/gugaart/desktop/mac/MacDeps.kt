@@ -89,6 +89,8 @@ internal fun macDeps(
         updateInstallProblem = null,
         updateConfig = if (updater == null) UpdateConfig(versionName = BuildInfo.APP_VERSION, versionCode = BuildInfo.VERSION_CODE)
         else com.gugaart.ui.update.GithubUpdate.config(BuildInfo.APP_VERSION, BuildInfo.VERSION_CODE, MacUpdateHost.ASSET_KEY),
+        // 更新检查的传输层：国内备用镜像 + 超时转普通异常（修「检查中…」卡死；ui/update/UpdateMirrors.kt）
+        updateTransport = updater?.let { com.gugaart.ui.update.UpdateCheckTransport(com.gugugaga.core.KtorTransport(com.gugugaga.core.platformHttpClient())) },
     )
 }
 
