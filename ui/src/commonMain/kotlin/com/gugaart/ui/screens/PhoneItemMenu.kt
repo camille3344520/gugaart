@@ -81,6 +81,8 @@ object PhoneItemMenu {
                 MenuRow(if (t.kind == Kind.Episode) "打开这部剧" else "查看详情", { close(); g.open(if (t.kind == Kind.Episode) t.seriesId ?: t.id else t.id) }, icon = GuguIcon.Info)
                 MenuRow(if (fav) "取消收藏" else "收藏", { g.toggleFavorite(chrome, favId, fav); close() }, icon = GuguIcon.Heart)
                 if (t.kind != Kind.BoxSet) MenuRow(if (seen) "标成没看" else "标记已看", { g.togglePlayed(chrome, t.id, seen); close() }, icon = GuguIcon.Check)
+                // 字幕搜索（1.4.0）：电影 / 单集；左边出搜索栏（docs/subtitle-search.md §5.1）
+                if (playable) MenuRow("搜索字幕…", { close(); com.gugaart.ui.subtitle.SubtitleSearchBoard.openForItem(t.id, t.displayName, g) }, Modifier.testTag("phone-menu-subs"), icon = GuguIcon.Captions)
                 if (manage) {
                     MenuRow("刷新元数据", {
                         status = "正在请求…"

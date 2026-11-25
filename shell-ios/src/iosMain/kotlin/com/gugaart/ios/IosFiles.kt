@@ -36,16 +36,16 @@ internal fun exportFileName(suggested: String): String {
 /** 导入的字体存在哪：`Application Support/GugaArt/fonts/`。 */
 internal fun fontsDir(): String = "${appSupportDir()}/fonts".also { NSFileManager.defaultManager.createDirectoryAtPath(it, true, null, null) }
 
-/** 内嵌字幕的 CJK 字体目录（只 iOS）：把随包的 Noto Serif SC（OFL，GB2312 全覆盖）从 compose 资源解到
+/** 内嵌字幕的 CJK 字体目录（只 iOS）：把随包的 Noto Sans SC Regular（黑体，OFL，GB2312 全覆盖）从 compose 资源解到
  *  `Application Support/GugaArt/sub-fonts`，交给 mpv `sub-fonts-dir`。模拟器的系统中文字体在 cryptexd 挂载路径里、
  *  沙箱的 freetype 打不开（libass coretext 把 PingFang SC 解析成 Helvetica → 中文方框），随包字体是读得到的 CJK 来源。
  *  解过一次就复用（按文件存在判断）。macOS / Windows / 安卓不走这里。 */
 internal fun subFontsDir(): String {
     val dir = "${appSupportDir()}/sub-fonts"
     NSFileManager.defaultManager.createDirectoryAtPath(dir, true, null, null)
-    val dest = "$dir/NotoSerifSC-400-subset.ttf"
+    val dest = "$dir/NotoSansSC-Regular-subset.ttf"
     if (!NSFileManager.defaultManager.fileExistsAtPath(dest)) {
-        val src = "${NSBundle.mainBundle.bundlePath}/compose-resources/composeResources/com.gugaart.ui.res/files/fonts/NotoSerifSC-400-subset.ttf"
+        val src = "${NSBundle.mainBundle.bundlePath}/compose-resources/composeResources/com.gugaart.ui.res/files/fonts/NotoSansSC-Regular-subset.ttf"
         readBytes(src)?.let { writeBytes(dest, it) }
     }
     return dir

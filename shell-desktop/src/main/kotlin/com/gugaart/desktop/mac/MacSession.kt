@@ -55,6 +55,8 @@ internal data class MacOptions(
     val uiMode: UiMode = UiMode.Desktop,
     /** null = 记住的位置 / 大小；给了就不记（和 Windows 一样）。 */
     val bounds: Rectangle? = null,
+    /** 开发运行的调试开关（Mock Emby 的夹具账号，`-Pgugaart.mockAccount=`）；打出来的包里没有。 */
+    val debug: com.gugugaga.app.platform.DebugOptions = com.gugugaga.app.platform.DebugOptions.None,
     /** 开发运行的实测探针（`--probe=<目录>`）：截图放这里；null = 不跑。 */
     val probeDir: File? = null,
     val probeRounds: Int = 1,
@@ -95,7 +97,7 @@ internal class MacSession private constructor(val options: MacOptions) {
      */
     val pictureInPicture: com.gugugaga.app.player.PictureInPicture? get() = playerPlatform.pictureInPicture
     val graph: AppGraph = AppGraph(
-        macDeps(options.dataDir, options.uiMode, options.backend, controls, player = playerPlatform, onQuit = ::quit),
+        macDeps(options.dataDir, options.uiMode, options.backend, controls, player = playerPlatform, debug = options.debug, onQuit = ::quit),
         scope,
         // 探针 / 验收自己导航（先等会话恢复）
         if (options.probeDir != null || options.acceptOut != null) Route.Home else options.route,
@@ -170,6 +172,11 @@ internal class MacSession private constructor(val options: MacOptions) {
                 LaunchedEffect(graph.nav.route) {
                     if (graph.nav.route !is com.gugugaga.app.nav.Route.Play) refreshDockMenu()
                 }
+                // 付印新刊挂上 / 撤下（首页组合里挂 WideNav.onReprint）时，Dock 那条跟着灰 / 亮（和应用菜单同步）
+                LaunchedEffect(Unit) {
+                    snapshotFlow { com.gugaart.ui.desktop.DesktopCommandSink.reprintReady?.invoke() == true }
+                        .collect { refreshDockMenu() }
+                }
                 // 号外出现且应用不在前台时发一条通知
                 LaunchedEffect(Unit) {
                     var lastNotified: String? = null
@@ -233,7 +240,11 @@ internal class MacSession private constructor(val options: MacOptions) {
                 LaunchedEffect(graph) { graph.session.status.collect { println("GuguPlayer [session] $it") } }
                 // 菜单栏装好以后打一行顶层菜单的标题和应用菜单里的项（D-lead-39：只该有一个「咕咕嘎嘎」）；
                 // 读的是进程自己的 NSApp.mainMenu，不要辅助功能授权——锁屏下 accept-mac --package 靠它核对
-                LaunchedEffect(Unit) { scope.launch(kotlinx.coroutines.Dispatchers.IO) { kotlinx.coroutines.delay(4_000); logMenuBar() } }
+                // 菜单栏装好以后：先按系统语言把系统应用菜单中文化（1.4.0），再打一行顶层菜单 + 应用菜单项核对
+                // （D-lead-39：只该有一个「咕咕嘎嘎」）；读进程自己的 NSApp.mainMenu，不要辅助功能授权——锁屏下 accept-mac --package 靠它
+                LaunchedEffect(Unit) { scope.launch(kotlinx.coroutines.Dispatchers.IO) { kotlinx.coroutines.delay(4_000); localizeSystemAppMenu(); logMenuBar() } }
+                // 换页时菜单栏会重装：再中文化一次，保证应用菜单不回到 JDK 的英文（幂等，已是中文就不动）
+                LaunchedEffect(graph.nav.route) { scope.launch(kotlinx.coroutines.Dispatchers.IO) { kotlinx.coroutines.delay(300); localizeSystemAppMenu() } }
                 // 离开播放器：「正在播放」的卡片消失、媒体键摘掉
                 val onPlayer = graph.nav.pathname.startsWith("/play")
                 LaunchedEffect(onPlayer) { if (!onPlayer) nowPlaying.detach() }
@@ -368,18 +379,21 @@ internal class MacSession private constructor(val options: MacOptions) {
             val resume = runCatching {
                 graph.session.session.value?.client?.getResume(limit = 3)?.items.orEmpty()
             }.getOrNull().orEmpty()
-            val entries = dockMenuEntries(resumeTitlesOf(resume))
+            val reprintReady = com.gugaart.ui.desktop.DesktopCommandSink.reprintReady?.invoke() == true
+            val entries = dockMenuItems(resumeTitlesOf(resume), reprintReady)
             javax.swing.SwingUtilities.invokeLater {
                 runCatching {
                     val tb = java.awt.Taskbar.getTaskbar()
                     if (!java.awt.Taskbar.isTaskbarSupported() || !tb.isSupported(java.awt.Taskbar.Feature.MENU)) return@runCatching
                     val menu = java.awt.PopupMenu()
-                    entries.forEachIndexed { i, label ->
-                        val item = java.awt.MenuItem(label)
+                    entries.forEachIndexed { i, entry ->
+                        val item = java.awt.MenuItem(entry.label)
+                        // 「付印新刊」不在首页时灰着（和应用菜单那条一样）；灰的项 AWT 不派发动作
+                        item.isEnabled = entry.enabled
                         item.addActionListener {
                             when {
                                 i < resume.size -> resume.getOrNull(i)?.let { graph.nav.navigate(com.gugugaga.app.nav.Route.Play(it.id)) }
-                                label == "搜索…" -> com.gugaart.ui.desktop.DesktopCommandSink.sink?.invoke(com.gugaart.ui.desktop.DesktopCommand.Search)
+                                entry.label == "搜索…" -> com.gugaart.ui.desktop.DesktopCommandSink.sink?.invoke(com.gugaart.ui.desktop.DesktopCommand.Search)
                                 else -> com.gugaart.ui.desktop.DesktopCommandSink.sink?.invoke(com.gugaart.ui.desktop.DesktopCommand.Reprint)
                             }
                         }

@@ -164,6 +164,11 @@ object TvLongPressMenu {
         val actions = buildList {
             if (playable) add(TvMenuAction("play", if (t.kind == Kind.Episode) "从这一集播放" else "播放", GuguIcon.Play) { g.play(t.id, t.positionSec?.times(1000)) })
             add(TvMenuAction("detail", if (t.kind == Kind.Episode) "打开这部剧" else "查看详情", GuguIcon.Info) { g.open(if (t.kind == Kind.Episode) t.seriesId ?: t.id else t.id) })
+            // 字幕搜索（1.4.0）：电视上字幕在播放器里换——开播这一集，开播后左边出搜索栏（docs/subtitle-search.md §5.1）
+            if (playable) add(TvMenuAction("subs", "搜索字幕…", GuguIcon.Captions) {
+                com.gugaart.ui.subtitle.SubtitleSearchBoard.openOnPlay = t.id
+                g.play(t.id, t.positionSec?.times(1000))
+            })
             if (t.kind != Kind.Person) {
                 add(TvMenuAction("fav", if (fav) "取消收藏" else "收藏", GuguIcon.Heart, stay = true) { g.toggleFavorite(chrome, favId, fav) })
                 if (t.kind != Kind.BoxSet) add(TvMenuAction("played", if (played) "标记未看" else "标记已看", GuguIcon.Check, stay = true) { g.togglePlayed(chrome, t.id, played) })

@@ -1,5 +1,6 @@
 package com.gugaart.ui.screens.update
 
+import com.gugaart.ui.update.updater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -43,6 +45,12 @@ import kotlin.math.roundToInt
 
 /** 测试缝：直接给一个更新状态（离屏测试没有签过名的清单可取）。应用里永远是 null = 读上游的 `UpdateController`。 */
 val LocalUpdateStateOverride = staticCompositionLocalOf<UpdateState?> { null }
+
+/**
+ * 测试缝（iOS 模拟器验收的运行器，`shell-ios/src/acceptMain`）：运行器没有真的触摸，往这里发一次 = 按一次侧载号外的主钮「打开发布页」，
+ * 走的是同一个动作（`LocalUriHandler.openUri(releasePage(版本))`）。应用里永远是 null。
+ */
+val LocalExtraGoDriver = staticCompositionLocalOf<kotlinx.coroutines.flow.Flow<Unit>?> { null }
 
 /** 号外现在在哪一步。 */
 enum class ExtraPhase { Offer, Downloading, Ready, Installing, Permission, Failed }
@@ -109,23 +117,23 @@ fun UpdateExtra() {
     // 和上游根界面一样：启动 10 秒后查一次（一天最多一次）；Windows 上一次安装的结果说一遍
     LaunchedEffect(graph) {
         if (override != null) return@LaunchedEffect
-        graph.update.startAutoCheck()
-        graph.deps.updateInstallProblem?.invoke()?.let { graph.update.reportInstallProblem(it) }
+        graph.updater.startAutoCheck()
+        graph.deps.updateInstallProblem?.invoke()?.let { graph.updater.reportInstallProblem(it) }
         // 上游一天最多自己查一次——画报发版勤，新版出来以后要等到第二天才看得见（用户 2026-11-15：「现在还是需要手动覆盖安装」）。
         // 补上：启动后距上次检查满 1 小时就再查；开着不关的（电视）每 30 分钟看一眼，满 3 小时再查。清单是一个很小的签名文件。
         // 这一次运行里点过「稍后」就不再追着提醒。
         kotlinx.coroutines.delay(UpdateNudge.FIRST_MS)
         var wait = UpdateNudge.AFTER_START_MS
         while (true) {
-            if (graph.update.enabled && graph.update.dismissedVersion.value == 0 && UpdateNudge.due(graph.update.status.value.lastCheckAt, UpdateNudge.nowMs(), wait)) {
-                graph.update.checkNow()
+            if (graph.updater.enabled && graph.updater.dismissedVersion.value == 0 && UpdateNudge.due(graph.updater.status.value.lastCheckAt, UpdateNudge.nowMs(), wait)) {
+                graph.updater.checkNow()
             }
             kotlinx.coroutines.delay(UpdateNudge.TICK_MS)
             wait = UpdateNudge.EVERY_MS
         }
     }
-    val live by graph.update.state.collectAsState()
-    val dismissed by graph.update.dismissedVersion.collectAsState()
+    val live by graph.updater.state.collectAsState()
+    val dismissed by graph.updater.dismissedVersion.collectAsState()
     // 侧载（iOS，D-lead-26）：只查不下载；号外的主钮打开 GitHub 上这一版的发布页，强制更新也能「稍后」（这一次运行里收起）
     val sideload = com.gugaart.ui.theme.LocalPhoneHost.current.distribution == com.gugaart.ui.theme.Distribution.Sideload
     var laterThisRun by remember { mutableStateOf(0) }
@@ -134,13 +142,19 @@ fun UpdateExtra() {
     var permissionHint by remember { mutableStateOf(false) }
     val release = ((override ?: live) as? UpdateState.Available)?.release
     if (sideload) {
+        val go: () -> Unit = { runCatching { uri.openUri(releasePage(view.version)) } }
+        // 模拟器验收的运行器没有真的触摸：它往测试缝里发一次 = 按一次这个主钮（应用里没有这个缝）
+        LocalExtraGoDriver.current?.let { presses ->
+            val latest by rememberUpdatedState(go)
+            LaunchedEffect(presses) { presses.collect { latest() } }
+        }
         ExtraSlip(
             view,
             permissionHint = false,
-            onUpdate = { runCatching { uri.openUri(releasePage(view.version)) } },
+            onUpdate = go,
             onLater = {
                 UpdateConsent.hideAgain()
-                if (view.forced) laterThisRun = releaseCodeOf(override ?: live) else graph.update.dismiss()
+                if (view.forced) laterThisRun = releaseCodeOf(override ?: live) else graph.updater.dismiss()
             },
             onIgnore = release?.takeUnless { view.forced }?.let { r -> { UpdateConsent.ignore(graph, r.versionCode) } },
             sideload = true,
@@ -154,13 +168,13 @@ fun UpdateExtra() {
         onUpdate = {
             when (view.phase) {
                 // 下好了：用户点「现在安装」才交给安装器
-                ExtraPhase.Ready -> graph.update.installDownloaded()
-                ExtraPhase.Permission -> permissionHint = !graph.update.requestInstallPermission()
+                ExtraPhase.Ready -> graph.updater.installDownloaded()
+                ExtraPhase.Permission -> permissionHint = !graph.updater.requestInstallPermission()
                 // 「下载并安装」/「再试一次」：挑了它就是同意装
                 else -> UpdateConsent.downloadAndInstall(graph)
             }
         },
-        onLater = { UpdateConsent.hideAgain(); graph.update.dismiss() },
+        onLater = { UpdateConsent.hideAgain(); graph.updater.dismiss() },
         onIgnore = release?.let { r -> { UpdateConsent.ignore(graph, r.versionCode) } },
     )
 }
@@ -171,17 +185,11 @@ fun UpdateExtra() {
  */
 const val DMG_NOTE = "下载的是 .dmg：打开后把「咕咕嘎嘎」拖进「应用程序」替换旧的，再打开一次就好"
 
-/** 所有版本的发布页（iOS 关于页「检查更新」那一行打开它）。 */
-fun releasesPage(): String = "https://github.com/${com.gugaart.ui.update.GithubUpdate.REPO}/releases"
-
 /**
- * iOS（侧载）暂不在应用里检查更新：更新清单的 Ed25519 验签在 iOS 上还没做（上游的验签在 iOS 上恒为 false），
- * 自动检查每次都会「签名校验失败，已忽略」。1.3.0 不实现验签，关于页不报这个失败，写这一句，钮打开发布页。
+ * 关于页「检查更新」下面那句：上一次检查的结果（已是最新 / 发现新版本 / 连不上更新服务器……，上游写的）。纯函数，有单测。
+ * 1.3.x 的 iPhone 在这里写死「iOS 版暂不支持应用内检查更新」（那时 iOS 没有验签）；1.4.0 起 iOS 也验签（`update/Ed25519.kt`），三端一样。
  */
-const val SIDELOAD_CHECK_NOTE = "iOS 版暂不支持应用内检查更新，新版本请看发布页"
-
-/** 关于页「检查更新」下面那句：侧载（iOS）写 [SIDELOAD_CHECK_NOTE]，别的端写上一次检查的结果。纯函数，有单测。 */
-fun aboutCheckNote(sideload: Boolean, lastResult: String): String = if (sideload) SIDELOAD_CHECK_NOTE else lastResult.ifEmpty { "还没有检查过" }
+fun aboutCheckNote(lastResult: String): String = lastResult.ifEmpty { "还没有检查过" }
 
 /** 这一版在 GitHub 上的发布页（侧载的号外打开它；仓库名只在 [com.gugaart.ui.update.GithubUpdate.REPO] 一处）。 */
 fun releasePage(version: String): String = "https://github.com/${com.gugaart.ui.update.GithubUpdate.REPO}/releases/tag/v$version"

@@ -140,7 +140,7 @@ class IosLoopbackRelayHost(
             }
             val bytes = resp.body.encodeToByteArray()
             val top = "HTTP/1.1 ${resp.status} ${reason(resp.status)}\r\n" +
-                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Content-Type: ${resp.contentType}\r\n" +
                 "Content-Length: ${bytes.size}\r\n" +
                 "Connection: close\r\n\r\n"
             sendAll(c, top.encodeToByteArray() + bytes)

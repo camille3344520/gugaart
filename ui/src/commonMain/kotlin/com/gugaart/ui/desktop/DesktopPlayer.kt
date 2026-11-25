@@ -1,5 +1,6 @@
 package com.gugaart.ui.desktop
 
+import com.gugaart.ui.subtitle.SubtitleSearchHost
 import com.gugaart.ui.player.DanmakuPickerHost
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -582,6 +583,8 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
         }
         // 弹幕来源：从左边滑出来（有歧义时自己出来一次）
         DanmakuPickerHost(danmaku, snap.itemId, Guga.rem(48f))
+        // 字幕搜索：同一种做法，从左边出来（字幕面板「搜索字幕…」打开）
+        SubtitleSearchHost(play, Guga.rem(48f))
     }
 }
 

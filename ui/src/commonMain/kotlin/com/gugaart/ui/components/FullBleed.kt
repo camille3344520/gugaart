@@ -36,13 +36,26 @@ import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.data.rememberImage
 import com.gugugaga.ds.theme.UiMode
 
-/** 整幅图的三种来源（决定图注怎么写）。 */
-enum class BleedSource { Backdrop, PosterBlur, None }
+/** 整幅图的来源（决定图注怎么写）。[Poster]：手机详情页的竖版海报（[FullBleed] 的 `poster` 模式）。 */
+enum class BleedSource { Backdrop, PosterBlur, Poster, None }
 
-fun bleedSourceOf(art: Art): BleedSource = when {
+/** [poster] = 手机详情页：有海报就用竖版海报（用户 2026-11-24：「手机端，进入影片详情最好是显示竖版的海报，横版的会看不全内容」）。 */
+fun bleedSourceOf(art: Art, poster: Boolean = false): BleedSource = when {
+    poster && art.poster != null -> BleedSource.Poster
     art.backdrop != null -> BleedSource.Backdrop
     art.poster != null -> BleedSource.PosterBlur
     else -> BleedSource.None
+}
+
+/**
+ * 手机详情页头图的高：有海报 = 竖版海报整张（宽 × 1.5，2:3），但不超过屏高的 [BleedSpec.POSTER_MAX_SCREEN]（超了按顶部对齐、裁掉海报底部一点）；
+ * 没有海报 = [fallback]（横版剧照那一套原来的高）。
+ */
+@Composable
+fun phoneHeroHeight(art: Art, fallback: Dp): Dp {
+    if (art.poster == null) return fallback
+    val win = com.gugugaga.ds.theme.LocalWindowDp.current
+    return minOf(win.width * 1.5f, win.height * BleedSpec.POSTER_MAX_SCREEN)
 }
 
 /** 整幅图的几个数（docs/design-language.md §6.2）。 */
@@ -62,6 +75,12 @@ object BleedSpec {
 
     /** 图注在滚动这么多 dp 之内淡出。 */
     val CAPTION_FADE = 50.dp
+
+    /** 竖版海报模式：只有底部这么多渐隐进纸色（片名区压在这里），上面的海报完整露出。 */
+    const val POSTER_FADE = 0.34f
+
+    /** 竖版海报模式：头图最高占屏高的比例。 */
+    const val POSTER_MAX_SCREEN = 0.72f
 }
 
 /**
@@ -85,13 +104,17 @@ fun FullBleed(
     scrollPx: Float = 0f,
     /** 首页封面区：有剧照也虚化、压暗（海报流和文字浮在上面）。 */
     soften: Boolean = false,
+    /** 手机详情页：有海报就用竖版海报整张铺开（顶部对齐），只底部 [BleedSpec.POSTER_FADE] 渐隐；没海报照旧。 */
+    poster: Boolean = false,
     dim: Float = 0f,
     onImage: ((ImageBitmap) -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit = {},
 ) {
     val colors = Guga.colors
-    val source = bleedSourceOf(art)
-    val url = art.backdrop ?: art.poster
+    val source = bleedSourceOf(art, poster)
+    val url = if (source == BleedSource.Poster) art.poster else art.backdrop ?: art.poster
+    // 竖版海报：横向居中、竖向贴顶（高被封顶时裁的是海报底部，片名区本来就压在那里）
+    val frame = if (source == BleedSource.Poster) Framing(0.5f, 0f) else framing
     val bmp = rememberImage(url, keepPrevious = true)
     val cf = rememberCrossfade(bmp)
     val softNow = rememberSoft(cf.current.takeIf { soften || source == BleedSource.PosterBlur })
@@ -107,11 +130,11 @@ fun FullBleed(
             }
             val blurred = soften || source == BleedSource.PosterBlur
             if (blurred) {
-                softPrev?.let { drawCover(it, framing, 1f, quality = FilterQuality.High) }
-                softNow?.let { drawCover(it, framing, cf.alpha, quality = FilterQuality.High) }
+                softPrev?.let { drawCover(it, frame, 1f, quality = FilterQuality.High) }
+                softNow?.let { drawCover(it, frame, cf.alpha, quality = FilterQuality.High) }
             } else {
-                cf.previous?.let { drawCover(it, framing) }
-                current?.let { drawCover(it, framing, cf.alpha) }
+                cf.previous?.let { drawCover(it, frame) }
+                current?.let { drawCover(it, frame, cf.alpha, quality = if (source == BleedSource.Poster) FilterQuality.High else FilterQuality.Medium) }
             }
             // 压暗（首页封面区、虚化的海报）
             val veil = if (blurred) maxOf(dim, 0.34f) else dim
@@ -120,8 +143,8 @@ fun FullBleed(
             val v = BleedSpec.VIGNETTE.toPx().coerceAtMost(size.height)
             val va = if (bright) BleedSpec.VIGNETTE_ALPHA_BRIGHT else BleedSpec.VIGNETTE_ALPHA
             drawRect(Brush.verticalGradient(listOf(colors.paper.copy(alpha = va), Color.Transparent), 0f, v), size = androidx.compose.ui.geometry.Size(size.width, v))
-            // 底部渐隐带：下 58 % 渐隐进纸色，70 % 处已接近纸色
-            val top = size.height * (1f - BleedSpec.FADE)
+            // 底部渐隐带：下 58 % 渐隐进纸色，70 % 处已接近纸色（竖版海报只渐隐下 34 %，海报上面整张露出来）
+            val top = size.height * (1f - if (source == BleedSource.Poster) BleedSpec.POSTER_FADE else BleedSpec.FADE)
             drawRect(
                 Brush.verticalGradient(
                     0f to Color.Transparent,
@@ -149,7 +172,7 @@ fun FullBleed(
                 } else {
                     VerticalCaption(
                         caption,
-                        Modifier.align(Alignment.TopEnd).padding(top = BleedSpec.VIGNETTE + height * framing.captionDown * 0.5f).graphicsLayer { alpha = fade },
+                        Modifier.align(Alignment.TopEnd).padding(top = BleedSpec.VIGNETTE + height * frame.captionDown * 0.5f).graphicsLayer { alpha = fade },
                     )
                 }
             }

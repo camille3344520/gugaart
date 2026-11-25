@@ -1,5 +1,6 @@
 package com.gugaart.ui.screens.settings
 
+import com.gugaart.ui.update.updater
 import com.gugaart.ui.screens.LocalPageState
 import com.gugugaga.ds.physics.rememberPressState
 import com.gugugaga.ds.physics.pressable
@@ -399,6 +400,12 @@ internal fun SubsSection(pick: String?) {
         multi = true,
         startOpen = pick == "sub",
     )
+    // 字幕搜索（1.4.0，docs/subtitle-search.md §6）：画报自己的键 subtitleOnline
+    SettingRow(
+        "在线字幕源（迅雷 / 射手）",
+        note = "播放器「字幕 › 搜索字幕…」时也问迅雷和射手：会发送文件名和文件指纹（几段内容的哈希），不发服务器地址和登录信息。关掉 = 只用服务器的字幕源",
+        tag = "set-subtitleOnline",
+    ) { OnOff(gp.subtitleOnline, { on -> store.update { it.copy(subtitleOnline = on) } }) }
 }
 
 /* ------------------------------------------------------------------ 06 弹幕 */
@@ -837,29 +844,23 @@ internal fun AboutSection() {
     val colors = Guga.colors
     val type = Guga.type
     val settings by g.settings.state.collectAsState()
-    val status by g.update.status.collectAsState()
+    val status by g.updater.status.collectAsState()
 
     Rule(Modifier.padding(top = 22.dp), strong = true)
     Row(Modifier.fillMaxWidth().padding(vertical = 16.dp).testTag("about-head"), verticalAlignment = Alignment.CenterVertically) {
         if (LocalGugaPrefs.current.showMascot) Byline(52.dp, live = false)
         Column(Modifier.padding(start = 14.dp)) {
             BasicText("咕咕嘎嘎", style = Guga.song(type.section, FontWeight.Black, letterSpacing = 0.3.em), maxLines = 1)
-            BasicText("${g.deps.appVersion} · ${if (g.update.enabled) g.update.channelLabel else "咕嘎画报 · EMBY"}", Modifier.padding(top = 3.dp), style = Guga.note(type.caption, colors.dim), maxLines = 1)
+            BasicText("${g.deps.appVersion} · ${if (g.updater.enabled) g.updater.channelLabel else "咕嘎画报 · EMBY"}", Modifier.padding(top = 3.dp), style = Guga.note(type.caption, colors.dim), maxLines = 1)
         }
     }
     Rule()
 
     SettingGroup("更新", "UPDATE")
-    // iOS（侧载）：应用里暂不检查更新（清单验签在 iOS 上还没做），不报「签名校验失败」，钮打开发布页
-    val sideload = com.gugaart.ui.theme.LocalPhoneHost.current.distribution == com.gugaart.ui.theme.Distribution.Sideload
-    val uri = androidx.compose.ui.platform.LocalUriHandler.current
-    if (sideload) {
-        SettingRow("检查更新", note = com.gugaart.ui.screens.update.aboutCheckNote(true, status.lastResult), tag = "about-check") {
-            ActionWord("发布页", { runCatching { uri.openUri(com.gugaart.ui.screens.update.releasesPage()) } })
-        }
-    } else if (g.update.enabled) {
-        SettingRow("检查更新", note = com.gugaart.ui.screens.update.aboutCheckNote(false, status.lastResult), tag = "about-check") { ActionWord("检查", { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) }) }
-        InfoRow("更新通道", g.update.channelLabel)
+    // 三端（含 iPhone，1.4.0 起 iOS 也验签）同一行：「检查」= 手动查一次；有新版出号外（iPhone 的号外主钮是「打开发布页」）
+    if (g.updater.enabled) {
+        SettingRow("检查更新", note = com.gugaart.ui.screens.update.aboutCheckNote(status.lastResult), tag = "about-check") { ActionWord("检查", { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) }) }
+        InfoRow("更新通道", g.updater.channelLabel)
     } else {
         SettingRow("检查更新", note = "这一版不检查更新", tag = "about-check") { ValueText("未开启") }
     }

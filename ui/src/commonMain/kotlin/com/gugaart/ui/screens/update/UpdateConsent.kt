@@ -1,5 +1,6 @@
 package com.gugaart.ui.screens.update
 
+import com.gugaart.ui.update.updater
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
@@ -38,7 +39,7 @@ object UpdateConsent {
         ignored = versionCode
         graph.deps.local.set(IGNORE_KEY, versionCode.toString())
         hideAgain()
-        graph.update.dismiss()
+        graph.updater.dismiss()
     }
 
     /**
@@ -80,18 +81,18 @@ object UpdateConsent {
             ignored = 0
             graph.deps.local.remove(IGNORE_KEY)
         }
-        val busy = busyRelease(graph.update.state.value)
+        val busy = busyRelease(graph.updater.state.value)
         if (busy != null) {
             reshow(busy.versionCode)
             com.gugaart.ui.update.UpdateStall.check(graph)
             return
         }
-        graph.update.checkNow()
+        graph.updater.checkNow()
     }
 
     /** 「下载并安装」/「再试一次」：用户挑了它 = 同意下好就装（交给上游的「下载并安装」）。 */
     fun downloadAndInstall(graph: AppGraph) {
-        graph.update.downloadAndInstall()
+        graph.updater.downloadAndInstall()
     }
 
     /** 启动时：自动下载关掉（设置里不再有这个开关）。 */

@@ -107,8 +107,10 @@ Windows / macOS / 安卓 / iPhone（带播放内核的包）带的是同一份�
 | JNA | Apache-2.0 或 LGPL-2.1-or-later（双许可） |
 | Coil、Kermit、multiplatform-settings、Kyant backdrop / shapes | Apache-2.0 |
 | 液态玻璃着色器（移植自 liquid_glass_widgets、liquid_glass_renderer：上游 designsystem 的玻璃材质与着色器；Copyright (c) 2024–2026 Sebastian Degenaar；Copyright 2025 Tim Lehmann for whynotmake.it） | MIT |
+| MeiamSubtitles（字幕搜索：迅雷 CID / 射手哈希的算法、两家接口的用法、下载内容的解码与校验，移植成 Kotlin 并有改动；Copyright Meiam；<https://github.com/91270/MeiamSubtitles> 提交 b0427939） | Apache-2.0（原文 `third_party/meiamsub/LICENSE`） |
 | Lucide 图标（矢量路径） | ISC |
 | 思源宋体子集 Noto Serif SC（界面字体） | SIL Open Font License 1.1（`third_party/fonts/noto-serif-sc/OFL.txt`） |
+| 思源黑体子集 Noto Sans SC（iOS 内嵌字幕字体） | SIL Open Font License 1.1（`third_party/fonts/noto-sans-sc/OFL.txt`） |
 
 > 应用里「设置 › 关于 › 开源许可」列的是同一份内容（`ui/…/screens/settings/OpenSourceLicenses.kt`，单测逐行对这里的表）；改一边要改另一边。
 

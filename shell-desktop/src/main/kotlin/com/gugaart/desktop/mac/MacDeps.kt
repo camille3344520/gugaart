@@ -5,6 +5,8 @@ import com.gugugaga.app.platform.DebugOptions
 import com.gugugaga.app.platform.CommentBlobStore
 import com.gugugaga.app.platform.FileBlobCache
 import com.gugugaga.app.platform.FileLocalStore
+import com.gugugaga.app.platform.DpapiKeyValueStore
+import com.gugugaga.app.platform.PlainProtector
 import com.gugugaga.app.platform.LocalKeys
 import com.gugugaga.app.platform.PlatformDeps
 import com.gugugaga.app.platform.WindowControls
@@ -30,10 +32,10 @@ internal fun macDataDir(override: String?, home: String = System.getProperty("us
  * 上游共享逻辑在 Mac 上要的东西。照 `Main.kt` 的 `desktopDeps` 写（同一个壳里的两份接线），不同的只有：
  * 设备名 `Mac · <主机名>`、平台标签 macOS、更新宿主 = [MacUpdateHost]（下 `.dmg`、打开、退出；资产键 `macos-dmg`，M2-8 / D-lead-8；
  * 开发运行 `gugaart.dev` 不检查，同 Windows）、
- * 安全存储 = 钥匙串（[MacSecureStore]，M2-5 / D-lead-6；原来的明文文件第一次用时迁进去再删掉）、
+ * 安全存储 = 数据目录里的文件（`plain-fallback`，和 Windows 同一种；理由见下面 `secure` 那行）、
  * 减弱动效 = 系统「减弱动态效果」（启动时读一次，[readReduceMotion]）。
  * 其余（local、弹幕中转、Trakt、DLNA、缓存目录、剪贴板、产品名）和 Windows 相同。
- * [keychain]：单测给假的；[reduceMotion]：单测给定值（不起子进程）。
+ * [reduceMotion]：单测给定值（不起子进程）。
  */
 internal fun macDeps(
     dataDir: File,
@@ -43,14 +45,16 @@ internal fun macDeps(
     player: PlayerPlatform? = null,
     debug: DebugOptions? = null,
     onQuit: () -> Unit = { kotlin.system.exitProcess(0) },
-    keychain: KeychainApi = SecurityFrameworkKeychain,
     reduceMotion: Boolean = readReduceMotion(),
     log: (String) -> Unit = { println("GuguPlayer [secure] $it") },
     dev: Boolean = System.getProperty("gugaart.dev") == "true",
     updateDir: File = MacUpdateHost.defaultDir(),
 ): PlatformDeps {
     val local = FileLocalStore(File(dataDir, "local.json"))
-    val secure = MacSecureStore(MacKeychainStore(keychain, dataDir, log = log), File(dataDir, MacSecureStore.PLAIN_FILE), log)
+    // 令牌存数据目录的文件（同 Windows / Electron safeStorage 降级），不碰钥匙串：ad-hoc 签名每次构建 cdhash 都变，
+    // 钥匙串条目的 ACL 只认创建它的签名，换个构建/更新读旧条目就反复弹「想访问您的钥匙串」（macOS 27 上宽松 ACL 的旧 API 已移除，做不成）。
+    // 主理人 2026-11：安全可以让步，先不弹。原来的钥匙串条目不再读，用户重登一次写进文件即可。
+    val secure = DpapiKeyValueStore(File(dataDir, MacSecureStore.PLAIN_FILE), PlainProtector)
     // 多个弹幕服务器：清单 + 本机回环上的中转（两台以上时上游读到的主弹幕地址是中转；回环不触发「本地网络」权限）
     val secureForApp = com.gugaart.ui.danmaku.withDanmakuRelay(secure, local, debug?.defaultSecrets?.danmakuApiUrl)
     com.gugaart.ui.trakt.TraktService.install(BuildInfo.TRAKT_CLIENT_ID, BuildInfo.TRAKT_CLIENT_SECRET)

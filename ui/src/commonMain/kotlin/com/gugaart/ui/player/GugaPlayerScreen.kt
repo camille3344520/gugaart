@@ -1,5 +1,6 @@
 package com.gugaart.ui.player
 
+import com.gugaart.ui.subtitle.SubtitleSearchHost
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -451,6 +452,8 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
         }
         // 弹幕来源：从左边滑出来（有歧义时自己出来一次）
         DanmakuPickerHost(danmaku, snap.itemId, 360.dp)
+        // 字幕搜索：同一种做法，从左边出来（字幕面板「搜索字幕…」打开）
+        SubtitleSearchHost(play, 360.dp)
     }
 }
 

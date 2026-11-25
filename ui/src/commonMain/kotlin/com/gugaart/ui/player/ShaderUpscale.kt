@@ -13,7 +13,7 @@ import org.jetbrains.compose.resources.ExperimentalResourceApi
  * （[com.gugaart.ui.data.GugaPrefs.shader]），下次开播沿用；应用时机在 [RememberShaderApply]。
  *
  * **只在 mpv 系内核出现**：引擎要有 [com.gugugaga.app.player.PlayerEngine.shaders]（ExoPlayer / VLC 没有），平台要能把字节写成
- * 缓存文件（[FontImportHost]，电视 / 没接文件缝的壳为 null）——两者缺一就不画入口（[shaderEntryVisible]）。
+ * 缓存文件（[FontImportHost]，没接文件缝的壳为 null；电视给的是 `canPick=false` 的 host——能写文件、不能选字体）——两者缺一就不画入口（[shaderEntryVisible]）。
  */
 enum class ShaderPreset(val id: String, val label: String, val note: String?, val files: List<String>) {
     Off("off", "关", null, emptyList()),

@@ -1,5 +1,6 @@
 package com.gugaart.ui.tv.system
 
+import com.gugaart.ui.update.updater
 import com.gugaart.ui.data.GugaPrefs
 import com.gugaart.ui.data.GugaSettingsStore
 import com.gugaart.ui.data.SubtitleDefault
@@ -294,6 +295,8 @@ fun tvSettingRows(
                 SUBTITLE_MODE_CHOICES.firstOrNull { it.id == id }?.label?.substringAfter('（', "")?.removeSuffix("）")?.takeIf { it.isNotEmpty() }
             }) { put("subtitleMode", JsonPrimitive(it)) },
             langs("subtitleLangs", "首选字幕语言", SUBTITLE_LANGS, p.subtitleLangs, "SUBTITLES") { put("subtitleLangs", jsonStrings(it)) },
+            // 字幕搜索（1.4.0，docs/subtitle-search.md §6）：画报自己的键 subtitleOnline
+            TvToggle("subtitleOnline", "在线字幕源（迅雷 / 射手）", "搜索字幕时也问迅雷和射手：会发送文件名和文件指纹；关掉只用服务器的字幕源", prefs.subtitleOnline) { on -> store.update { it.copy(subtitleOnline = on) } },
         )
     }
     GugaSection.Danmaku -> {
@@ -363,9 +366,9 @@ fun tvSettingRows(
     }
     GugaSection.About -> listOfNotNull(
         TvHead("更新", "UPDATE"),
-        if (g.update.enabled) TvAction("about-check", "检查更新", g.update.status.value.lastResult.ifEmpty { "还没有检查过" }, "检查") { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) } else TvInfo("about-check", "检查更新", "未开启", "这一版不检查更新"),
+        if (g.updater.enabled) TvAction("about-check", "检查更新", g.updater.status.value.lastResult.ifEmpty { "还没有检查过" }, "检查") { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) } else TvInfo("about-check", "检查更新", "未开启", "这一版不检查更新"),
         // 不自动下载、不自动安装（用户 2026-11-15）：没有「自动下载更新」开关了
-        TvInfo("channel", "更新通道", g.update.channelLabel),
+        TvInfo("channel", "更新通道", g.updater.channelLabel),
         // 随包的第三方组件和许可证（D-lead-41；和手机 / 电脑同一份 OpenSourceLicenses）。排在「这台设备」前面：
         // 右页一屏只排得下 6 行，能接焦点的两行（检查更新、开源许可）要隔得近，焦点往下才走得到（windowStart 的 next）
         TvHead("许可", "LICENSES"),

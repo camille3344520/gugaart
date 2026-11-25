@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import com.gugaart.ui.res.Res
 import com.gugaart.ui.res.pose_g03
 import com.gugaart.ui.theme.Guga
@@ -108,21 +109,52 @@ fun Masthead(
             } else {
                 // 字高 ≈ 字号；徽记直径 = 字高 × 1.15
                 val emblem = with(LocalDensity.current) { (type.masthead.toPx() * EMBLEM_PER_CAP).toDp() }
-                BasicText("咕咕", style = word, maxLines = 1)
-                Image(
-                    painterResource(Res.drawable.pose_g03),
-                    contentDescription = null,
-                    modifier = Modifier.size(emblem).clip(CircleShape).border(1.dp, colors.ink, CircleShape),
-                )
-                // 字距加在每个字的右边：徽记右侧补同样的一格，让四个字以徽记为中心对称
-                Spacer(Modifier.width(with(LocalDensity.current) { (type.masthead.toPx() * MASTHEAD_TRACKING_EM).toDp() }))
-                BasicText("嘎嘎", style = word, maxLines = 1)
+                MastheadWordmark(Guga.song(type.masthead, FontWeight.Black, colors.ink), type.masthead.value * MASTHEAD_TRACKING_EM) {
+                    Image(
+                        painterResource(Res.drawable.pose_g03),
+                        contentDescription = null,
+                        modifier = Modifier.size(emblem).clip(CircleShape).border(1.dp, colors.ink, CircleShape),
+                    )
+                }
             }
         }
         Row(Modifier.align(Alignment.CenterEnd).alpha(contentAlpha), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(dimens.gutter / 2)) {
             val dateStyle = Guga.song(type.kicker, FontWeight.Normal, colors.dim, letterSpacing = 0.14.em)
             if (dateSlot != null) dateSlot(dateStyle) else BasicText(date, style = dateStyle, maxLines = 1)
             trailing?.invoke()
+        }
+    }
+}
+
+/**
+ * 报头刊名「咕咕 ◉ 嘎嘎」：四个字和徽记**一个一个摆**，相邻之间同样一格字距（[trackingSp]），徽记正好在这一组的正中。
+ * 不用 letterSpacing：字距加在每个字后面（安卓还是前后各半格），末字后面那格看不见却占宽度，整组居中时徽记会偏左（用户 2026-11-24：
+ * 「首页的咕咕嘎嘎图标和字没有居中，图标会偏左一点」）。四个汉字等宽，所以左右两边一样宽、徽记在 Box 正中。
+ */
+@Composable
+private fun MastheadWordmark(style: androidx.compose.ui.text.TextStyle, trackingSp: Float, emblem: @Composable () -> Unit) {
+    val gap = with(LocalDensity.current) { trackingSp.sp.roundToPx() }
+    androidx.compose.ui.layout.Layout(
+        content = {
+            BasicText("咕", style = style, maxLines = 1)
+            BasicText("咕", style = style, maxLines = 1)
+            emblem()
+            BasicText("嘎", style = style, maxLines = 1)
+            BasicText("嘎", style = style, maxLines = 1)
+        },
+        modifier = Modifier.testTag("masthead-wordmark"),
+    ) { measurables, _ ->
+        val ps = measurables.map { it.measure(androidx.compose.ui.unit.Constraints()) }
+        // 左右两边按较宽的一边算，徽记中心 = 整组中心（字宽有一点出入也不偏）
+        val left = maxOf(ps[0].width + ps[1].width, ps[3].width + ps[4].width) + gap * 2
+        val w = left * 2 + ps[2].width
+        val h = ps.maxOf { it.height }
+        layout(w, h) {
+            ps[2].place(left, (h - ps[2].height) / 2)
+            ps[1].place(left - gap - ps[1].width, (h - ps[1].height) / 2)
+            ps[0].place(left - gap - ps[1].width - gap - ps[0].width, (h - ps[0].height) / 2)
+            ps[3].place(left + ps[2].width + gap, (h - ps[3].height) / 2)
+            ps[4].place(left + ps[2].width + gap + ps[3].width + gap, (h - ps[4].height) / 2)
         }
     }
 }

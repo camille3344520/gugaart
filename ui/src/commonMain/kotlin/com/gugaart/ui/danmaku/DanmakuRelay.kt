@@ -32,7 +32,8 @@ import kotlin.time.TimeSource
 /** 中转收到的一个请求：[target] = 去掉中转前缀后的路径 + 查询串（`/search/anime?keyword=…`）。 */
 data class RelayRequest(val method: String, val target: String, val body: String?, val headers: Map<String, String>)
 
-data class RelayResponse(val status: Int, val body: String)
+/** [contentType]：弹幕中转都是 JSON；字幕搜索的本机字幕（subtitle/LocalSubtitles.kt）借同一种回环服务回字幕文本。 */
+data class RelayResponse(val status: Int, val body: String, val contentType: String = "application/json; charset=utf-8")
 
 /** 中转在本机听着的那一层（壳里实现：回环上的一个小 HTTP 服务）。返回中转的 API 根地址。 */
 fun interface RelayHost {

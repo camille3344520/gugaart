@@ -147,7 +147,7 @@ class MainActivity : ComponentActivity() {
     private val fontImport by lazy {
         val dir = java.io.File(filesDir, "fonts")
         com.gugaart.ui.data.FontImportHost(
-            pick = {
+            pick = { if (tv) null else {
                 val wait = kotlinx.coroutines.CompletableDeferred<android.net.Uri?>()
                 fontPick?.complete(null)
                 fontPick = wait
@@ -175,13 +175,15 @@ class MainActivity : ComponentActivity() {
                     } ?: ByteArray(0)
                     if (bytes.size > max) com.gugaart.ui.data.PickedFont(name, ByteArray(0), tooLarge = true) else com.gugaart.ui.data.PickedFont(name, bytes)
                 }
-            },
+            } },
             write = { name, bytes ->
                 dir.mkdirs()
                 java.io.File(dir, name).also { it.writeBytes(bytes) }.absolutePath
             },
             delete = { path -> java.io.File(path).takeIf { it.parentFile == dir }?.delete() },
             exists = { path -> java.io.File(path).isFile },
+            // 电视没有文件选择器（SAF）：选不了字体，但写文件的能力给——画质面板的着色器增强要把链写成缓存文件
+            canPick = !tv,
         )
     }
 
@@ -258,8 +260,9 @@ class MainActivity : ComponentActivity() {
                 }
                 CompositionLocalProvider(
                     LocalPlayerPanelDriver provides panelDriver.takeIf { BuildConfig.DEBUG },
-                    // 导入弹幕字体：手机 = 系统文件选择器（SAF）；电视没有文件选择器 → 不给（界面上写明）
-                    com.gugaart.ui.data.LocalFontImport provides fontImport.takeIf { !tv },
+                    // 导入弹幕字体：手机 = 系统文件选择器（SAF）；电视没有选择器 → canPick=false（界面上写明）。
+                    // host 本身三端都给：着色器增强只要写文件的能力（write/exists），电视也要画得出那个入口。
+                    com.gugaart.ui.data.LocalFontImport provides fontImport,
                     // 配置备份的本地文件：手机 = 系统文件选择器；电视多半没有 → 不给（电视用 WebDAV）
                     com.gugaart.ui.backup.LocalBackupFiles provides backupFiles.takeIf { !tv },
                 ) {

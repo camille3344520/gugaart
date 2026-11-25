@@ -82,6 +82,8 @@ import com.gugaart.ui.player.HeatSpec
 import com.gugaart.ui.player.drawHeatColumns
 import com.gugaart.ui.player.heatDots
 import com.gugaart.ui.player.rateLabel
+import com.gugaart.ui.player.ShaderPreset
+import com.gugaart.ui.player.shaderEntryVisible
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.detail.specLine
 import com.gugaart.ui.theme.Guga
@@ -204,7 +206,13 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     val snap by controller.snapshot.collectAsState()
     val clock by controller.clock.collectAsState()
     val engine by controller.engineFlow.collectAsState()
-    com.gugaart.ui.player.RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（电视没有选择入口，但沿用本地键）
+    com.gugaart.ui.player.RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（电视现在也有选择入口）
+    // 着色器增强（画质面板第二行）：和手机 / 电脑同一个键（GugaPrefs.shader），只在 mpv 系内核 + 能写文件的平台画
+    val shaderStore = com.gugaart.ui.screens.settings.rememberGugaStore()
+    val shaderPrefs by shaderStore.prefs.collectAsState()
+    val shaderHost = com.gugaart.ui.data.LocalFontImport.current
+    val shaderVisible = shaderEntryVisible(engine?.shaders != null, shaderHost != null)
+    val shaderIndex = ShaderPreset.entries.indexOf(shaderPrefs.shader).coerceAtLeast(0)
     val settings by danmaku.settingsState.collectAsState()
     val render = remember(settings) { danmaku.prefsNow().render }
     val controls = remember { ControlsVisibility(scope, TvPlayerSpec.HIDE_MS) }
@@ -273,7 +281,19 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     val pickOpen = com.gugaart.ui.player.DanmakuPickerBoard.open && snap.phase != PlayPhase.Error
     var pickEditing by remember { mutableStateOf(false) }
     val dmSearch = remember { com.gugaart.ui.player.DanmakuSearch() }
-    val showOsd = osd && panel == null && !credits && skip == null && !stripOpen && !pickOpen
+    // 字幕搜索（左边一栏，tv/player/TvSubtitleSearch.kt）：页边面板「字幕」一行按确定打开；长按菜单的「搜索字幕…」开播后自己打开
+    val subSearch = com.gugaart.ui.subtitle.SubtitleSearchBoard.session?.takeIf { com.gugaart.ui.subtitle.SubtitleSearchBoard.play === play }
+    val subOpen = subSearch != null && snap.phase != PlayPhase.Error
+    var subEditing by remember { mutableStateOf(false) }
+    LaunchedEffect(snap.itemId, snap.phase) {
+        if (com.gugaart.ui.subtitle.SubtitleSearchBoard.applyPending(play, snap.itemId, snap.phase)) return@LaunchedEffect
+        if (com.gugaart.ui.subtitle.SubtitleSearchBoard.openOnPlay == snap.itemId && snap.phase == PlayPhase.Ready) {
+            com.gugaart.ui.subtitle.SubtitleSearchBoard.openOnPlay = null
+            com.gugaart.ui.subtitle.SubtitleSearchBoard.openInPlayer(play, g)
+        }
+    }
+    DisposableEffect(play) { onDispose { if (com.gugaart.ui.subtitle.SubtitleSearchBoard.play === play) com.gugaart.ui.subtitle.SubtitleSearchBoard.close() } }
+    val showOsd = osd && panel == null && !credits && skip == null && !stripOpen && !pickOpen && !subOpen
 
     // ---- 页边面板每一行的值（都是上游已有的命令）----
     var pendingEp by remember(snap.itemId, snap.episodes.size) { mutableIntStateOf(snap.episodes.indexOfFirst { it.id == snap.itemId }.coerceAtLeast(0)) }
@@ -295,7 +315,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
         }
         PlayerPanel.Sub -> {
             val subs = com.gugaart.ui.player.orderedSubtitles(snap)
-            RowModel(listOf("关") + subs.map { listOfNotNull(it.label, it.badge).joinToString(" · ") }, if (snap.subtitleIndex == null) 0 else subs.indexOfFirst { it.index == snap.subtitleIndex } + 1, { null }, deferred = false) { i ->
+            RowModel(listOf("关") + subs.map { listOfNotNull(it.label, it.badge).joinToString(" · ") }, if (snap.subtitleIndex == null) 0 else subs.indexOfFirst { it.index == snap.subtitleIndex } + 1, { "确定 = 搜索字幕" }, deferred = false) { i ->
                 play.chooseSubtitle(if (i == 0) null else subs.getOrNull(i - 1)?.index)
             }
         }
@@ -318,7 +338,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
 
     // ---- 这一页的方向键路径 ----
     groups.edge = { from, dir ->
-        if (pickOpen) TvGroups.STAY else if (stripOpen) tvStripEdge(from, dir, groups::has) else when (from) {
+        if (pickOpen || subOpen) TvGroups.STAY else if (stripOpen) tvStripEdge(from, dir, groups::has) else when (from) {
             "bar" -> if (dir == TvDir.Down) "brow" else TvGroups.STAY
             "brow" -> when (dir) {
                 TvDir.Up -> "bar"
@@ -345,8 +365,12 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     }
 
     // 返回 = 收起最上面一层：面板 → 跳过提示 → 控件；都没有 → 外壳（退出播放）
-    DisposableEffect(panel, showOsd, skip != null, credits, stripOpen, pickOpen, pickEditing) {
+    DisposableEffect(panel, showOsd, skip != null, credits, stripOpen, pickOpen, pickEditing, subOpen, subEditing) {
         val un = when {
+            subOpen -> back.push {
+                if (subEditing) subEditing = false else com.gugaart.ui.subtitle.SubtitleSearchBoard.close()
+                true
+            }
             pickOpen -> back.push {
                 if (pickEditing) pickEditing = false else com.gugaart.ui.player.DanmakuPickerBoard.open = false
                 true
@@ -375,9 +399,13 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     }
     // 焦点跟着状态走：没有控件 → 这一页自己拿着（收方向键）；出了什么 → 给它
     val startKey = LocalTvPlayerFocus.current
-    LaunchedEffect(panel, showOsd, skip != null, credits, snap.phase, stripOpen, pickOpen) {
+    LaunchedEffect(panel, showOsd, skip != null, credits, snap.phase, stripOpen, pickOpen, subOpen) {
         when {
             snap.phase == PlayPhase.Error || snap.phase == PlayPhase.Ended || credits -> Unit
+            subOpen -> {
+                panel = null
+                groups.enterWhenReady("sbs", g.focus)
+            }
             pickOpen -> {
                 panel = null
                 groups.enterWhenReady("dmp", g.focus)
@@ -441,6 +469,10 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
         if (phase == PlayPhase.Error || phase == PlayPhase.Ended || credits) {
             return@onKey if (dir != null && down) groups.move(dir, g.focus) || true else dir != null
         }
+        // 字幕搜索：方向键交给它那一栏（正在输入名字时交给输入框）
+        if (subOpen) {
+            return@onKey if (subEditing) false else if (dir != null && down) groups.move(dir, g.focus) || true else dir != null
+        }
         // 弹幕来源：方向键交给它那一栏（正在输入片名时交给输入框）
         if (pickOpen) {
             return@onKey if (pickEditing) false else if (dir != null && down) groups.move(dir, g.focus) || true else dir != null
@@ -472,7 +504,12 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                 when (dir) {
                     TvDir.Up, TvDir.Down -> groups.move(dir, g.focus) || true
                     TvDir.Left, TvDir.Right -> {
-                        if (p != null) {
+                        val cur = groups.current
+                        if (cur == "pr-shader") {
+                            // 着色器行：左右直接改值（非 deferred），改完 RememberShaderApply 立即下发
+                            val next = stepIndex(shaderIndex, ShaderPreset.entries.size, if (dir == TvDir.Right) 1 else -1)
+                            if (next != shaderIndex) shaderStore.update { it.copy(shader = ShaderPreset.entries[next]) }
+                        } else if (p != null) {
                             val row = rowOf(p)
                             val next = stepIndex(row.index, row.values.size, if (dir == TvDir.Right) 1 else -1)
                             when {
@@ -540,6 +577,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
             Modifier.fillMaxSize().focusRequester(rootFocus).onPreviewKeyEvent(onKey).focusable().testTag(
                 when {
                     snap.phase == PlayPhase.Error -> "tv-player-error"
+                    subOpen -> "tv-player-subsearch"
                     pickOpen -> "tv-player-dmpick"
                     stripOpen -> "tv-player-strip"
                     panel != null -> "tv-player-panel-${panel!!.id}"
@@ -554,6 +592,14 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                     dismissedNext = true
                     controller.cancelAutoNext()
                 })
+                subOpen -> {
+                    // ---- 字幕搜索：画面照常全幅在后面放，左边一栏墨色的纸 ----
+                    Picture(play, snap, danmaku, slots, Modifier.fillMaxSize(), dim = if (snap.paused) PlayerSpec.PAUSE_DIM else 0f, danmakuTop = 0.dp, duration = duration)
+                    TvSubtitleSearch(subSearch!!, subEditing, { subEditing = it }) {
+                        subEditing = false
+                        com.gugaart.ui.subtitle.SubtitleSearchBoard.close()
+                    }
+                }
                 pickOpen -> {
                     // ---- 弹幕来源：画面照常全幅在后面放，左边一栏墨色的纸 ----
                     Picture(play, snap, danmaku, slots, Modifier.fillMaxSize(), dim = if (snap.paused) PlayerSpec.PAUSE_DIM else 0f, danmakuTop = 0.dp, duration = duration)
@@ -591,7 +637,8 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                         BasicText("播放设置 · SETTINGS", Modifier.padding(top = 16.dp), style = Guga.note(20.sp, colors.spot, letterSpacing = 0.2.em), maxLines = 1)
                         BasicText("上下换功能　左右改值", Modifier.padding(top = 6.dp, bottom = 18.dp), style = Guga.song(20.sp, color = colors.faint), maxLines = 1)
                         Box(Modifier.fillMaxWidth().height(1.dp).background(colors.line))
-                        TvGroup("panel", rows.map { "pr-${it.id}" }, horizontal = false, default = "pr-${panel!!.id}")
+                        val panelKeys = rows.flatMap { p -> if (p == PlayerPanel.Quality && shaderVisible) listOf("pr-quality", "pr-shader") else listOf("pr-${p.id}") }
+                        TvGroup("panel", panelKeys, horizontal = false, default = "pr-${panel!!.id}")
                         for (p in rows) {
                             val row = rowOf(p)
                             TvPanelRow(p, row.values, row.index, row.detail(row.index), deferred = row.deferred && row.index != (if (p == PlayerPanel.Core) coreOpts.indexOfFirst { it.pref == corePref } else currentIndexOf(p, snap)), onOk = {
@@ -599,9 +646,19 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                                     p == PlayerPanel.Eps && eps != null -> strip = true
                                     // 弹幕一行按确定 = 左边出弹幕来源（候选 + 手动搜索）
                                     p == PlayerPanel.Dm -> com.gugaart.ui.player.DanmakuPickerBoard.open = true
+                                    // 字幕一行按确定 = 左边出字幕搜索（docs/subtitle-search.md §5.3）
+                                    p == PlayerPanel.Sub && snap.item != null -> com.gugaart.ui.subtitle.SubtitleSearchBoard.openInPlayer(play, g)
                                     row.deferred -> row.apply(row.index)
                                 }
                             })
+                            // 着色器增强：画质行下面第二行（关 / Anime4K A / B / C / FSR）；上下走到它、左右改值、确定确认
+                            if (p == PlayerPanel.Quality && shaderVisible) {
+                                TvPanelRow(
+                                    PlayerPanel.Quality, ShaderPreset.entries.map { it.label }, shaderIndex, shaderPrefs.shader.note,
+                                    deferred = false, onOk = { shaderStore.update { it.copy(shader = ShaderPreset.entries[shaderIndex]) } },
+                                    rowKey = "pr-shader", word = "着色器增强", english = "SHADER",
+                                )
+                            }
                         }
                         BasicText("返回键收起，回到全幅。", Modifier.padding(top = 18.dp), style = Guga.song(20.sp, color = colors.faint), maxLines = 1)
                     }
@@ -865,16 +922,16 @@ private fun TvOsdKey(key: String, icon: GuguIcon, label: String, big: Boolean = 
  * [deferred]：这一行挑的值还没生效（选集 / 画质），提示「确定 = 换过去」。
  */
 @Composable
-private fun TvPanelRow(panel: PlayerPanel, values: List<String>, index: Int, detail: String?, deferred: Boolean, onOk: () -> Unit) {
+private fun TvPanelRow(panel: PlayerPanel, values: List<String>, index: Int, detail: String?, deferred: Boolean, onOk: () -> Unit, rowKey: String = "pr-${panel.id}", word: String = panel.word, english: String = panel.english) {
     val colors = Guga.colors
-    val key = "pr-${panel.id}"
-    TvBlockFocus(key, onOk, Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = panel.word) { focused ->
+    val key = rowKey
+    TvBlockFocus(key, onOk, Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = word) { focused ->
         val ink = if (focused) colors.onInk else colors.ink
         Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 15.dp, bottom = 16.dp).testTag(if (focused) "tv-panel-row-focused" else "tv-panel-row")) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                BasicText(panel.word, style = Guga.song(31.sp, FontWeight.Black, ink, letterSpacing = 0.1.em), maxLines = 1)
+                BasicText(word, style = Guga.song(31.sp, FontWeight.Black, ink, letterSpacing = 0.1.em), maxLines = 1)
                 Spacer(Modifier.weight(1f))
-                BasicText(panel.english, style = Guga.numeral(16.sp, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot, letterSpacing = 0.2.em), maxLines = 1)
+                BasicText(english, style = Guga.numeral(16.sp, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot, letterSpacing = 0.2.em), maxLines = 1)
             }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 BasicText("‹", style = Guga.numeral(38.sp, ink.copy(alpha = if (!focused) 0f else if (index > 0) 1f else 0.22f)).copy(fontStyle = FontStyle.Normal), maxLines = 1)

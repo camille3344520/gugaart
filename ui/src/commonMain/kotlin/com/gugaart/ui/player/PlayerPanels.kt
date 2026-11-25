@@ -66,6 +66,11 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 PanelOption(t.label, t.index == snap.subtitleIndex, { play.chooseSubtitle(t.index) }, note = t.badge)
             }
             PanelStepper("延迟", "${snap.subtitleDelayMs / 1000}.${(kotlin.math.abs(snap.subtitleDelayMs) % 1000) / 100} 秒", { controller.setSubtitleDelay(snap.subtitleDelayMs - 100) }, { controller.setSubtitleDelay(snap.subtitleDelayMs + 100) })
+            // 字幕搜索（1.4.0，docs/subtitle-search.md）：面板收起，左边出搜索栏（画面在右边照常放）
+            if (snap.item != null) PanelLink("搜索字幕…") {
+                close()
+                com.gugaart.ui.subtitle.SubtitleSearchBoard.openInPlayer(play, g)
+            }
         }
         PlayerPanel.Audio -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-audio")) {
             PanelHeader(panel)
@@ -122,7 +127,7 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 val imported by fonts.state.collectAsState()
                 val importHost = com.gugaart.ui.data.LocalFontImport.current
                 val importScope = androidx.compose.runtime.rememberCoroutineScope()
-                if (importHost != null) PanelLink("导入字体…") { importScope.launch { importHost.pick()?.let { fonts.import(it) } } }
+                if (importHost?.canPick == true) PanelLink("导入字体…") { importScope.launch { importHost.pick()?.let { fonts.import(it) } } }
                 for (f in imported.fonts) PanelOption(f.name, imported.selected == f.id, { fonts.select(f.id) }, note = "导入")
                 for (f in DanmakuFont.entries) PanelOption(f.label, imported.selected == null && s.font == f, {
                     fonts.select(null)

@@ -123,6 +123,10 @@ fun main(args: Array<String>) {
     val route = opt["route"]?.let(::parseRoute) ?: Route.Home
     val bounds = opt["bounds"]?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.takeIf { it.size == 4 }?.let { Rectangle(it[0], it[1], it[2], it[3]) }
         ?: if (uiMode == UiMode.Phone) Rectangle(60, 60, 905, 412) else null
+    // Mock Emby（tools/mock-emby）的夹具账号 demo / demo：只在开发运行时、只对 -Pgugaart.mockAccount 给的那台 Mock 用，从不是真实凭据（Windows / macOS 都认）。
+    // 两个壳共用：Mac 的真窗口验收也要用 Mock 登录（不输入任何真实账号密码）。
+    val mock = System.getProperty("gugaart.mockAccount")?.takeIf { dev && Regex("""^https?://[^\s"\\]+$""").matches(it) }
+    val debug = if (mock != null) DebugOptions(mockAccount = parseMockAccount("""{"server":"$mock","username":"demo","password":"demo"}""")) else DebugOptions.None
     // macOS：一扇 Compose Window（系统标题栏 + 红绿灯），不用 Win32 窗口栈（ADR 0004 §2.2）。Windows 路径一行不动。
     if (System.getProperty("os.name").startsWith("Mac")) {
         // M1-6：深色外观 + 应用名，要在任何 AWT / Compose 调用之前设（X06 / X08）
@@ -134,6 +138,7 @@ fun main(args: Array<String>) {
                 backend = backend,
                 uiMode = uiMode,
                 bounds = bounds,
+                debug = debug,
                 probeDir = opt["probe"]?.takeIf { dev }?.let(::File),
                 probeRounds = opt["probe-rounds"]?.toIntOrNull()?.coerceIn(1, 20) ?: 1,
                 probeExtras = opt["probe-extras"] == "true",
@@ -148,9 +153,6 @@ fun main(args: Array<String>) {
         )
         return
     }
-    // Mock Emby（tools/mock-emby）的夹具账号 demo / demo：只在开发运行时、只对 -Pgugaart.mockAccount 给的那台 Mock 用，从不是真实凭据
-    val mock = System.getProperty("gugaart.mockAccount")?.takeIf { dev && Regex("""^https?://[^\s"\\]+$""").matches(it) }
-    val debug = if (mock != null) DebugOptions(mockAccount = parseMockAccount("""{"server":"$mock","username":"demo","password":"demo"}""")) else DebugOptions.None
     val probe = opt["probe"]?.takeIf { dev }?.let { ViewportProbe(File(it), opt["engine"], route) }
     val session = StageSession.start(
         StageOptions(

@@ -49,6 +49,8 @@ private val engines by lazy { com.gugugaga.player.apple.AppleMpvEngines(hostView
 private val graph: AppGraph by lazy {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     val g = AppGraph(iosDeps(playerPlatform), scope, Route.Home)
+    // 更新器：上游的验签在 iOS 上恒为 false，换成带本仓库 Ed25519 验签的同款更新器（`:ui` 全经 graph.updater 读它，1.4.0）
+    com.gugaart.ui.update.OwnVerifier.install(g)
     // 格式徽章的设备能力（M5-7）：屏幕的 EDR 余量，换屏 / 亮度变化时跟着变
     engines.refreshDisplay()
     scope.launch { engines.displayHdr.collect { hdr -> com.gugaart.ui.player.DeviceAv.caps = iosAvCaps(hdr) } }
@@ -121,6 +123,7 @@ private fun composeController(): UIViewController = ComposeUIViewController(conf
             IosNowPlaying.attach(it.controller)
             IosMedia.attach(it.controller, engines)
             Accept.onController(it.controller)
+            Accept.onPlaySession(it)
         },
     ) {
         Accept.Content { GugaartApp(app) }

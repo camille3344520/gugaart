@@ -22,7 +22,7 @@ internal object AcceptScenarios {
     /** 输入框里打的：一个带 `/` `:` `?` `=` `.` 的地址 + 三个字母（j f k 在播放器里是快进 / 全屏 / 暂停——漏出去了一看就知道，也不写服务器）。 */
     const val PROBE_TEXT = "http://a.b/c?d=1jfk"
 
-    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib", "subs-first", "shader")
+    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib", "subs-first", "sub-switch", "shader", "subtitle-search")
 
     fun all(host: AcceptHost): List<Scenario> = listOf(
         Scenario("window", "窗口外观：红绿灯、报头让位、深色、失焦变淡、全屏、改尺寸", listOf("X01", "X08", "B22", "P20", "G03"), 180) { window(it) },
@@ -33,11 +33,13 @@ internal object AcceptScenarios {
         Scenario("nowplaying", "「正在播放」：信息齐全、命令控制 mpv、离开播放器后清空", listOf("X11"), 240) { nowPlaying(it) },
         Scenario("menu", "菜单栏：七个菜单、播放组不播时整组灰、筛选只在海报墙、菜单命令真的换页/付印", listOf("X11", "X04", "B05", "B10"), 120) { menu(it) },
         Scenario("dock", "Dock 菜单：继续观看 ≤3 + 搜索 + 付印；点一条继续观看进播放器", listOf("X11", "P24"), 120) { dock(it) },
-        Scenario("keychain", "钥匙串：令牌存储 = Keychain、会话目录里没有明文、钥匙串里有条目、这次的登录态来自钥匙串", listOf("C03", "T11"), 90) { keychain(it) },
+        Scenario("keychain", "令牌存储：= plain-fallback、登录信息在数据目录的文件里、全程没调钥匙串接口、登录态从文件读回来", listOf("C03", "T11"), 90) { keychain(it) },
         Scenario("pip", "画中画：按钮 → 1 秒内进小窗、30 秒帧间隔 / CPU、回到窗口画面回格位置不丢、声音输出没重开", listOf("P18"), 300) { pip(it) },
         Scenario("error-nolib", "出错：libmpv 指到不存在的路径时是出错页（不弹框）", listOf("P02", "P23"), 120) { errorNoLib(it) },
         Scenario("subs-first", "1.3.1 字幕：带内嵌字幕的片第一次开播内核就选中字幕轨（不用关一次再开）", listOf("P06"), 180) { subsFirst(it) },
+        Scenario("sub-switch", "切字幕传到内核（dc934d0a）：有内嵌轨时选外挂 SRT 仍 sid≠no；外挂→内嵌→关", listOf("P06"), 180) { subSwitch(it) },
         Scenario("shader", "1.3.1 画质增强：Anime4K / FSR 单选、下发 glsl-shaders、关恢复、重开沿用", listOf("P07"), 300) { shader(it) },
+        Scenario("subtitle-search", "1.4.0 字幕搜索：字幕面板「搜索字幕…」→ 三路结果 → 选服务器源进 Emby 并选上；选迅雷 / 射手的仅本次加载（只在 Mock 上跑）", listOf("P06"), 420) { subtitleSearch(it) },
     )
 
     // ================================================================== 1. 窗口外观
@@ -1059,32 +1061,38 @@ internal object AcceptScenarios {
         c.human("np-system-ui", "控制中心 / 菜单栏的「正在播放」卡片、键盘 F8、AirPods（X11）", "系统界面不截、硬件键不模拟：要人看卡片上的片名和封面、按 F8 能暂停 / 继续。开发运行时卡片上的应用名是 java")
     }
 
-    // ================================================================== 钥匙串（M2-5，D-lead-6；release-1.3 A9）
+    // ================================================================== 令牌存储（M2-5 / D-lead-6；2026-11 起存数据目录的文件，不碰钥匙串）
 
     private fun keychain(c: Ctx) {
         val d = c.d
         val mode = c.graph.deps.secureMode()
         c.nav(Route.Settings("about"), 1_500)
-        val shown = d.waitFor(5_000) { "Keychain" in d.tree().allText() }
+        val shown = d.waitFor(5_000) { "plain-fallback" in d.tree().allText() }
         val sh = d.shot("keychain-about", "设置 › 关于：令牌存储")
-        c.expect("kc-about", "设置 › 关于「令牌存储」= Keychain（T11）", mode == "Keychain" && shown, values = mapOf("secureMode" to mode, "关于页上看得见" to shown), shots = listOf(sh))
+        c.expect("kc-about", "设置 › 关于「令牌存储」= plain-fallback（和 Windows 同一种，T11）", mode == "plain-fallback" && shown, values = mapOf("secureMode" to mode, "关于页上看得见" to shown), shots = listOf(sh))
         val dir = c.host.dataDir
-        if (dir == null) { c.skip("kc-plain-gone", "会话目录里没有明文存储（C03）", "这个构建没有交出会话目录"); return }
-        // 只看文件在不在，不读内容（迁移由应用自己在第一次用安全存储时做；做完就删）
-        val plain = java.io.File(dir, com.gugaart.desktop.mac.MacSecureStore.PLAIN_FILE)
-        c.expect("kc-plain-gone", "会话目录里没有明文存储 gugu-secure-store.json（迁进钥匙串后删掉，C03 / D-lead-6）", !plain.exists(), values = mapOf("文件在" to plain.exists()))
-        // security find-generic-password 的退出码（不加 -w：只问有没有，不打印值）
-        val account = com.gugaart.desktop.mac.MacKeychainStore.accountPrefixOf(dir) + ":" + com.gugugaga.core.StorageKeys.SERVERS
-        val code = runCatching {
-            val p = ProcessBuilder("security", "find-generic-password", "-s", com.gugaart.desktop.mac.MacKeychainStore.SERVICE, "-a", account)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start()
-            if (p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) p.exitValue() else { p.destroy(); -1 }
-        }.getOrDefault(-1)
-        c.expect("kc-item", "钥匙串里有这个会话目录的服务器清单条目（security find-generic-password 退出码 0，不取值）", code == 0, values = mapOf("服务" to com.gugaart.desktop.mac.MacKeychainStore.SERVICE, "账户前缀" to account.substringBefore(':'), "退出码" to code))
-        // 这次运行是登录着进来的、明文已经不在：登录态只可能是从钥匙串读回来的（下一次启动——比如 error-nolib 那一次——同样）
+        if (dir == null) { c.skip("kc-file", "登录信息在数据目录的文件里（C03）", "这个构建没有交出会话目录"); return }
+        // 只看文件在不在、里面有哪些**键名**（plainKeys 不读值）；不打印任何值
+        val file = java.io.File(dir, com.gugaart.desktop.mac.MacSecureStore.PLAIN_FILE)
+        val keys = com.gugaart.desktop.mac.MacSecureStore.plainKeys(file)
+        val hasServers = keys?.contains(com.gugugaga.core.StorageKeys.SERVERS) == true
+        c.expect(
+            "kc-file", "登录信息存在数据目录的 gugu-secure-store.json 里（键名含服务器清单，C03）",
+            file.isFile && hasServers, values = mapOf("文件在" to file.isFile, "键名" to (keys ?: "（读不出）")),
+        )
+        // 全程没有调钥匙串接口：真的四个 SecItem* 操作都经 SecurityFrameworkKeychain.query，计数应当一直是 0。
+        // 不往钥匙串写任何测试条目，也不读旧条目（一读就可能弹授权框）。
+        val calls = com.gugaart.desktop.mac.SecurityFrameworkKeychain.callCount
+        c.expect("kc-no-keychain", "这次启动全程没有调钥匙串接口（SecItem* 计数 = 0，不会弹授权框）", calls == 0, values = mapOf("SecItem* 调用次数" to calls))
         val signedIn = c.graph.session.session.value != null
-        c.expect("kc-session", "这次启动的登录态来自钥匙串（已登录 + 没有明文 + 钥匙串里有条目）", signedIn && !plain.exists() && code == 0, values = mapOf("已登录" to signedIn))
-        c.human("kc-two-builds", "装了两个不同构建（ad-hoc 签名不同）之后，钥匙串弹不弹框、令牌读不读得到（A12 / H1）", "要两个装好的 .app：先装一个登录，再装重新打的一个打开——系统框由人点（「始终允许」），结果写进发布说明")
+        c.expect(
+            "kc-session", "这次启动的登录态是从数据目录的文件读回来的（已登录 + 文件里有服务器清单 + 没调钥匙串）",
+            signedIn && hasServers && calls == 0, values = mapOf("已登录" to signedIn),
+        )
+        c.human(
+            "kc-two-builds", "两个不同构建（ad-hoc 签名 / cdhash 不同）之间：不弹钥匙串授权框、仍是登录态（A12 / H1）",
+            "运行器只核对本次启动没调钥匙串。跨构建那一次要在构建目录里打两个 .app 起（不装进 /Applications）：启动后 15 秒内 pgrep -x SecurityAgent 一直为空、界面仍是登录态",
+        )
         c.back(600)
     }
 
@@ -1401,6 +1409,68 @@ internal object AcceptScenarios {
         c.back(1_500)
     }
 
+    // ================================================================== 切字幕传到内核（dc934d0a）
+
+    /** 有内嵌字幕的片，选外挂 SRT 也要传到内核（旧逻辑过滤侧车，sid 停 no）。外挂 → 内嵌 → 关，各读 sid + 拍字幕面板。Mock 上保证有「内嵌+外挂」的片。 */
+    private fun subSwitch(c: Ctx) {
+        val d = c.d
+        c.reset()
+        val movies = runBlocking { c.client().getItems(LibraryQuery(includeItemTypes = listOf("Movie"), recursive = true, limit = 80)).items }
+        var picked: BaseItemDto? = null
+        var extIdx: Int? = null
+        var embIdx: Int? = null
+        for (m in movies.take(14)) {
+            c.nav(Route.Play(m.id), 1_200)
+            c.awaitFirstFrame(System.currentTimeMillis())
+            val st = c.controller?.snapshot?.value?.resolved?.mediaSource?.mediaStreams.orEmpty()
+            val vc = st.firstOrNull { it.type == "Video" }?.codec
+            val emb = st.firstOrNull { it.type == "Subtitle" && it.isExternal != true }
+            val ext = st.firstOrNull { it.type == "Subtitle" && it.isExternal == true && it.language == "eng" }
+                ?: st.firstOrNull { it.type == "Subtitle" && it.isExternal == true }
+            if (vc == "h264" && emb != null && ext != null) { picked = m; embIdx = emb.index; extIdx = ext.index; break }
+            c.back(800)
+        }
+        if (picked == null || extIdx == null || embIdx == null) {
+            c.skip("sub-switch-external", "切字幕传到内核（dc934d0a）", "库里没找到「内嵌+外挂」的 h264 片（用 accept-mac.mjs --mock）")
+            return
+        }
+        val movie = picked
+        Thread.sleep(1_500)
+        fun tracks() = c.controller?.engineFlow?.value?.tracks?.value?.subtitle.orEmpty()
+        fun state() = "idx=${c.controller?.snapshot?.value?.subtitleIndex} sid=${c.mpv("sid")} 轨=${tracks().joinToString { "${it.id}:${it.lang}:ext=${it.external}" }}"
+        fun panelShot(name: String, label: String): String? {
+            c.wakeControls()
+            if (!d.tree().has("panel-sub")) {
+                d.tree().nodes.firstOrNull { (it.tag == "word" || it.tag == "word-on") && it.desc.any { s -> s.startsWith("字幕") } }?.let { d.click(it) }
+                d.waitFor(3_000) { d.tree().has("panel-sub") }
+            }
+            Thread.sleep(600)
+            return d.shot(name, label)
+        }
+        // 1. 选外挂 SRT：内核必须拿到这条轨（sid≠no、track-list 含外挂轨），画面出字
+        c.controller?.selectSubtitle(extIdx); Thread.sleep(1_500)
+        c.controller?.seekTo(2_000.0); Thread.sleep(1_800)
+        val shExt = panelShot("sub-switch-external", "选外挂 SRT：画面出字、面板选中外挂轨")
+        val extSid = c.mpv("sid")
+        c.expect(
+            "sub-switch-external", "有内嵌轨时选外挂 SRT 仍传到内核（dc934d0a）：sid≠no、内核含外挂轨",
+            extSid != null && extSid != "no" && c.controller?.snapshot?.value?.subtitleIndex == extIdx && tracks().any { it.external },
+            values = mapOf("片" to movie.name, "外挂idx" to extIdx, "内嵌idx" to embIdx, "sid" to extSid, "状态" to state()), shots = listOf(shExt),
+        )
+        // 2. 换内嵌 ASS：sid≠no，画面出字
+        c.controller?.selectSubtitle(embIdx); Thread.sleep(1_500)
+        c.controller?.seekTo(2_000.0); Thread.sleep(1_200)
+        val shEmb = panelShot("sub-switch-embedded", "换内嵌 ASS：画面出字")
+        val embSid = c.mpv("sid")
+        c.expect("sub-switch-embedded", "换内嵌 ASS：sid≠no、画面出字", embSid != null && embSid != "no" && c.controller?.snapshot?.value?.subtitleIndex == embIdx, values = mapOf("sid" to embSid, "状态" to state()), shots = listOf(shEmb))
+        // 3. 关字幕：sid=no，画面无字
+        c.controller?.selectSubtitle(null); Thread.sleep(1_200)
+        val shOff = panelShot("sub-switch-off", "关字幕：画面无字、面板选中「关闭」")
+        val offSid = c.mpv("sid")
+        c.expect("sub-switch-off", "关字幕：sid=no、画面无字", offSid == "no" && c.controller?.snapshot?.value?.subtitleIndex == null, values = mapOf("sid" to offSid, "状态" to state()), shots = listOf(shOff))
+        c.back(1_200)
+    }
+
     // ================================================================== 1.3.1 画质增强（Anime4K / FSR）
 
     /** 只读找片 + 播放（会上报进度，主理人已接受）；不点收藏 / 已看 / 管理。跑完把着色器偏好还原成「关」。 */
@@ -1495,6 +1565,123 @@ internal object AcceptScenarios {
         pickOption("关")
         d.waitFor(8_000) { shaders().isEmpty() }
         c.human("shader-look", "Anime4K / FSR 的画面观感与掉帧体感（截图存不下 EDR）", "看 shader-a4k / shader-fsr / shader-off 三张：线条锐度、噪点、暗部与掉帧体感", shots = listOf(shA, shF, shOff))
+        c.back(1_500)
+    }
+
+    // ================================================================== 1.4.0 字幕搜索（docs/subtitle-search.md）
+
+    /**
+     * 只在 Mock 上跑：选中服务器源 = 让服务器下载字幕、存进 Emby（写服务器）；主理人的服务器一律 skip。
+     * 迅雷 / 射手（在线源，设置里默认开）这里真的会问外网：Mock 样片的文件名 + 指纹，几次请求。
+     */
+    private fun subtitleSearch(c: Ctx) {
+        val d = c.d
+        val board = com.gugaart.ui.subtitle.SubtitleSearchBoard
+        c.reset()
+        val client = runCatching { c.client() }.getOrNull()
+        val base = client?.address?.baseUrl.orEmpty()
+        if (client == null || !(base.startsWith("http://127.0.0.1:") || base.startsWith("http://localhost:"))) {
+            c.skip("subsearch-open", "字幕面板「搜索字幕…」打开搜索栏（1.4.0）", "不是 Mock：这一项会让服务器下载字幕（写服务器），加 --mock 再跑")
+            return
+        }
+        val ep = runCatching { runBlocking { client.getItems(LibraryQuery(includeItemTypes = listOf("Episode"), recursive = true, limit = 8)).items } }.getOrNull()?.firstOrNull()
+        if (ep == null) {
+            c.skip("subsearch-open", "字幕面板「搜索字幕…」打开搜索栏（1.4.0）", "Mock 里没找到单集")
+            return
+        }
+        c.nav(Route.Play(ep.id), 1_500)
+        val first = c.awaitFirstFrame(System.currentTimeMillis())
+        // 真点：底部「字幕」词 → 面板最后一行「搜索字幕…」
+        c.wakeControls()
+        if (!d.tree().has("panel-sub")) {
+            d.tree().nodes.firstOrNull { (it.tag == "word" || it.tag == "word-on") && it.desc.any { s -> s.startsWith("字幕") } }?.let { d.click(it) }
+            d.waitFor(3_000) { d.tree().has("panel-sub") }
+        }
+        Thread.sleep(500)
+        val link = d.tree().nodes.firstOrNull { n -> n.desc.any { it == "搜索字幕…" } }
+        link?.let { d.click(it) }
+        val opened = d.waitFor(5_000) { d.tree().has("sub-search") }
+        // 三路搜完（在线源要问外网，最多等 60 秒）
+        d.waitFor(60_000, pollMs = 300) { board.session?.let { !it.searching && it.server != com.gugaart.ui.subtitle.SourceState.Idle } == true }
+        Thread.sleep(800)
+        val s = board.session
+        val shOpen = d.shot("subsearch-open", "搜索栏：状态行 + 结果（服务器 / 迅雷 / 射手），画面在右边照常放")
+        c.expect(
+            "subsearch-open", "字幕面板「搜索字幕…」打开搜索栏，服务器源回了 Mock 的 3 条（1.4.0）",
+            opened && s != null && s.server == com.gugaart.ui.subtitle.SourceState.Done(3),
+            values = mapOf(
+                "片" to ep.name, "首帧ms" to first, "点到链接" to (link != null),
+                "服务器" to s?.server, "迅雷" to s?.thunder, "射手" to s?.shooter, "指纹" to s?.print?.let { com.gugaart.ui.subtitle.printLine(it) },
+                "结果" to s?.hits?.joinToString(" | ") { "${it.source.label}:${it.lang.short}:${it.match.label}" },
+                "画面让位矩形" to c.controller?.engineFlow?.value?.debugInfo()?.toString()?.take(120),
+            ),
+            shots = listOf(shOpen),
+        )
+        c.expect("subsearch-print", "取到了文件指纹（经 Range 读 Mock 的原始流，只读几段）", s?.print is com.gugaart.ui.subtitle.PrintState.Got, values = mapOf("指纹" to s?.print?.let { com.gugaart.ui.subtitle.printLine(it) }))
+        if (s == null) {
+            c.back(1_500)
+            return
+        }
+        // ---- A：服务器源（指纹精确那条）→ 进 Emby → 播放器选上
+        val before = c.controller?.snapshot?.value?.subtitleIndex
+        val iEmby = s.hits.indexOfFirst { it.toEmby }
+        val row = d.tree().tag("sub-hit-$iEmby")
+        row?.let { d.click(it) }
+        val closed = d.waitFor(30_000, pollMs = 200) { board.session == null || s.apply is com.gugaart.ui.subtitle.ApplyState.Failed }
+        val picked = d.waitFor(15_000) { (c.controller?.snapshot?.value?.subtitleIndex ?: -1).let { it != before && it in 0 until com.gugaart.ui.subtitle.LocalSubtitles.BASE_INDEX } && c.controller?.snapshot?.value?.phase == PlayPhase.Ready }
+        val sid = d.waitFor(8_000) { c.mpv("sid").let { it != null && it != "no" } }
+        // 字幕文本（Mock 每 4 秒一句「【服务器下载的字幕】第 n 句」）：等它出现在画面上
+        val text = d.waitFor(12_000, pollMs = 250) { c.mpv("sub-text").orEmpty().contains("服务器下载的字幕") }
+        val shEmby = d.shot("subsearch-emby", "选了服务器源：已存进 Emby、播放器选上，画面上是服务器下载的字幕")
+        val newIdx = c.controller?.snapshot?.value?.subtitleIndex
+        val onServer = newIdx?.let { idx -> runCatching { runBlocking { client.getItem(ep.id).mediaSources.first().mediaStreams.any { it.index == idx && it.isExternal == true } } }.getOrNull() } == true
+        c.expect(
+            "subsearch-emby", "选服务器源的一条：服务器下载并存进 Emby（条目多了一条外挂字幕），播放器自动选上它，画面上有它的字",
+            closed && picked && sid && text && onServer,
+            values = mapOf(
+                "点到行" to (row != null), "栏收起" to closed, "选上" to picked, "之前" to before, "之后" to newIdx, "sid" to c.mpv("sid"),
+                "sub-text" to c.mpv("sub-text")?.take(60), "服务器上有这条外挂" to onServer, "失败" to (s.apply as? com.gugaart.ui.subtitle.ApplyState.Failed)?.why,
+                "字幕顶栏" to c.controller?.snapshot?.value?.subtitles?.firstOrNull { it.selected }?.label,
+            ),
+            shots = listOf(shEmby),
+        )
+        // ---- B：迅雷 / 射手（仅本次播放）：再打开一次，选第一条不进 Emby 的
+        c.wakeControls()
+        if (!d.tree().has("panel-sub")) {
+            d.tree().nodes.firstOrNull { (it.tag == "word" || it.tag == "word-on") && it.desc.any { x -> x.startsWith("字幕") } }?.let { d.click(it) }
+            d.waitFor(3_000) { d.tree().has("panel-sub") }
+        }
+        Thread.sleep(500)
+        d.tree().nodes.firstOrNull { n -> n.desc.any { it == "搜索字幕…" } }?.let { d.click(it) }
+        d.waitFor(5_000) { d.tree().has("sub-search") }
+        d.waitFor(60_000, pollMs = 300) { board.session?.let { !it.searching && it.server != com.gugaart.ui.subtitle.SourceState.Idle } == true }
+        val s2 = board.session
+        val iLocal = s2?.hits?.indexOfFirst { !it.toEmby } ?: -1
+        if (s2 == null || iLocal < 0) {
+            c.skip("subsearch-local", "选迅雷 / 射手的一条：下载到本机，作为外挂轨加载（仅本次播放）", "迅雷 / 射手这次对 Mock 样片没有结果（或没连上）", values = mapOf("迅雷" to s2?.thunder, "射手" to s2?.shooter))
+            board.close()
+            c.back(1_500)
+            return
+        }
+        val beforeLocal = c.controller?.snapshot?.value?.subtitleIndex
+        // 行可能在栏的下半截：先滚到它（语义树里点得到就点）
+        val rowLocal = d.tree().tag("sub-hit-$iLocal")
+        if (rowLocal != null) d.click(rowLocal) else com.gugaart.ui.subtitle.SubtitleSearchBoard.choose(s2.hits[iLocal], c.graph)
+        val doneLocal = d.waitFor(40_000, pollMs = 200) { board.session == null || s2.apply is com.gugaart.ui.subtitle.ApplyState.Failed }
+        val pickedLocal = d.waitFor(15_000) { (c.controller?.snapshot?.value?.subtitleIndex ?: -1) >= com.gugaart.ui.subtitle.LocalSubtitles.BASE_INDEX && c.controller?.snapshot?.value?.phase == PlayPhase.Ready }
+        val sidLocal = d.waitFor(8_000) { c.mpv("sid").let { it != null && it != "no" } }
+        Thread.sleep(3_000)
+        val shLocal = d.shot("subsearch-local", "选了迅雷 / 射手的一条：仅本次播放，外挂轨已加载并选上")
+        c.expect(
+            "subsearch-local", "选迅雷 / 射手的一条：下载到本机（回环地址），播放器加成外挂轨并选上（仅本次播放，不写服务器）",
+            doneLocal && pickedLocal && sidLocal,
+            values = mapOf(
+                "来源" to s2.hits[iLocal].source.label, "名" to s2.hits[iLocal].name, "之前" to beforeLocal, "之后" to c.controller?.snapshot?.value?.subtitleIndex,
+                "sid" to c.mpv("sid"), "sub-text" to c.mpv("sub-text")?.take(60), "失败" to (s2.apply as? com.gugaart.ui.subtitle.ApplyState.Failed)?.why,
+                "点到行" to (rowLocal != null),
+            ),
+            shots = listOf(shLocal),
+        )
         c.back(1_500)
     }
 }

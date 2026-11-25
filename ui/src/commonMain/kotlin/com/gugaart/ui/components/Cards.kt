@@ -91,6 +91,8 @@ fun PosterCard(
                 }
                 if (title.favorite) Seal(Modifier.align(Alignment.BottomEnd).padding(5.dp), size = width * 0.2f)
                 if (title.played) ProofTick(true, Modifier.align(Alignment.TopEnd), size = 13.dp, box = false)
+                // 海报墙：评分是海报左上角的一枚小角标（用户 2026-11-24：片名长了会把评分挤到第三行，不优雅）
+                if (evenTitle) title.rating?.let { RatingTag(it, Modifier.align(Alignment.TopStart)) }
             }
         }
         if (title == null) {
@@ -105,37 +107,41 @@ fun PosterCard(
             val oneLine = evenTitle && remember(title.name, widthPx, titleStyle) {
                 measurer.measure(title.name, titleStyle, maxLines = 2, constraints = Constraints(maxWidth = widthPx)).lineCount <= 1
             }
-            val rating = title.rating.takeIf { evenTitle }
             BasicText(
                 highlighted(title.name, highlight, colors.spot),
                 Modifier.padding(top = 9.dp),
                 style = titleStyle,
                 maxLines = 2,
-                minLines = if (evenTitle && !oneLine) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (oneLine) {
-                // 片名下面空着的那一行：评分（没有评分就空着，一排底边照样对齐）
-                Box(Modifier.height(with(density) { (type.caption * 1.5f).toDp() }), contentAlignment = Alignment.CenterStart) {
-                    if (rating != null) BasicText(ratingLine(rating, colors.spot), Modifier.testTag("poster-rating"), style = Guga.numeral(type.caption * 1.05f, colors.dim), maxLines = 1)
-                }
+            // 年份 · 题材紧跟片名（片名一行就在第二行，两行就在第三行，中间不留空行）
+            val sub = subtitle?.takeIf { it.isNotEmpty() }
+            if (sub != null || evenTitle) {
+                BasicText(sub ?: "", Modifier.padding(top = 3.dp).testTag("poster-sub"), style = Guga.note(type.fine * 1.1f, colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            // 片名两行：评分并进年份那一行的最前面，星号同样是红的（用户 2026-11-17：「两行的时候星星也要是红色的啊」）
-            val sub: AnnotatedString? = if (rating != null && !oneLine) buildAnnotatedString {
-                append(ratingLine(rating, colors.spot))
-                subtitle?.takeIf { it.isNotEmpty() }?.let { s -> append(" · "); append(s) }
-            } else subtitle?.takeIf { it.isNotEmpty() }?.let { AnnotatedString(it) }
-            if (sub != null) {
-                BasicText(sub, Modifier.padding(top = 3.dp).testTag("poster-sub"), style = Guga.note(type.fine * 1.1f, colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            // 海报墙：片名只有一行时，空出来的那一行高度补在卡片最下面，一排卡片底边照样对齐
+            if (oneLine) Spacer(Modifier.height(with(density) { (type.caption * 1.5f).toDp() }))
         }
     }
 }
 
-/** 卡片上的评分：「★ 8.0」，星号用专色。 */
-private fun ratingLine(rating: String, star: androidx.compose.ui.graphics.Color): AnnotatedString = buildAnnotatedString {
-    withStyle(SpanStyle(color = star)) { append("★ ") }
-    append(rating)
+/**
+ * 海报左上角的评分角标：墨纸 76 % 底、直角，「★」专色 + 斜体数字「8.0」。贴着海报角，和右上校对勾、右下收藏印不挤；
+ * 任何海报（亮 / 暗）上都读得清（底够深）。
+ */
+@Composable
+private fun RatingTag(rating: String, modifier: Modifier = Modifier) {
+    val colors = Guga.colors
+    val type = Guga.type
+    BasicText(
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = colors.spot)) { append("★ ") }
+            append(rating)
+        },
+        modifier.background(colors.paper.copy(alpha = 0.76f)).padding(horizontal = 6.dp, vertical = 2.dp).testTag("poster-rating"),
+        style = Guga.numeral(type.fine * 1.15f, colors.ink),
+        maxLines = 1,
+    )
 }
 
 /** 命中的字上专色（搜索）。 */

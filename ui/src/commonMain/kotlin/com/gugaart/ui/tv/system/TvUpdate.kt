@@ -1,5 +1,6 @@
 package com.gugaart.ui.tv.system
 
+import com.gugaart.ui.update.updater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -78,11 +79,11 @@ fun TvUpdateSlip() {
     val override = LocalUpdateStateOverride.current
     LaunchedEffect(g) {
         if (override != null) return@LaunchedEffect
-        g.update.startAutoCheck()
-        g.deps.updateInstallProblem?.invoke()?.let { g.update.reportInstallProblem(it) }
+        g.updater.startAutoCheck()
+        g.deps.updateInstallProblem?.invoke()?.let { g.updater.reportInstallProblem(it) }
     }
-    val live by g.update.state.collectAsState()
-    val dismissed by g.update.dismissedVersion.collectAsState()
+    val live by g.updater.state.collectAsState()
+    val dismissed by g.updater.dismissedVersion.collectAsState()
     var background by remember { mutableStateOf(false) }
     // 设置里点「检查更新」/ 安装卡住了：放到后台的号外重新出来
     val reshowTick = com.gugaart.ui.screens.update.UpdateConsent.reshowTick
@@ -102,7 +103,7 @@ fun TvUpdateSlip() {
     LaunchedEffect(view.phase) { groups.enterWhenReady("update", g.focus) }
     DisposableEffect(view.forced, view.phase) {
         val un = back.push {
-            if (!view.forced) close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); if (view.phase == ExtraPhase.Downloading) background = true else g.update.dismiss() }
+            if (!view.forced) close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); if (view.phase == ExtraPhase.Downloading) background = true else g.updater.dismiss() }
             true
         }
         onDispose { un() }
@@ -168,8 +169,8 @@ fun TvUpdateSlip() {
                                 when (key) {
                                     "upd-go" -> when (view.phase) {
                                         // 下好了：用户按「现在安装」才交给安装器
-                                        ExtraPhase.Ready -> g.update.installDownloaded()
-                                        ExtraPhase.Permission -> g.update.requestInstallPermission()
+                                        ExtraPhase.Ready -> g.updater.installDownloaded()
+                                        ExtraPhase.Permission -> g.updater.requestInstallPermission()
                                         // 「下载并安装」：挑了它就是同意装
                                         ExtraPhase.Offer -> com.gugaart.ui.screens.update.UpdateConsent.downloadAndInstall(g)
                                         // 「再试一次」：照上一次挑的那一种
@@ -178,7 +179,7 @@ fun TvUpdateSlip() {
                                     // 忽略这一版：记在本机，这一版不再弹
                                     "upd-skip" -> ((override ?: live) as? com.gugugaga.app.update.UpdateState.Available)?.release?.let { r -> close { com.gugaart.ui.screens.update.UpdateConsent.ignore(g, r.versionCode) } }
                                     "upd-bg" -> close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); background = true }
-                                    else -> close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); g.update.dismiss() }
+                                    else -> close { com.gugaart.ui.screens.update.UpdateConsent.hideAgain(); g.updater.dismiss() }
                                 }
                             },
                             if (focusedNow) Modifier else Modifier.border(2.dp, ink.copy(alpha = 0.5f)),

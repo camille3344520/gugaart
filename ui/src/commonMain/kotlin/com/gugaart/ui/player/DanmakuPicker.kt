@@ -105,7 +105,7 @@ object DanmakuPickerBoard {
     fun settle(d: com.gugugaga.app.player.PlayerDanmaku, itemId: String?): MatchCandidate? {
         currentItem = itemId
         if (!d.asksChoice || itemId == null) return null
-        if (manualFor != itemId) confidentCandidate(d.state, DanmakuSeasonGuard.targetSeason(itemId))?.let { c ->
+        if (manualFor != itemId) confidentCandidate(d.state, DanmakuSeasonGuard.targetSeason(itemId), DanmakuSeasonGuard.seasonFacts(itemId))?.let { c ->
             autoFor = itemId
             d.pick(c)
             return c
@@ -120,13 +120,15 @@ object DanmakuPickerBoard {
  * - 弹幕服务器按文件名直接配上了（上游 /match 回退：本引擎打分不够，标成有歧义「需用户确认」）→ 用服务器配上的那一部；
  * - 只剩一个像样的候选（没被淘汰、匹配 ≥ 50）→ 用它；
  * - 第一名明显领先：匹配 ≥ 65 且领先第二名 ≥ 12，或者匹配 ≥ 75 且领先 ≥ 6（上游自己的门槛是 70 分、领先 10）。
+ * [facts] = 这一季在 Emby 的事实（最大季号）：「Final Stage / 最终季」要它才解析得成最后一季；多季的剧第 1 季也核对。
  */
-fun confidentCandidate(st: com.gugugaga.danmaku.match.DanmakuState, season: Int? = null): MatchCandidate? {
+fun confidentCandidate(st: com.gugugaga.danmaku.match.DanmakuState, season: Int? = null, facts: SeasonFacts? = null): MatchCandidate? {
     if (st.phase != DanmakuPhase.Ambiguous || st.candidates.isEmpty()) return null
-    // 第 2 季起：有对得上季号的就用它；第一名不是这一季的 → 拿不准，弹出来（不拿别的季顶替）
-    if (season != null && season >= 2) {
-        st.candidates.firstOrNull { !it.eliminated && danmakuSeasonOf(it.title) == season }?.let { return it }
-        if (st.candidates.firstOrNull { !it.eliminated }?.let { danmakuSeasonOf(it.title) != season } == true) return null
+    // 多季的剧：有对得上季号的就用它；第一名不是这一季的 → 拿不准，弹出来（不拿别的季顶替）
+    if (season != null && (season >= 2 || (facts?.lastSeason ?: 1) >= 2)) {
+        val last = facts?.lastSeason
+        st.candidates.firstOrNull { !it.eliminated && danmakuSeasonOf(it.title, last) == season }?.let { return it }
+        if (st.candidates.firstOrNull { !it.eliminated }?.let { danmakuSeasonOf(it.title, last) != season } == true) return null
     }
     st.explain.firstOrNull { it.startsWith("回退：服务器 /match") }?.let { line ->
         val title = Regex("返回 “([^”]+)”").find(line)?.groupValues?.get(1)

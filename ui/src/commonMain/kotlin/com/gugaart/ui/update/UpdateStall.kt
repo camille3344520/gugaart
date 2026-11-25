@@ -50,7 +50,7 @@ object UpdateStall {
      * 返回 true = 报了。
      */
     fun check(graph: AppGraph, now: Long = com.gugaart.ui.screens.update.UpdateNudge.nowMs()): Boolean {
-        val st = graph.update.state.value
+        val st = graph.updater.state.value
         if (st !is UpdateState.Installing) {
             handedOverAt = 0L
             return false

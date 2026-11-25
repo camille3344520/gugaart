@@ -1,5 +1,6 @@
 package com.gugaart.ui.desktop
 
+import com.gugaart.ui.update.updater
 import com.gugaart.ui.data.ItemManage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -169,7 +170,7 @@ object DesktopAccountMenu {
                 }
                 AccountRow(GuguIcon.Download, "检查更新", "v${g.deps.appVersion}") {
                     open = false
-                    g.update.checkNow()
+                    g.updater.checkNow()
                     g.nav.navigate(Route.Settings("about"))
                 }
                 AccountRule()
@@ -491,6 +492,11 @@ object DesktopContextMenu {
                 CtxRow(GuguIcon.Info, "查看详情") {
                     close()
                     g.open(if (t.kind == Kind.Episode) t.seriesId ?: t.id else t.id)
+                }
+                // 字幕搜索（1.4.0）：电影 / 单集；左边出搜索栏（docs/subtitle-search.md §5.1）
+                if (playable) CtxRow(GuguIcon.Captions, "搜索字幕…", tag = "ctx-subs") {
+                    close()
+                    com.gugaart.ui.subtitle.SubtitleSearchBoard.openForItem(t.id, t.displayName, g)
                 }
                 Spacer(Modifier.height(Guga.rem(0.6f)))
                 SlipRule()

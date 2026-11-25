@@ -1,5 +1,6 @@
 package com.gugaart.ui
 
+import com.gugaart.ui.subtitle.SubtitleSearchPageHost
 import com.gugaart.ui.components.rememberPageStates
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -448,6 +449,8 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                 if (mode == UiMode.Desktop) DesktopContextMenu.Host()
                 if (mode == UiMode.Tv) TvLongPressMenu.Host()
                 if (mode == UiMode.Phone) com.gugaart.ui.screens.PhoneItemMenu.Host()
+                // 字幕搜索（播放器外，条目菜单打开的）：从左边出来的一张纸；电视的入口直接进播放器
+                if (!playing && mode != UiMode.Tv) SubtitleSearchPageHost()
                 // 看剧照的大图（电脑 / 电视的详情页打开；手机在页里自己画）
                 if (!playing && !phone) com.gugaart.ui.screens.detail.StillsOverlay.Host()
             }

@@ -310,7 +310,11 @@ object DesktopKeys {
                 Key.F -> DesktopCommand.Filter
                 else -> null
             }
-            if (c != null) return DesktopCommands.run(c, graph, nav, chrome, idle)
+            if (c != null) {
+                // 菜单快捷键可能已经接住这一次 ⌘ 按键：刚执行过就消费掉、不重复执行（一次按键只执行一次）
+                if (!DesktopCommandSink.claimOnce(c)) return true
+                return DesktopCommands.run(c, graph, nav, chrome, idle)
+            }
             // macOS 惯例键只在 modifier == Cmd 时认（P-mac-1 已定）；Windows 不变
             if (modifier == ModifierGlyph.Cmd && e.isMetaPressed) {
                 val c2 = when (e.key) {
@@ -323,7 +327,10 @@ object DesktopKeys {
                     Key.Five -> DesktopCommand.GoMe
                     else -> null
                 }
-                if (c2 != null) return DesktopCommands.run(c2, graph, nav, chrome, idle)
+                if (c2 != null) {
+                    if (!DesktopCommandSink.claimOnce(c2)) return true
+                    return DesktopCommands.run(c2, graph, nav, chrome, idle)
+                }
             }
             return false
         }

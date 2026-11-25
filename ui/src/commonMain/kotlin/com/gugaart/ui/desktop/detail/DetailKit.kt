@@ -541,7 +541,9 @@ fun DHero(
             Column(Modifier.weight(1f)) {
                 BasicText(
                     kicker,
-                    Modifier.offset(x = -Guga.rem(0.8f)).background(colors.paper.copy(alpha = 0.5f)).padding(horizontal = Guga.rem(0.8f), vertical = Guga.rem(0.3f)).testTag("d-kicker"),
+                    // 朱红栏目行压在剧照上：垫足够深的纸底才读得清（亮剧照如《海王2》——0.5 的纸底压不住亮图，专色小字对比不够）。
+                    // 照 design-language §1.3「靠墨底、不描边不发光」：把纸底加深到近实底，任何亮图上都 ≥ 4.5。
+                    Modifier.offset(x = -Guga.rem(0.8f)).background(colors.paper.copy(alpha = 0.9f)).padding(horizontal = Guga.rem(0.8f), vertical = Guga.rem(0.3f)).testTag("d-kicker"),
                     style = Guga.song(rsp(1.2f), FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

@@ -59,8 +59,8 @@ fun DanmakuFontImportGroup() {
     var busy by remember { mutableStateOf(false) }
 
     SettingGroup("弹幕字体", "FONTS")
-    SettingRow("导入字体", note = if (host == null) FONT_IMPORT_UNAVAILABLE else "从本机选一个 ttf / otf，复制进应用；和内置的四款并列", tag = "set-dm-font-import") {
-        if (host != null) {
+    SettingRow("导入字体", note = if (!store.canImport) FONT_IMPORT_UNAVAILABLE else "从本机选一个 ttf / otf，复制进应用；和内置的四款并列", tag = "set-dm-font-import") {
+        if (store.canImport) {
             ActionWord(
                 if (busy) "正在导入…" else "导入字体…",
                 {
@@ -68,7 +68,7 @@ fun DanmakuFontImportGroup() {
                     error = null
                     scope.launch {
                         try {
-                            val picked = host.pick()
+                            val picked = host?.pick()
                             if (picked != null) error = store.import(picked)
                         } finally {
                             busy = false

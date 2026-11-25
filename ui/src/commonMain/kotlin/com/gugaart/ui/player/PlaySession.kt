@@ -121,7 +121,8 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
         val restart = if (restartTick > 0) PlayerRestart.take() else null
         val controller = PlayController(
             PlayerDeps(
-                client = clientOverride?.invoke(s) ?: EmbyPlayerClient(s.client),
+                // 字幕搜索的「仅本次播放」：这一集有本机字幕时加进协商结果（subtitle/LocalSubtitles.kt；没有就原样转发）
+                client = com.gugaart.ui.subtitle.SubtitleAwareClient(clientOverride?.invoke(s) ?: EmbyPlayerClient(s.client)),
                 platform = platform,
                 playback = { PlaybackSettings.of(g.settings.value) },
                 strm = { StrmSettings.of(g.settings.value) },
@@ -200,6 +201,8 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
             val id = snap.itemId + "|" + resolved.mediaSource.id + "|" + (play.controller.engineFlow.value?.tracks?.value?.subtitle?.size ?: -1)
             if (done == id) return@collect
             done = id
+            // 这一集用的是字幕搜索搜来的字幕（subtitle/SubtitleSearchUi.kt）：不再自动改它
+            if (com.gugaart.ui.subtitle.SubtitleSearchBoard.pinned == snap.itemId) return@collect
             if (explicit.value) {
                 play.subtitleWhy = null
                 return@collect
@@ -242,7 +245,13 @@ fun rememberGugaDanmaku(play: PlaySession): PlayerDanmaku {
     val d = remember(controller) {
         PlayerDanmaku(
             scope, g.settings, play.prefs, g.danmaku,
-            matchInput = { id -> (g.session.session.value?.client?.getDanmakuMatchInput(id) ?: error("没有会话")).also { DanmakuSeasonGuard.record(id, it) } },
+            matchInput = { id ->
+                val client = g.session.session.value?.client ?: error("没有会话")
+                val input = client.getDanmakuMatchInput(id)
+                // 这一季在 Emby 的首播年 / 集数 / 最大季号（只读，一部剧取一次）：季守卫认定「第 N 季」用
+                DanmakuSeasonGuard.record(id, input, runCatching { DanmakuSeasonFacts.of(client, input) }.getOrNull())
+                input
+            },
             mode = mode,
             tier = gugaDanmakuTier(g.settings.value.uiSettings.perf, mode),
             dprCap = if (mode == UiMode.Tv) 1.0 else 3.0,

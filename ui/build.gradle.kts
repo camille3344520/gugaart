@@ -61,12 +61,18 @@ kotlin {
     }
 }
 
-// 资源 = 自己的 composeResources + 宋体子集（third_party/fonts/noto-serif-sc/subset → files/fonts/）。
+// 资源 = 自己的 composeResources + 宋体子集（界面）+ 黑体子集（iOS 字幕）（third_party/fonts/*/subset → files/fonts/）。
 // 字体只在 third_party/ 里存一份（带着授权和收录表），构建时合进资源目录；docs/decisions.md Q3。
 val gugaResources = tasks.register<Sync>("gugaResources") {
     from(layout.projectDirectory.dir("src/commonMain/composeResources"))
     from(rootProject.layout.projectDirectory.dir("third_party/fonts/noto-serif-sc/subset")) {
         include("*.ttf", "OFL.txt")
+        into("files/fonts")
+    }
+    // iOS 内嵌字幕的黑体（Noto Sans SC Regular 子集，docs/decisions.md Q3）：同进 files/fonts/；OFL 改名避免与宋体的撞名。
+    from(rootProject.layout.projectDirectory.dir("third_party/fonts/noto-sans-sc/subset")) {
+        include("*.ttf", "OFL.txt")
+        rename("OFL.txt", "OFL-NotoSansSC.txt")
         into("files/fonts")
     }
     // 画质增强着色器（Anime4K / FSR）：third_party/shaders → files/shaders/（照 fonts 先例；原件与许可证见 third_party/shaders/README.md）
@@ -82,6 +88,15 @@ compose.resources {
     publicResClass = true
     packageOfResClass = "com.gugaart.ui.res"
     generateResClass = always
+}
+
+// commonTest 也在 iOS 模拟器上跑（`:ui:iosSimulatorArm64Test --tests "*Ed25519*"`：iPhone 的更新清单验签）；`-Pgugu.ios.simulator=<udid 或名字>`
+// 选模拟器（和 :shell-ios、上游同一个属性）。iOS 模拟器上跑 commonTest 时没有类路径：录下来的样本
+// （src/commonTest/resources）按绝对路径读，目录经 simctl 的 SIMCTL_CHILD_<X> 交给测试进程（和上游 core 同一个做法；
+// 字幕搜索的解析测试用，docs/subtitle-search.md §9）。
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>().configureEach {
+    providers.gradleProperty("gugu.ios.simulator").orNull?.let { device.set(it) }
+    environment("SIMCTL_CHILD_GUGAART_TEST_RESOURCES", layout.projectDirectory.dir("src/commonTest/resources").asFile.absolutePath)
 }
 
 tasks.withType<Test>().configureEach {

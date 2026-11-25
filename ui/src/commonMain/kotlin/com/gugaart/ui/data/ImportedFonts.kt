@@ -48,6 +48,8 @@ class FontImportHost(
     val delete: (path: String) -> Unit,
     /** 那个文件还在不在（被系统清掉 / 用户手动删了 → 列表里自动摘掉）。 */
     val exists: (path: String) -> Boolean,
+    /** 能不能打开文件选择器选字体。电视没有 SAF → false：写文件的能力仍给（着色器增强要用），但「导入字体」入口不画。 */
+    val canPick: Boolean = true,
 )
 
 val LocalFontImport = staticCompositionLocalOf<FontImportHost?> { null }
@@ -69,7 +71,7 @@ class ImportedFontStore(private val local: LocalStore, private val host: FontImp
     val state: StateFlow<ImportedFontState> = _state
 
     /** 这个平台能不能导入（有文件选择器）。 */
-    val canImport: Boolean get() = host != null
+    val canImport: Boolean get() = host?.canPick == true
 
     private fun load(): ImportedFontState {
         val parsed = decode(local.get(KEY))

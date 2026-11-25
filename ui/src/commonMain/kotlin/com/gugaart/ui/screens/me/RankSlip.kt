@@ -1,5 +1,6 @@
 package com.gugaart.ui.screens.me
 
+import com.gugaart.ui.update.updater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -124,8 +125,8 @@ fun RankHost(live: Boolean, tv: Boolean) {
     if (news == null && special == null) return
     // 号外先出：更新的纸片还在，称号等它收起再出
     val override = LocalUpdateStateOverride.current
-    val update by g.update.state.collectAsState()
-    val dismissed by g.update.dismissedVersion.collectAsState()
+    val update by g.updater.state.collectAsState()
+    val dismissed by g.updater.dismissedVersion.collectAsState()
     if (extraView(override ?: update, com.gugaart.ui.screens.update.UpdateConsent.dismissedFor(dismissed), com.gugaart.ui.screens.update.UpdateConsent.ignored) != null) return
     // 等级的先出，收起后再出特别称号
     when {

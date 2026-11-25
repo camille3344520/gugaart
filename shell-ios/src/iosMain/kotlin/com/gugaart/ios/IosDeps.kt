@@ -89,13 +89,26 @@ internal fun iosDeps(player: com.gugugaga.app.player.PlayerPlatform?): PlatformD
         reducedMotion = { UIAccessibilityIsReduceMotionEnabled() },
         productName = "咕咕嘎嘎",
         updateHost = IosUpdateHost(),
-        updateConfig = com.gugaart.ui.update.GithubUpdate.config(BuildInfo.APP_VERSION, BuildInfo.VERSION_CODE, IosUpdateHost.ASSET_KEY),
+        updateConfig = iosUpdateConfig(),
+        // 清单请求：主地址 + 国内备用镜像赛跑、超时转普通失败（和桌面 / 安卓同一个传输层，UpdateMirrors.kt）
+        updateTransport = com.gugaart.ui.update.UpdateCheckTransport(com.gugugaga.core.KtorTransport(com.gugugaga.core.platformHttpClient())),
     )
 }
 
 /**
- * 更新：只查、不下载（D-lead-26）。iPhone 上的应用不能自己装包；号外走 `:ui` 的侧载分支（「打开发布页」）。上游的更新器照常查清单、
- * 验签、比版本；画报每次启动关掉了自动下载（`UpdateConsent`），所以这里的下载 / 安装永远不会被调用——万一被调到也只回一句话、不写任何文件。
+ * 更新比的是哪一版：发版的版本号（gradle.properties 的 gugaart.version → BuildInfo，和 Xcode 写进 Info.plist 的 CFBundleShortVersionString /
+ * CFBundleVersion 同一个来源、同一个算法 x × 10000 + y × 100 + z，发版脚本给清单算 versionCode 也是它），资产键 `ios-ipa`。
+ * Debug 的模拟器验收可以经运行器的启动参数假装成更低的一版（`Accept.updateVersion()`，验「有新版出号外」）；Release / IPA 里没有这个缝。
+ */
+internal fun iosUpdateConfig(): com.gugugaga.app.update.UpdateConfig {
+    val (name, code) = Accept.updateVersion() ?: (BuildInfo.APP_VERSION to BuildInfo.VERSION_CODE)
+    return com.gugaart.ui.update.GithubUpdate.config(name, code, IosUpdateHost.ASSET_KEY)
+}
+
+/**
+ * 更新：只查、不下载（D-lead-26）。iPhone 上的应用不能自己装包；号外走 `:ui` 的侧载分支（「打开发布页」）。查清单、比版本是上游的更新器，
+ * 验签是本仓库的纯 Kotlin Ed25519（上游在 iOS 上验签恒为 false；`Main.kt` 里 `OwnVerifier.install`，1.4.0）；画报每次启动关掉了自动下载
+ * （`UpdateConsent`），所以这里的下载 / 安装永远不会被调用——万一被调到也只回一句话、不写任何文件。
  */
 internal class IosUpdateHost : UpdateHost {
     override val assetKey: String = ASSET_KEY

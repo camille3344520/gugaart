@@ -42,6 +42,7 @@ import com.gugaart.ui.components.Skeleton
 import com.gugaart.ui.components.TextLink
 import com.gugaart.ui.components.VolumeCell
 import com.gugaart.ui.components.bleedSourceOf
+import com.gugaart.ui.components.phoneHeroHeight
 import com.gugaart.ui.components.BleedSource
 import com.gugaart.ui.components.spot
 import com.gugaart.ui.data.Framing
@@ -146,15 +147,19 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
     val slice = rememberLoad("episodes", series.id, season?.id, page) { loadEpisodes(it, series.id, season?.id, page) }
     val pages = pagesOf(slice.value)
     val fav = chrome.isFavorite(series)
-    val solidAt = with(LocalDensity.current) { (SERIES_BLEED - dimens.statusBar - 50.dp - 70.dp).toPx() }
+    // 手机详情页顶部 = 竖版海报（没海报退横版剧照，高度回到 SERIES_BLEED）
+    val heroH = phoneHeroHeight(series.art, SERIES_BLEED)
+    val solidAt = with(LocalDensity.current) { (heroH - dimens.statusBar - 50.dp - 70.dp).toPx() }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("series-phone")) {
             FullBleed(
                 series.art,
-                SERIES_BLEED,
+                heroH,
                 framing = Framing.of(series.id),
-                caption = when (bleedSourceOf(series.art)) {
+                poster = true,
+                caption = when (bleedSourceOf(series.art, poster = true)) {
+                    BleedSource.Poster -> "海报 · ${series.name}"
                     BleedSource.Backdrop -> "剧照 · ${series.name}"
                     BleedSource.PosterBlur -> "没有剧照 · 用海报虚化代替"
                     BleedSource.None -> null
@@ -307,16 +312,20 @@ fun MoviePhone(movie: Title, day: Int) {
     LaunchedEffect(poster) { chrome.spot = poster?.spot() }
     val fav = chrome.isFavorite(movie)
     val played = chrome.isPlayed(movie.id, movie.played)
-    val solidAt = with(LocalDensity.current) { (MOVIE_BLEED - dimens.statusBar - 50.dp - 70.dp).toPx() }
+    // 手机详情页顶部 = 竖版海报（没海报退横版剧照，高度回到 MOVIE_BLEED）
+    val heroH = phoneHeroHeight(movie.art, MOVIE_BLEED)
+    val solidAt = with(LocalDensity.current) { (heroH - dimens.statusBar - 50.dp - 70.dp).toPx() }
     val source = movie.sources.firstOrNull()
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("movie-phone")) {
             FullBleed(
                 movie.art,
-                MOVIE_BLEED,
+                heroH,
                 framing = Framing.of(movie.id),
-                caption = when (bleedSourceOf(movie.art)) {
+                poster = true,
+                caption = when (bleedSourceOf(movie.art, poster = true)) {
+                    BleedSource.Poster -> "海报 · ${movie.name}"
                     BleedSource.Backdrop -> "剧照 · ${movie.name}" + (movie.year?.let { " · $it" } ?: "")
                     BleedSource.PosterBlur -> "没有剧照 · 用海报虚化代替"
                     BleedSource.None -> null

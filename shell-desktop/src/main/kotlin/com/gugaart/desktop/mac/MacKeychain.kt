@@ -216,8 +216,17 @@ internal class MacSecureStore(
  * 真的钥匙串：JNA → Security.framework 的 SecItem*（通用密码，`kSecClassGenericPassword`），字典用 CoreFoundation 造。
  * 默认钥匙串（用户的「登录」钥匙串），不指定访问组（ad-hoc 签名的应用拿不到数据保护钥匙串的权利）。
  * 任何线程都可以调；调用方（[MacKeychainStore]）都在 IO 线程上。
+ *
+ * 2026-11 起**不在启动路径上**：Mac 的令牌改存数据目录的文件（见 `MacDeps.kt`），ad-hoc 签名每次构建 cdhash 都变，
+ * 读旧条目会反复弹「想访问您的钥匙串」。这套代码留着给单测和以后的诊断用；[callCount] 让验收运行器核对「一次都没调过」。
  */
 internal object SecurityFrameworkKeychain : KeychainApi {
+    /** 真的调过几次 SecItem*（四个操作都经 [query]）。只作诊断计数，不影响行为。 */
+    private val secItemCalls = java.util.concurrent.atomic.AtomicInteger()
+
+    /** 到这里为止调过几次钥匙串接口；启动路径应当一直是 0。 */
+    val callCount: Int get() = secItemCalls.get()
+
     private val sec by lazy { NativeLibrary.getInstance("/System/Library/Frameworks/Security.framework/Security") }
     private val cf by lazy { NativeLibrary.getInstance("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation") }
 
@@ -269,6 +278,7 @@ internal object SecurityFrameworkKeychain : KeychainApi {
 
     /** class + service + account（[extra] 追加），字符串用完即放。 */
     private fun <T> query(service: String, account: String, extra: List<Pair<Pointer, Pointer>> = emptyList(), block: (Pointer) -> T): T {
+        secItemCalls.incrementAndGet()
         val s = cfString(service)
         val a = cfString(account)
         try {

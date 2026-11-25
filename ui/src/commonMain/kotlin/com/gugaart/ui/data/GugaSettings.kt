@@ -97,6 +97,11 @@ data class GugaPrefs(
     val tocHintSeen: Boolean = false,
     /** 每个片库上次的筛选 / 排序（键 = 片库 id；1.3.1）。 */
     val wall: Map<String, WallPref> = emptyMap(),
+    /**
+     * 字幕搜索也问迅雷 / 射手（1.4.0，docs/subtitle-search.md §6）：会把文件名和文件指纹发给这两家；关 = 只用服务器的字幕源。
+     * 只有用户点「搜索字幕…」才会发请求。
+     */
+    val subtitleOnline: Boolean = true,
 ) {
     /** 她的格子出不出现。 */
     val showMascot: Boolean get() = mascot != MascotPref.Off
@@ -120,6 +125,7 @@ data class GugaPrefs(
                 danmakuSeeded = bool("danmakuSeeded", false),
                 tocHintSeen = bool("tocHintSeen", false),
                 wall = (o["wall"] as? JsonObject)?.mapValues { (_, v) -> WallPref.parse(v as? JsonObject) }.orEmpty(),
+                subtitleOnline = bool("subtitleOnline", true),
             )
         }
 
@@ -144,6 +150,7 @@ data class GugaPrefs(
         put("danmakuSeeded", danmakuSeeded)
         put("tocHintSeen", tocHintSeen)
         put("wall", buildJsonObject { wall.forEach { (k, v) -> put(k, v.encode()) } })
+        put("subtitleOnline", subtitleOnline)
     }.toString()
 }
 

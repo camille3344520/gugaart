@@ -3,6 +3,8 @@ package com.gugaart.desktop.mac
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.MenuBar
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyShortcut
 import com.gugaart.ui.desktop.DesktopCommand
 import com.gugaart.ui.desktop.DesktopCommandSink
 import com.gugaart.ui.desktop.DesktopCommands
@@ -137,11 +139,12 @@ fun FrameWindowScope.MacMenuBar(route: Route, tab: WideTab?, playing: Boolean, o
                     Item(
                         item.label,
                         enabled = item.enabled,
-                        // 只有 ⌘W 由菜单接（Compose 窗口自己不认它）；命令表里的 ⌘ 键照旧由界面的按键处理接，菜单不重复挂
-                        shortcut = if (item.keys == "⌘W") androidx.compose.ui.input.key.KeyShortcut(androidx.compose.ui.input.key.Key.W, meta = true) else null,
+                        // 命令表里有 ⌘ 键的项挂上 KeyShortcut：菜单右边印出 ⌘K / ⌘R …，AppKit 也认这些快捷键。
+                        // ⌘W 不在命令表里，单独挂。同一次按键菜单和界面可能都接住——经 [DesktopCommandSink.claimOnce] 只执行一次。
+                        shortcut = macCmdShortcut(item.cmd) ?: if (item.keys == "⌘W") KeyShortcut(Key.W, meta = true) else null,
                         onClick = {
                             when {
-                                item.cmd != null -> DesktopCommandSink.sink?.invoke(item.cmd)
+                                item.cmd != null -> if (DesktopCommandSink.claimOnce(item.cmd)) DesktopCommandSink.sink?.invoke(item.cmd)
                                 item.playerCmd != null -> PlayerCommandSink.sink?.invoke(item.playerCmd)
                                 item.action != null -> onAction(item.action)
                             }
@@ -151,4 +154,28 @@ fun FrameWindowScope.MacMenuBar(route: Route, tab: WideTab?, playing: Boolean, o
             }
         }
     }
+}
+
+/**
+ * 命令表的 ⌘ 提示 → 菜单快捷键（[KeyShortcut]）：菜单右边印出来、AppKit 的 `performKeyEquivalent` 也认。
+ * 没有 ⌘ 键的命令（收藏 V / 已看 W）= null，不挂快捷键。纯函数，单测逐项核对。
+ */
+internal fun macCmdShortcut(cmd: DesktopCommand?): KeyShortcut? {
+    val hint = cmd?.cmdHint ?: return null
+    if (!hint.startsWith("⌘")) return null
+    val key = when (hint.removePrefix("⌘")) {
+        "K" -> Key.K
+        "," -> Key.Comma
+        "R" -> Key.R
+        "[" -> Key.LeftBracket
+        "]" -> Key.RightBracket
+        "F" -> Key.F
+        "1" -> Key.One
+        "2" -> Key.Two
+        "3" -> Key.Three
+        "4" -> Key.Four
+        "5" -> Key.Five
+        else -> null
+    } ?: return null
+    return KeyShortcut(key, meta = true)
 }

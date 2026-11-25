@@ -177,8 +177,11 @@ object OpenSourceLicenses {
                 "MIT",
                 "移植自 liquid_glass_widgets（Copyright (c) 2024–2026 Sebastian Degenaar）、liquid_glass_renderer（Copyright 2025 Tim Lehmann for whynotmake.it）",
             ),
+            // 字幕搜索（1.4.0）：迅雷 / 射手的指纹算法和接口用法移植自 MeiamSubtitles（docs/subtitle-search.md §8；原文 third_party/meiamsub/LICENSE）
+            LicenseEntry("MeiamSubtitles（字幕搜索）", "Apache-2.0", "迅雷 / 射手的指纹算法与接口用法，移植并改动 · Copyright Meiam · github.com/91270/MeiamSubtitles"),
             LicenseEntry("Lucide 图标", "ISC", "矢量路径 · lucide.dev"),
             LicenseEntry("思源宋体子集 Noto Serif SC", "SIL Open Font License 1.1", "界面字体"),
+            LicenseEntry("思源黑体子集 Noto Sans SC", "SIL Open Font License 1.1", "iOS 内嵌字幕字体（Regular）"),
         )
     }
 }

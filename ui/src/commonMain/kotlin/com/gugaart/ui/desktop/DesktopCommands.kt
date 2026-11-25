@@ -12,6 +12,7 @@ import com.gugaart.ui.wide.WideTab
 import com.gugugaga.app.AppGraph
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.player.PlayerKeyCommand
+import kotlin.time.TimeSource
 
 /**
  * M2-3（ADR 0004 §2.4）：菜单和快捷键共用的一张命令表。每条带标签和两种修饰键写法（Ctrl / ⌘）；
@@ -66,6 +67,34 @@ object DesktopCommandSink {
      * 是快照状态——登记的人（`GugaartApp` 桌面分支）给一个读 `WideNav.onReprint` 的函数，菜单在组合里调它，首页挂上 / 撤下时菜单跟着变。
      */
     var reprintReady: (() -> Boolean)? by androidx.compose.runtime.mutableStateOf(null)
+
+    /**
+     * 一次 ⌘ 按键可能既被菜单栏挂的快捷键（AppKit `performKeyEquivalent`）接住、又落到界面的按键处理
+     * （[DesktopKeys]）：同一条命令在这个窗口内只执行一次。菜单和界面两边在执行前都来 [claimOnce] 问一次——
+     * 谁先到谁执行，后到的同一条命令被跳过。窗口取得很小（一次按键的两条路几乎同时到），不影响隔了一会儿的
+     * 正常重复按键。纯状态 + 可注入时钟，单测锁住「一次按键只执行一次」。
+     */
+    private var guardCmd: DesktopCommand? = null
+    private var guardAtNs: Long = 0
+    internal const val GUARD_WINDOW_NS: Long = 150_000_000L // 150 ms
+
+    /** 单调时钟原点（公共写法，iOS 也编得过）：now 取「距原点多少纳秒」，不用 JVM 的 System.nanoTime()。 */
+    private val guardClockOrigin = TimeSource.Monotonic.markNow()
+    private fun monotonicNowNs(): Long = guardClockOrigin.elapsedNow().inWholeNanoseconds
+
+    /** true = 这次该执行（已记下）；false = 同一条命令刚执行过、这次跳过。[nowNs] 单测注入。 */
+    fun claimOnce(cmd: DesktopCommand, nowNs: Long = monotonicNowNs()): Boolean {
+        if (cmd == guardCmd && nowNs - guardAtNs < GUARD_WINDOW_NS) return false
+        guardCmd = cmd
+        guardAtNs = nowNs
+        return true
+    }
+
+    /** 单测用：清掉上一条命令的记录，避免用例之间互相影响。 */
+    internal fun resetOnceGuard() {
+        guardCmd = null
+        guardAtNs = 0
+    }
 }
 
 object DesktopCommands {

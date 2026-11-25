@@ -1,5 +1,6 @@
 package com.gugaart.ui.tv.system
 
+import com.gugaart.ui.update.updater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -87,7 +88,7 @@ fun TvSettings(section: String?, today: Today) {
     val store = LocalGugaSettings.current ?: remember(g) { GugaSettingsStore(g.deps.local) }
     val prefs by store.prefs.collectAsState()
     val settings by g.settings.state.collectAsState()
-    val status by g.update.status.collectAsState()
+    val status by g.updater.status.collectAsState()
 
     // `Route.Settings("licenses")`（菜单 / 关于页的那一行）= 「关于」分区 + 开源许可那一列已经推开
     val openLicenses = section == com.gugaart.ui.screens.settings.OpenSourceLicenses.KEY

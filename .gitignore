@@ -45,10 +45,11 @@ design/tv/img/
 design/*/shots/
 design/*/shots-sample/
 
-# ---- 字体（docs/decisions.md Q3）：24 MB 的全量可变字体不入库；入库的是 subset/ 下的三个子集 ----
+# ---- 字体（docs/decisions.md Q3）：全量可变字体不入库；入库的是 subset/ 下的子集（宋体界面三档 + 黑体 iOS 字幕一档） ----
 third_party/fonts/**/*.ttf
 third_party/fonts/**/*.otf
 !third_party/fonts/noto-serif-sc/subset/*.ttf
+!third_party/fonts/noto-sans-sc/subset/*.ttf
 
 # 生图原图（1024，体积大，只提交 512 透明版）
 design/generated/raw/
