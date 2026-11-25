@@ -68,9 +68,10 @@ fun Slip(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> U
  * 把一张纸片压在版面正中：后面一层墨（[SheetSpec.SCRIM]），纸片居中。画在根上（整个窗口），所以调用方要把它放在根的 Box 里。
  * - [onDismiss] 不为空：点纸片外面 / 系统返回 = 收起；为空（强制更新）：收不掉，返回键被吃掉。
  * - 这是版面上唯一的「盖东西」的做法，只给必须打断的事用（更新、二次确认）；展开选项一律用推开（docs/design-language.md §8）。
+ * - [bottom]：纸片贴在底边（手机详情页的「版本」：拇指够得着），离底和标签栏同一个距离；默认居中。
  */
 @Composable
-fun SheetHost(onDismiss: (() -> Unit)?, modifier: Modifier = Modifier, tag: String = "sheet", content: @Composable ColumnScope.() -> Unit) {
+fun SheetHost(onDismiss: (() -> Unit)?, modifier: Modifier = Modifier, tag: String = "sheet", bottom: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val colors = Guga.colors
     val back = LocalBackDispatcher.current
     val dismiss = rememberUpdatedState(onDismiss)
@@ -83,10 +84,10 @@ fun SheetHost(onDismiss: (() -> Unit)?, modifier: Modifier = Modifier, tag: Stri
     }
     Box(
         modifier.fillMaxSize().background(colors.paper.copy(alpha = SheetSpec.SCRIM)).pointerInput(Unit) { detectTapGestures { dismiss.value?.invoke() } }.testTag("$tag-scrim"),
-        contentAlignment = Alignment.Center,
+        contentAlignment = if (bottom) Alignment.BottomCenter else Alignment.Center,
     ) {
         Slip(
-            Modifier.padding(horizontal = Guga.dimens.margin - 6.dp).widthIn(max = SheetSpec.MAX_WIDTH).fillMaxWidth()
+            Modifier.padding(horizontal = Guga.dimens.margin - 6.dp).then(if (bottom) Modifier.padding(bottom = Guga.dimens.bottomBar) else Modifier).widthIn(max = SheetSpec.MAX_WIDTH).fillMaxWidth()
                 // 点在纸片上不算点外面
                 .pointerInput(Unit) { detectTapGestures { } }.testTag(tag),
             content = content,

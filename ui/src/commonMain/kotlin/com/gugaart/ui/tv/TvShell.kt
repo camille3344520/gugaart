@@ -89,9 +89,9 @@ object TvSpec {
     /** 侧栏（收起）：x 28–104。 */
     val RAIL_LEFT = 28.dp
     val RAIL_WIDTH = 76.dp
-    /** 侧栏展开成的目录页：宽 404（x 28–432）、高 770、圆角 42。 */
+    /** 侧栏展开成的目录页：宽 404（x 28–432）、高 836（1.5.0 多了「服务器」一行：770 + 66）、圆角 42。 */
     val RAIL_OPEN_WIDTH = 404.dp
-    val RAIL_OPEN_HEIGHT = 770.dp
+    val RAIL_OPEN_HEIGHT = 836.dp
     /** 海报墙卡宽（2 : 3）与间距。 */
     val POSTER = 214.dp
     val POSTER_GAP = 32.dp
@@ -251,6 +251,8 @@ fun Modifier.tvRoot(graph: AppGraph, wide: WideNav): Modifier = composed {
  * 片库按返回回首页时焦点会被兜底放到首页目录里的那张库卡上，而不是封面（`Tv1ShellTest.backLevels`）。
  */
 internal fun tvRescueFocus(graph: AppGraph, tv: TvShellState) {
+    // 换服务器的页边开着：焦点归它（侧栏收起时的兜底不要把焦点拉回页面）
+    if (TvServerPanel.open) return
     val last = graph.focusMemory.recall(tv.entry)
     if (last != null && graph.focus.request(last)) return
     if (graph.focus.request(ROUTE_DEFAULT_KEY)) return
@@ -348,7 +350,7 @@ fun TvPages(route: Route, today: Today) {
     }
     // 每页记住最后一个带 key 的焦点（侧栏、长按菜单不是页面内容）
     DisposableEffect(g, tv) {
-        g.focus.onKeyFocused = { k -> if (!k.startsWith("$TV_RAIL_ZONE/") && !k.startsWith("$TV_MENU_ZONE/")) g.focusMemory.remember(tv.entry, k) }
+        g.focus.onKeyFocused = { k -> if (!k.startsWith("$TV_RAIL_ZONE/") && !k.startsWith("$TV_MENU_ZONE/") && !k.startsWith("$TV_SERVERS_ZONE/")) g.focusMemory.remember(tv.entry, k) }
         onDispose { g.focus.onKeyFocused = null }
     }
     // 离开返回栈的页面：忘掉

@@ -95,7 +95,6 @@ import com.gugugaga.app.settings.playbackPrefs
 import com.gugugaga.app.settings.uiSettings
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.core.currentTimeMillis
-import com.gugugaga.danmaku.settings.DanmakuFont
 import com.gugugaga.danmaku.settings.DanmakuWeight
 import com.gugugaga.ds.theme.UiMode
 import kotlinx.coroutines.CancellationException
@@ -304,6 +303,9 @@ internal fun PlaybackSection(pick: String?) {
             canPlus = p.defaultRate < RATE_CHOICES.last(),
         )
     }
+
+    // 1.5.0：多台服务器（从其它服务器找片源 + 参与的服务器）
+    OtherServersGroup(startOpen = pick == "servers")
 }
 
 /* ------------------------------------------------------------------ 04 strm 直链 */
@@ -403,10 +405,25 @@ internal fun SubsSection(pick: String?) {
     // 字幕搜索（1.4.0，docs/subtitle-search.md §6）：画报自己的键 subtitleOnline
     SettingRow(
         "在线字幕源（迅雷 / 射手）",
-        note = "播放器「字幕 › 搜索字幕…」时也问迅雷和射手：会发送文件名和文件指纹（几段内容的哈希），不发服务器地址和登录信息。关掉 = 只用服务器的字幕源",
+        note = SUBTITLE_ONLINE_NOTE,
         tag = "set-subtitleOnline",
     ) { OnOff(gp.subtitleOnline, { on -> store.update { it.copy(subtitleOnline = on) } }) }
+    // 字幕智能匹配（1.4.1 U2，docs/subtitle-search.md §2.4）：画报自己的键 subtitleAutoBest，默认关
+    SettingRow(
+        "自动加载最合适的字幕",
+        note = SUBTITLE_AUTO_BEST_NOTE,
+        tag = "set-subtitleAutoBest",
+    ) { OnOff(gp.subtitleAutoBest, { on -> store.update { it.copy(subtitleAutoBest = on) } }) }
+
+    // 字幕样式（1.4.1）：字号、粗体、字体、描边、阴影、位置——画报自己的键 subStyle
+    SubtitleStyleGroup(pick)
 }
+
+/** 「在线字幕源」的说明（三端同一句；手机上只露两行，别写长）。开播后后台那一次也尊重它（docs/subtitle-search.md §2.4）。 */
+const val SUBTITLE_ONLINE_NOTE = "手动搜、开播后会在后台搜一次时都问迅雷和射手（关了只问服务器）；只发文件名和指纹"
+
+/** 「自动加载最合适的字幕」的说明（三端同一句；手机上只露两行）。自动加载不写服务器：服务器源的只提示（docs/subtitle-search.md §2.4）。 */
+const val SUBTITLE_AUTO_BEST_NOTE = "没中文字幕时开播后会在后台搜一次；指纹全对上就自动加载（仅本次），存进 Emby 的只提示"
 
 /* ------------------------------------------------------------------ 06 弹幕 */
 
@@ -475,7 +492,25 @@ internal fun DanmakuSection(pick: String?) {
     }
 
     SettingGroup("样式", "STYLE")
-    PickRow("字体", r.font.label, DanmakuFont.entries.map { PickOption(it, it.label) }, listOf(r.font), { render("font", JsonPrimitive(it.id)) }, tag = "set-dm-font", startOpen = pick == "font")
+    // 字体：导入的 + 系统 + 五款（和字幕共用）。上游有的写上游的键 danmaku.render.font；思源宋体 / 站酷快乐体记在画报的 danmakuFont，
+    // 画面经上游的缝 LocalDanmakuFontOverride 用上（player/StyleApply.kt）
+    val gugaStore = rememberGugaStore()
+    val gugaPrefs by gugaStore.prefs.collectAsState()
+    val importedFonts = rememberImportedFonts()
+    val imported by importedFonts.state.collectAsState()
+    val styleFonts = com.gugaart.ui.player.rememberStyleFonts()
+    val fontStates by styleFonts.states.collectAsState()
+    val dmFonts = com.gugaart.ui.data.danmakuFontChoices(
+        r.font, gugaPrefs.danmakuFont, imported, fontStates,
+        setUpstream = { render("font", JsonPrimitive(it.id)) },
+        setExtra = { id -> gugaStore.update { it.copy(danmakuFont = id) } },
+        selectImported = importedFonts::select,
+        prefetch = { f -> scope.launch { styleFonts.ensure(f) } },
+    )
+    PickRow(
+        "字体", dmFonts.firstOrNull { it.selected }?.label ?: r.font.label, dmFonts.map { PickOption(it.key, it.label, it.note) }, dmFonts.filter { it.selected }.map { it.key },
+        { key -> dmFonts.firstOrNull { it.key == key }?.pick?.invoke() }, note = "和字幕共用同一套字体", tag = "set-dm-font", startOpen = pick == "font",
+    )
     SettingRow("粗细", tag = "set-dm-weight") { Segmented(DanmakuWeight.entries.map { it to it.label }, r.weight, { render("weight", JsonPrimitive(it.id)) }) }
 
     SettingGroup("匹配", "MATCHING")

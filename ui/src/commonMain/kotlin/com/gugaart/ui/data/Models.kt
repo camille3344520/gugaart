@@ -77,6 +77,11 @@ data class Title(
     val sources: List<MediaSourceInfo> = emptyList(),
     /** 首播日期（ISO）；用来排序。 */
     val premiere: String? = null,
+    /** 原名（`OriginalTitle`，「Forrest Gump」）和排序名（`SortName`）：只有搜索索引取了这两个字段（1.4.1 自己写的搜索）；别处 = null。 */
+    val originalTitle: String? = null,
+    val sortName: String? = null,
+    /** TMDB / IMDB 这些外部 id（`ProviderIds`）：「源」找重复片、记住用户选的版本用（1.5.0，data/SourceRules.kt）。没有 = 空。 */
+    val providerIds: Map<String, String?> = emptyMap(),
 ) {
     /** 版面上显示的名字：单集在首页 / 目录里写剧名。 */
     val displayName: String get() = if (kind == Kind.Episode) seriesName ?: name else name
@@ -181,6 +186,9 @@ fun EmbyClient.titleOf(item: BaseItemDto): Title {
         people = item.people.map { personOf(it) },
         sources = item.mediaSources,
         premiere = item.premiereDate,
+        originalTitle = item.originalTitle?.trim()?.takeIf { it.isNotEmpty() },
+        sortName = item.sortName?.trim()?.takeIf { it.isNotEmpty() },
+        providerIds = item.providerIds,
     )
 }
 

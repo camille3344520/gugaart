@@ -142,7 +142,12 @@ fun GugaartApp(graph: AppGraph, windowSize: DpSize? = null) {
     val px = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize
     if (graph.deps.uiMode == UiMode.Tv && windowSize == null && px.width > 0) {
         val density = androidx.compose.ui.unit.Density(tvDesignDensity(px.width), fontScale = 1f)
-        CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides density) { GugaartRoot(graph, null) }
+        // 视频层按显示器的密度换算洞的位置：换之前的密度留给 GugaVideoSurface（fix141 F3）
+        val host = androidx.compose.ui.platform.LocalDensity.current
+        CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalDensity provides density,
+            com.gugaart.ui.player.LocalHostDensity provides host,
+        ) { GugaartRoot(graph, null) }
     } else {
         GugaartRoot(graph, windowSize)
     }
@@ -163,7 +168,11 @@ private fun GugaartRoot(graph: AppGraph, windowSize: DpSize?) {
     val caps = remember { platformGlassCaps() }
     val backend = glassBackendFor(ui.perf, caps, deps.glassBackendOverride)
     // 会话：恢复上次的账号（登录 / 已保存账号 / 备用线路的逻辑都在上游的 SessionManager）
-    LaunchedEffect(graph) { graph.session.restore() }
+    LaunchedEffect(graph) {
+        // 开发运行 / debug 包才有：先把几台本地 Mock 存成几台服务器（1.5.0 跨服务器验收；发布物里 urls 永远是空的）
+        com.gugaart.ui.data.DevMockServers.seed(graph)
+        graph.session.restore()
+    }
     // 更新不自动下载（用户 2026-11-15：「更不更新让用户点，不要自动更新」）：上游的「自动下载更新」默认开，这里每次启动关掉
     LaunchedEffect(graph) {
         com.gugaart.ui.screens.update.UpdateConsent.disableAutoDownload(graph)
@@ -188,6 +197,9 @@ private fun GugaartRoot(graph: AppGraph, windowSize: DpSize?) {
 
     // 画报自己的设置（独立的键 gugaart.settings.v1）和期号（本地计数）
     val store = remember(graph) { GugaSettingsStore(deps.local) }
+    // 验收缝：把根界面的这一个 store 交给进程内运行器（没给 sink 时什么都不做）
+    val settingsSink = com.gugaart.ui.screens.settings.LocalGugaSettingsSink.current
+    androidx.compose.runtime.SideEffect { settingsSink?.invoke(store) }
     val prefs by store.prefs.collectAsState()
     // 弹幕的画报默认（区域 10 %、字号 150 %）：只在第一次启动、这两项还是上游默认时写一次（data/DanmakuDefaults.kt）
     LaunchedEffect(store) {
@@ -278,6 +290,8 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                 // 浮着的菜单收掉，导航栈清空，回到首页那一页；电视的焦点由首页自己落到默认位置（新的一页）
                 DesktopContextMenu.close()
                 TvLongPressMenu.close()
+                com.gugaart.ui.desktop.DesktopServerMenu.close()
+                com.gugaart.ui.tv.TvServerPanel.close()
                 com.gugaart.ui.screens.detail.StillsOverlay.close()
                 wide.railOpen = false
                 wide.tab = WideTab.Home
@@ -449,6 +463,9 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                 if (mode == UiMode.Desktop) DesktopContextMenu.Host()
                 if (mode == UiMode.Tv) TvLongPressMenu.Host()
                 if (mode == UiMode.Phone) com.gugaart.ui.screens.PhoneItemMenu.Host()
+                // 换服务器（1.5.0）：手机 = 贴底的纸片；电视 = 右边页边（电脑的下拉跟着顶栏胶囊，画在 DesktopChrome 里）
+                if (!playing && session != null && mode == UiMode.Phone) com.gugaart.ui.servers.ServerSheet.Host()
+                if (!playing && session != null && mode == UiMode.Tv) com.gugaart.ui.tv.TvServerPanel.Host()
                 // 字幕搜索（播放器外，条目菜单打开的）：从左边出来的一张纸；电视的入口直接进播放器
                 if (!playing && mode != UiMode.Tv) SubtitleSearchPageHost()
                 // 看剧照的大图（电脑 / 电视的详情页打开；手机在页里自己画）

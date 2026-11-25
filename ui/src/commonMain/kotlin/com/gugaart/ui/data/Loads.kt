@@ -60,6 +60,7 @@ class Load<T> internal constructor() {
  * 用户 2026-11-17：「片库返回：进详情再返回，回到原来的位置…三端都要实现」——手机 / 电脑的片库列表在数据到之前只有几行骨架，
  * 列表一短，存着的滚动位置就被压回顶部；第一帧有数据，位置才还原得了（电视的墙是数据到了才排，所以没这个问题）。
  * 键 = 账号 + 调用处在组合里的位置（同一页同一处 rememberLoad）+ 参数；换了账号不会拿到别的服务器的内容。都在主线程上读写。
+ * 换服务器也用它（1.5.0 规划 §2.1「切回来秒开」）：切回看过的服务器，第一帧就是它上次的内容，再在后台刷新。
  */
 internal object LoadCache {
     private const val MAX = 48
@@ -116,8 +117,10 @@ fun errorKindOf(message: String): ErrorKind = when {
 /**
  * 用当前会话的 `EmbyClient`（上游 :core）取数。[keys] 变了就重取，旧结果保留到新结果到达。
  * 没有会话（没登录）→ 一直是 pending，由根界面去处理登录。
- * **换了服务器 / 账号**（用户 2026-11-15：「切换服务器的时候得马上更新主页画报」）：上一个账号的内容马上清掉（不再「旧内容保持」——
- * 那是另一台服务器的片子），骨架出来，按新的服务器取（[accountSwitched]）。
+ * **换了服务器 / 账号**（1.5.0 规划 §2.1「切回来秒开」，细化 D14）：上一个账号的内容不能再显示（[accountSwitched]）——
+ * 这个账号有近期缓存（[LoadCache]，按账号分键）→ 第一帧就是它上次的内容，随后照常后台刷新；
+ * 没有缓存才清掉，骨架按 [SKELETON_DELAY_MS] 的规则出。显示的永远是这台服务器自己的内容，
+ * 不会挂着另一台的片库（D14「切换服务器的时候得马上更新主页画报」的本意）。
  */
 @Composable
 fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load<T> {
@@ -133,9 +136,13 @@ fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load
     LaunchedEffect(client, load.generation, *keys) {
         if (client == null) return@LaunchedEffect
         if (accountSwitched(load.account, account)) {
-            load.value = null
+            // 切回来秒开（规划 §2.1）：先找这个账号的近期缓存——有，第一帧就是它上次的内容，后台刷新；
+            // 没有才清掉（上一个账号的内容不能留在画面上，D14），骨架按 ≥150 ms 的规则出。
+            @Suppress("UNCHECKED_CAST")
+            val cached = LoadCache.get(listOf(account, site) + keyList) as T?
+            load.value = cached
             load.error = null
-            load.valueKeys = null
+            load.valueKeys = if (cached != null) keyList else null
         }
         load.account = account
         load.refreshing = true

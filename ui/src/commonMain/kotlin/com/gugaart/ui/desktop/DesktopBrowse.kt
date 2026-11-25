@@ -104,7 +104,7 @@ import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.play
 import com.gugaart.ui.screens.search.RemoteHits
 import com.gugaart.ui.screens.search.TitleHit
-import com.gugaart.ui.screens.search.loadSearchIndex
+import com.gugaart.ui.screens.search.loadLibraryIndex
 import com.gugaart.ui.screens.search.remoteResultsReady
 import com.gugaart.ui.screens.search.searchRemote
 import com.gugaart.ui.screens.search.searchTitles
@@ -739,13 +739,18 @@ fun DesktopSearchScreen(q: String?, today: Today) {
     // 按过 Enter：左栏从联想换成最佳匹配
     var submitted by rememberSaveable { mutableStateOf(preset.state != "typing" && query.isNotEmpty()) }
     var picked by rememberSaveable { mutableIntStateOf(if (preset.state == "typing") 1 else 0) }
-    val index = rememberLoad("search-index") { loadSearchIndex(it) }
-    val hits = remember(index.value, query) { index.value?.let { searchTitles(it.titles, query) } }
+    val index = rememberLoad("search-index") { loadLibraryIndex(it) }
+    val hits = remember(index.value, query) { index.value?.let { searchTitles(it, query) } }
     // 服务器那一路的结果走 rememberLoad（按词缓存）：返回时第一帧就是上次这个词的结果，页面够长，滚动位置才还原得了。
     var settled by rememberSaveable { mutableStateOf(query) }
     LaunchedEffect(query) { delay(220); settled = query }
     val remote = rememberLoad("search-remote", settled) { searchRemote(it, settled) }
-    val remoteHits = remote.value.takeIf { remoteResultsReady(settled, query, remote.valueKeys) } ?: RemoteHits(emptyList(), emptyList())
+    val remoteReady = remoteResultsReady(settled, query, remote.valueKeys)
+    val remoteHits = remember(index.value, remote.value, remoteReady, query) {
+        // 1.4.1：本地索引里的单集（「剧名 + 集号」直达的那一集在最前）+ 服务器兜底的，按 id 去重
+        val r = remote.value.takeIf { remoteReady } ?: RemoteHits(emptyList(), emptyList())
+        r.copy(episodes = com.gugaart.ui.screens.search.mergeEpisodes(com.gugaart.ui.screens.search.searchEpisodesLocal(index.value, query), r.episodes))
+    }
     // 演员：本地人名单（名字 / 拼音缩写）+ 服务器的人物搜索；打名字正好是某位演员 → 演员和 ta 的作品排在前面，缩写照旧片子在前
     val peopleIndex = rememberLoad("search-people") { com.gugaart.ui.screens.search.loadPeopleIndex(it) }
     val localPeople = remember(peopleIndex.value, query) { com.gugaart.ui.screens.search.searchPeopleLocal(peopleIndex.value.orEmpty(), query) }
@@ -755,7 +760,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
     val works = worksLoad.value.orEmpty().takeIf { star != null }.orEmpty()
     val field = remember { FocusRequester() }
     LaunchedEffect(graph.searchFocusTick) { runCatching { field.requestFocus() } }
-    val suggestions = hits.orEmpty().take(7)
+    val suggestions = remember(hits, people) { com.gugaart.ui.screens.search.suggestionsOf(hits.orEmpty(), people) }
     // 最近搜过 + 词云（按了 Enter / 打开了哪一条 / 点了词 = 记一笔）
     val recents = com.gugaart.ui.screens.search.rememberSearchRecents()
     val cloud = remember(index.value, recents.items) {
@@ -824,7 +829,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                                 }
                                 Key.Enter, Key.NumPadEnter -> {
                                     val hit = suggestions.getOrNull(picked)
-                                    if (!submitted && hit != null && picked > 0) openHit(hit.title.id) else submitted = query.isNotBlank()
+                                    if (!submitted && hit != null && picked > 0) openHit(hit.id) else submitted = query.isNotBlank()
                                     if (submitted) recents.add(query)
                                     true
                                 }
@@ -860,7 +865,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                     // 左栏：联想 / 最佳匹配
                     Column(Modifier.weight(DeskBrowseSpec.SEARCH_LEFT)) {
                         val best = titles.firstOrNull()
-                        if (star != null && (submitted || suggestions.isEmpty())) {
+                        if (star != null && (submitted || hits.orEmpty().isEmpty())) {
                             // 打的是演员的名字：最佳匹配是这位演员
                             DeskSection(null, "最佳匹配", "BEST MATCH")
                             Row(horizontalArrangement = Arrangement.spacedBy(dimens.gutter), verticalAlignment = Alignment.Bottom) {
@@ -872,10 +877,10 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                             }
                         } else if (submitted && best != null) {
                             DeskSection(null, "最佳匹配", "BEST MATCH")
-                            BestMatch(best) { openHit(best.title.id) }
+                            BestMatch(best, { e -> openHit(e.id) }) { openHit(best.title.id) }
                         } else {
                             DeskSection(null, "联想", "SUGGEST") { SectionNote("↑ ↓ 选择 · Enter 打开") }
-                            for ((i, h) in suggestions.withIndex()) SuggestRow(h, i == picked && picked > 0 || (preset.state == "typing" && i == picked)) { openHit(h.title.id) }
+                            for ((i, h) in suggestions.withIndex()) SuggestRow(h, i == picked && picked > 0 || (preset.state == "typing" && i == picked)) { openHit(h.id) }
                         }
                     }
                     // 右栏：结果
@@ -916,7 +921,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                         if (remoteHits.episodes.isNotEmpty()) {
                             DeskSection(null, "单集", "EPISODES", Modifier.padding(top = Guga.rem(2.4f))) { SectionNote("${remoteHits.episodes.size} 集") }
                             for ((i, e) in remoteHits.episodes.take(8).withIndex()) {
-                                DeskTocRow(Rules.episodeNo(i + 1), e.name, listOfNotNull(e.seriesName, e.episodeNo?.let { "第 $it 集" }).joinToString(" · "), e.art.thumb ?: e.art.backdrop, e.progress, { openHit(e.id) }, menu = e, highlight = Pinyin.match(e.name, query))
+                                DeskTocRow(Rules.episodeNo(i + 1), e.name, listOfNotNull(e.seriesName, e.episodeNo?.let { "第 $it 集" }).joinToString(" · "), e.art.thumb ?: e.art.backdrop, e.progress, { openHit(e.id) }, menu = e, highlight = com.gugaart.ui.search.SearchMatch.range(e.name, query))
                             }
                         }
                         // 缩写 / 片名：演员排在片子和单集后面
@@ -930,7 +935,7 @@ fun DesktopSearchScreen(q: String?, today: Today) {
 
 /** 最佳匹配：16:9 的图版（不是全窗），logo 压在图下沿，右下是一行斜体的栏目。 */
 @Composable
-private fun BestMatch(hit: TitleHit, onOpen: () -> Unit) {
+private fun BestMatch(hit: TitleHit, onDirect: (Title) -> Unit, onOpen: () -> Unit) {
     val colors = Guga.colors
     val t = hit.title
     val press = rememberPressState()
@@ -940,17 +945,18 @@ private fun BestMatch(hit: TitleHit, onOpen: () -> Unit) {
         Box(Modifier.matchParentSize().drawBehind { drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Transparent, 1f to colors.paper.copy(alpha = 0.86f))) })
         TitleLogo(t.name, t.art.logo, width = Guga.rem(22f), height = Guga.rem(8f), modifier = Modifier.align(Alignment.BottomStart).padding(Guga.rem(2f)), baseSize = rsp(3.2f), textOnly = LocalPreset.current.textTitles)
         Column(Modifier.align(Alignment.BottomEnd).padding(Guga.rem(2f)), horizontalAlignment = Alignment.End) {
-            BasicText(t.kicker(if (t.kind == Kind.Series) "剧集" else "电影").joinToString(" · "), style = Guga.note(rsp(1.3f), colors.dim), maxLines = 1)
+            BasicText(t.kicker(com.gugaart.ui.screens.search.searchKindLabel(t.kind)).joinToString(" · "), style = Guga.note(rsp(1.3f), colors.dim), maxLines = 1)
+            com.gugaart.ui.screens.search.originalHitText(hit, colors.spot)?.let { BasicText(it, Modifier.padding(top = Guga.rem(0.4f)).testTag("search-original"), style = Guga.song(rsp(1.3f), color = colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            com.gugaart.ui.screens.search.directTag(hit)?.let { tag -> com.gugaart.ui.screens.search.DirectTag(tag, Modifier.padding(top = Guga.rem(0.8f)).background(colors.inkWell), rsp(1.3f)) { onDirect(hit.direct!!) } }
             BasicText(listOfNotNull(if (t.kind == Kind.Series) t.count?.let { "全 $it 集" } else t.runtimeSec?.let { Rules.minutes(it) }, t.rating?.let { "$it 分" }).joinToString(" · "), Modifier.padding(top = Guga.rem(0.4f)), style = Guga.note(rsp(1.3f), colors.dim), maxLines = 1)
         }
     }
 }
 
-/** 联想的一行：片名（命中的字专色）+ 斜体小字；选中的一行垫一层淡底、行尾出 `Enter`。 */
+/** 联想的一行：名字（命中的字专色）+ 小字（类型 · 年份；原名命中时接「原名命中：…」；直达时「第 12 集」）；选中的一行垫一层淡底、行尾出 `Enter`。 */
 @Composable
-private fun SuggestRow(hit: TitleHit, picked: Boolean, onOpen: () -> Unit) {
+private fun SuggestRow(hit: com.gugaart.ui.screens.search.Suggestion, picked: Boolean, onOpen: () -> Unit) {
     val colors = Guga.colors
-    val t = hit.title
     val press = rememberPressState()
     val hover = rememberHover()
     val lit = picked || hover.over
@@ -963,14 +969,17 @@ private fun SuggestRow(hit: TitleHit, picked: Boolean, onOpen: () -> Unit) {
                 if (lit) drawRect(colors.ink.copy(alpha = 0.07f))
                 drawLine(colors.line, Offset(0f, size.height - 0.5.dp.toPx()), Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx())
             }
-            .pressable(press, label = t.name, focusable = false, onClick = onOpen)
+            .pressable(press, label = hit.name, focusable = false, onClick = onOpen)
             .padding(horizontal = Guga.rem(1f))
             .testTag(if (picked) "suggest-on" else "suggest-off"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            BasicText(highlighted(t.name, hit.range, colors.spot), Modifier.weight(1f, fill = false), style = Guga.song(rsp(1.8f)), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            BasicText(listOfNotNull(if (t.kind == Kind.Series) "剧集" else "电影", t.year?.toString()).joinToString(" · "), Modifier.padding(start = Guga.rem(1.2f)), style = Guga.note(rsp(1.2f), colors.faint), maxLines = 1)
+            BasicText(highlighted(hit.name, hit.range, colors.spot), Modifier.weight(1f, fill = false), style = Guga.song(rsp(1.8f)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(hit.note, Modifier.padding(start = Guga.rem(1.2f)), style = Guga.note(rsp(1.2f), colors.faint), maxLines = 1)
+            hit.title?.let { com.gugaart.ui.screens.search.originalHitText(it, colors.spot) }?.let {
+                BasicText(it, Modifier.padding(start = Guga.rem(1.2f)).weight(1f, fill = false).testTag("search-original"), style = Guga.song(rsp(1.3f), color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         if (lit) Kbd("Enter")
     }
@@ -986,7 +995,7 @@ private fun PersonCell(p: Person, width: Dp, query: String, onOpen: () -> Unit) 
         Box(Modifier.fillMaxWidth().aspectRatio(1f).deskFocusRing(press).pressGraphics(press).pressable(press, label = p.name, onClick = onOpen).border(1.dp, colors.line)) {
             CoverImage(p.photo, Modifier.fillMaxSize(), Framing(0.5f, 0.2f)) { HatchPlate(Rules.monogram(p.name, person = true), Modifier.fillMaxSize()) }
         }
-        BasicText(highlighted(p.name, Pinyin.match(p.name, query), colors.spot), Modifier.padding(top = Guga.rem(1f)), style = Guga.song(rsp(1.5f), FontWeight.Bold, if (hover.over) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(highlighted(p.name, com.gugaart.ui.search.SearchMatch.range(p.name, query), colors.spot), Modifier.padding(top = Guga.rem(1f)), style = Guga.song(rsp(1.5f), FontWeight.Bold, if (hover.over) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1012,7 +1021,7 @@ fun DesktopDiscoverScreen(today: Today) {
     val preset = LocalPreset.current
     val density = LocalDensity.current
     val load = rememberLoad("discover") { loadDiscover(it) }
-    val index = rememberLoad("search-index") { loadSearchIndex(it) }
+    val index = rememberLoad("search-index") { loadLibraryIndex(it) }
     var dip by remember { mutableIntStateOf(0) }
     val lucky = rememberLoad("lucky", dip) { if (dip == 0) null else loadLucky(it) }
     val data = load.value

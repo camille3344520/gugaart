@@ -31,6 +31,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,7 +54,7 @@ import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.play
 import com.gugaart.ui.screens.search.TitleHit
-import com.gugaart.ui.screens.search.loadSearchIndex
+import com.gugaart.ui.screens.search.loadLibraryIndex
 import com.gugaart.ui.screens.search.searchTitles
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.ui.LocalGraph
@@ -106,14 +107,14 @@ fun TvSearchScreen(q: String?, today: Today) {
     val chrome = LocalChrome.current
     val hour = LocalHour.current
     LaunchedEffect(Unit) { chrome.spot = null }
-    val index = rememberLoad("tv-search-index") { loadSearchIndex(it) }
+    val index = rememberLoad("tv-search-index") { loadLibraryIndex(it) }
     // 1.3.1：返回保持位置——打过的词 / 数字盘 / 字母盘上最后的键都记住（rememberSaveable，跟着返回栈条目走）；
     // 返回时词还在，本地索引（缓存）第一帧就排得出结果，焦点才落回原来那条（PageStates + RouteFocusMemory）。
     var query by rememberSaveable { mutableStateOf((preset.query ?: q).orEmpty().uppercase().take(TvSearchSpec.MAX_QUERY)) }
     var digits by rememberSaveable { mutableStateOf(false) }
     var lastKey by rememberSaveable { mutableStateOf("key-A") }
     val titles = index.value?.titles
-    val hits = remember(titles, query) { titles?.let { searchTitles(it, query.trim(), TvSearchSpec.MAX_ROWS) }.orEmpty() }
+    val hits = remember(index.value, query) { index.value?.let { searchTitles(it, query.trim(), TvSearchSpec.MAX_ROWS) }.orEmpty() }
     // 演员（用户 2026-11-16：「搜索也支持按演员名字搜索，不过缩写的话还是影片排在前面」）：本地人名单按名字 / 拼音缩写找；
     // 电视上打的多是缩写 → 片子在前、演员接在后面；从「最近搜过」点进来的名字正好是某位演员 → 演员在前
     val peopleIndex = rememberLoad("tv-search-people") { com.gugaart.ui.screens.search.loadPeopleIndex(it) }
@@ -190,9 +191,12 @@ fun TvSearchScreen(q: String?, today: Today) {
                             Column(Modifier.weight(1f)) {
                                 TitleLogo(t.name, t.art.logo, 440.dp, 96.dp, baseSize = 60.sp, textOnly = preset.textTitles)
                                 BasicText(
-                                    (t.kicker(if (t.kind == Kind.Movie) "电影" else "剧集") + listOfNotNull(t.rating?.let { "★ $it" })).joinToString(" · "),
+                                    (t.kicker(com.gugaart.ui.screens.search.searchKindLabel(t.kind)) + listOfNotNull(t.rating?.let { "★ $it" })).joinToString(" · "),
                                     Modifier.padding(top = 16.dp, bottom = 8.dp), style = Guga.song(24.sp, FontWeight.Bold, colors.spot, letterSpacing = 0.16.em), maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 )
+                                com.gugaart.ui.screens.search.originalHitText(best, colors.spot)?.let {
+                                    BasicText(it, Modifier.padding(bottom = 10.dp).testTag("search-original"), style = Guga.song(24.sp, FontWeight.SemiBold, colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                                 t.lead?.let { BasicText(it, Modifier.padding(bottom = 22.dp), style = Guga.song(25.sp, FontWeight.SemiBold, colors.dim, lineHeight = 38.sp), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                     if (t.kind == Kind.Movie) {
@@ -204,13 +208,15 @@ fun TvSearchScreen(q: String?, today: Today) {
                                     } else {
                                         TvButton("打开", { openHit(t.id) }, backToKeys, icon = GuguIcon.Info, key = "best-detail")
                                     }
+                                    val direct = best.direct
+                                    com.gugaart.ui.screens.search.directTag(best)?.let { tag -> if (direct != null) TvButton(tag, { openHit(direct.id) }, icon = GuguIcon.Play, key = "best-direct") }
                                 }
                             }
                         }
                         val rest = hits.drop(1).take(if (people.isEmpty()) 2 else 1)
                         if (rest.isNotEmpty()) {
                             TvSearchHeader("也含「${query.trim()}」", "MATCHES", null)
-                            for (h in rest) TvSearchRow(h, backToKeys) { openHit(h.title.id) }
+                            for (h in rest) TvSearchRow(h, backToKeys) { openHit(h.direct?.id ?: h.title.id) }
                         }
                         if (people.isNotEmpty()) {
                             TvSearchHeader("演员", "PEOPLE", "${people.size} 位")
@@ -226,7 +232,8 @@ fun TvSearchScreen(q: String?, today: Today) {
                         }
                         if (shownTitles.isNotEmpty()) {
                             TvSearchHeader("含「${query.trim()}」", "MATCHES", "${hits.size} 条")
-                            for (h in shownTitles) TvSearchRow(h, backToKeys) { openHit(h.title.id) }
+                            // 打了集号（「仙逆 12」「XIANNIS01E12」）= 要的是那一集：电视一行只有一个「确定」，有直达的行确定就开那一集
+                            for (h in shownTitles) TvSearchRow(h, backToKeys) { openHit(h.direct?.id ?: h.title.id) }
                         }
                         if (!peopleFirst && hits.isNotEmpty() && shownPeople.isNotEmpty()) {
                             TvSearchHeader("演员", "PEOPLE", "${people.size} 位")
@@ -266,9 +273,17 @@ private fun TvSearchRow(hit: TitleHit, modifier: Modifier, onOpen: () -> Unit) {
             Box(Modifier.size(66.dp, 99.dp).border(1.dp, colors.line)) { CoverImage(t.art.poster, Modifier.fillMaxSize(), Framing(0.5f, 0.5f)) }
             Column(Modifier.weight(1f)) {
                 BasicText(highlighted(t.name, hit.range, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot), style = Guga.song(34.sp, FontWeight.Black, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val sub = ink.copy(alpha = if (focused) 0.7f else 0.44f)
+                val mark = if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot
                 BasicText(
-                    listOfNotNull(if (t.kind == Kind.Movie) "电影" else "剧集", t.year?.toString(), t.rating?.let { "★ $it" }).joinToString(" · "),
-                    Modifier.padding(top = 4.dp), style = Guga.song(22.sp, color = ink.copy(alpha = if (focused) 0.7f else 0.44f)), maxLines = 1,
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        append(listOfNotNull(com.gugaart.ui.screens.search.searchKindLabel(t.kind), t.year?.toString(), t.rating?.let { "★ $it" }, com.gugaart.ui.screens.search.directTag(hit)?.let { "$it →" }).joinToString(" · "))
+                        com.gugaart.ui.screens.search.originalHitText(hit, mark)?.let { o ->
+                            append("　")
+                            withStyle(androidx.compose.ui.text.SpanStyle(color = ink)) { append(o) }
+                        }
+                    },
+                    Modifier.padding(top = 4.dp), style = Guga.song(22.sp, color = sub), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
             BasicText(Pinyin.initials(t.name).uppercase().take(10), style = Guga.numeral(26.sp, ink.copy(alpha = 0.7f), letterSpacing = 0.14.em), maxLines = 1)

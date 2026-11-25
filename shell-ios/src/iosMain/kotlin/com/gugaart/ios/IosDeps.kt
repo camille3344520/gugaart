@@ -65,6 +65,8 @@ internal fun iosDeps(player: com.gugugaga.app.player.PlayerPlatform?): PlatformD
     val deviceId = local.get(LocalKeys.DEVICE_ID) ?: "gugaart-${NSUUID().UUIDString.lowercase()}".also { local.set(LocalKeys.DEVICE_ID, it) }
     val machine = machineId()
     val system = UIDevice.currentDevice.systemVersion
+    // 片库搜索的本地索引（1.4.1，docs/search.md §1）：按「服务器 + 用户」一份，文件名是键的 SHA-256，里面没有令牌
+    com.gugaart.ui.search.SearchIndexStore.disk = FileBlobCache("$caches/search-index", maxEntries = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_ENTRIES, maxBytes = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_BYTES)
     return PlatformDeps(
         uiMode = UiMode.Phone,
         identity = ClientInfo(device = "iPhone · $machine", deviceId = deviceId, version = BuildInfo.APP_VERSION),

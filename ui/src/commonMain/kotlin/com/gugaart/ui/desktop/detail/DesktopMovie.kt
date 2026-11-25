@@ -60,15 +60,17 @@ import com.gugaart.ui.screens.LocalChrome
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.detail.movieNote
 import com.gugaart.ui.screens.detail.sizeText
-import com.gugaart.ui.screens.detail.specLine
+import com.gugaart.ui.screens.detail.SourceDot
+import com.gugaart.ui.screens.detail.SourceProgress
+import com.gugaart.ui.screens.detail.SourceRowText
+import com.gugaart.ui.screens.detail.SourceTags
+import com.gugaart.ui.screens.detail.rememberSourcesState
 import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.toggleFavorite
 import com.gugaart.ui.screens.togglePlayed
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.data.rememberImage
-import com.gugugaga.app.nav.Route
 import com.gugugaga.app.ui.LocalGraph
-import com.gugugaga.core.MediaSourceInfo
 import com.gugugaga.core.MediaStream
 import com.gugugaga.ds.icons.GuguIcon
 import com.gugugaga.ds.icons.Icon
@@ -76,17 +78,14 @@ import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
 import com.gugugaga.ds.theme.LocalWindowDp
 
-/** 选择器的一项（版本 / 音轨 / 字幕）：名字 + 一行小字。[index]：媒体流的 Index（版本用不上 = -1；字幕「关闭」= -1）。 */
-data class PickOption(val name: String, val note: String, val index: Int = -1)
+/**
+ * 选择器的一项（版本 / 音轨 / 字幕）：名字 + 一行小字。[index]：媒体流的 Index（版本用不上 = -1；字幕「关闭」= -1）。
+ * [source]：版本这一项的小签（「推荐」「另一份文件」）；音轨 / 字幕 = null。
+ */
+data class PickOption(val name: String, val note: String, val index: Int = -1, val source: SourceRowText? = null)
 
-/** 版本的名字和小字：「1080p · H264 · SDR」+「1.85 GB · MP4 · 1.8 Mbps」，都来自真实媒体源；什么都没有 → 「默认版本」。纯函数。 */
-fun versionOption(s: MediaSourceInfo): PickOption {
-    val v = s.mediaStreams.firstOrNull { it.type == "Video" }
-    val spec = specLine(s)
-    val name = listOfNotNull(spec?.substringBefore(" · "), v?.codec?.uppercase(), spec?.substringAfter(" · ", "")?.takeIf { it.isNotEmpty() }).joinToString(" · ")
-    val note = listOfNotNull(sizeText(s.size), s.container?.uppercase()?.takeIf { it.isNotEmpty() }, s.bitrate?.takeIf { it > 0 }?.let { "${kotlin.math.round(it / 100_000.0) / 10} Mbps" }).joinToString(" · ")
-    return PickOption(name.ifEmpty { s.name?.takeIf { it.isNotBlank() } ?: "默认版本" }, note)
-}
+/** 版本的一项（1.5.0「源」）：名字 = Emby 给这个版本起的名（没有 → 规格头一段），小字 = 「4K · HDR10 · DTS-HD MA · 直连」，带小签。 */
+fun versionOption(r: SourceRowText): PickOption = PickOption(r.title, r.spec, source = r)
 
 /** 音轨：「AAC stereo (默认)」+「AAC · 2 声道 · 中文」。纯函数。 */
 fun audioOption(s: MediaStream): PickOption = PickOption(
@@ -124,8 +123,9 @@ fun DesktopMovie(movie: Title, today: Today) {
     val fav = chrome.isFavorite(movie)
     val played = chrome.isPlayed(movie.id, movie.played)
 
-    var version by remember(movie.id) { mutableIntStateOf(0) }
-    val source = movie.sources.getOrNull(version) ?: movie.sources.firstOrNull()
+    // 版本 = 「源」（本台的版本 + 没被合并的重复片）：先列条目自带的，重复片到了接在下面；选中的决定音轨 / 字幕 / 徽章 / 开播
+    val sources = rememberSourcesState(movie)
+    val source = sources.selected?.mediaSource ?: movie.sources.firstOrNull()
     val audios = remember(source) { source?.mediaStreams.orEmpty().filter { it.type == "Audio" }.map(::audioOption) }
     val subs = remember(source) { listOf(PickOption("关闭", "")) + com.gugaart.ui.player.chineseSubtitlesFirst(source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }).map(::subtitleOption) }
     var audio by remember(source) { mutableIntStateOf(0) }
@@ -135,10 +135,8 @@ fun DesktopMovie(movie: Title, today: Today) {
 
     val playNow = {
         graph.playback.play(
-            Route.Play(
-                movie.id,
-                mediaSourceId = source?.id?.takeIf { it.isNotEmpty() && movie.sources.size > 1 },
-                startMs = movie.positionSec?.takeIf { movie.progress > 0f }?.times(1000),
+            sources.playRoute(
+                resumeMs = movie.positionSec?.takeIf { movie.progress > 0f }?.times(1000),
                 audio = audios.getOrNull(audio)?.index?.takeIf { audios.size > 1 },
                 subtitle = subs.getOrNull(sub)?.index?.takeIf { subs.size > 2 || sub == 0 },
             ),
@@ -217,11 +215,17 @@ fun DesktopMovie(movie: Title, today: Today) {
                     var at by remember { mutableStateOf(Offset.Zero) }
                     DAction("更多", { DesktopContextMenu.open(movie, at) }, Modifier.onGloballyPositioned { at = it.positionInWindow() }, tag = "d-more") { Icon(GuguIcon.Ellipsis, colors.ink, Guga.rem(1.8f)) }
                 }
-                // 版本 / 音轨 / 字幕：三行选择器
-                Column(Modifier.padding(top = Guga.rem(2.8f)).testTag("d-pickers")) {
+                // 版本 / 音轨 / 字幕：三行选择器。整组压在后面的简介之上（zIndex）：版本一多，推开的纸片会伸进简介那一块
+                Column(Modifier.padding(top = Guga.rem(2.8f)).zIndex(1f).testTag("d-pickers")) {
                     Rule(strong = true)
-                    val versions = movie.sources.map(::versionOption).ifEmpty { listOf(PickOption("默认版本", "媒体信息还没取到")) }
-                    PickRow("版本", versions, version.coerceIn(0, versions.lastIndex), openPick == "ver", { openPick = if (openPick == "ver") null else "ver" }, { version = it; openPick = null }, force = state == "ver")
+                    val rows = sources.sources
+                    val versions = rows.map { versionOption(sources.rowText(it)) }.ifEmpty { listOf(PickOption("默认版本", "媒体信息还没取到")) }
+                    // 有别的服务器参与时这一栏叫「源」，每行前面是服务器名；单子最后是别台的进展（B2-UI）
+                    PickRow(
+                        sources.sectionTitle, versions, rows.indexOfFirst(sources::isSelected).coerceIn(0, versions.lastIndex), openPick == "ver",
+                        { openPick = if (openPick == "ver") null else "ver" }, { i -> rows.getOrNull(i)?.let(sources::pick); openPick = null }, force = state == "ver",
+                        footer = { SourceProgress(sources, rsp(1.15f), Guga.rem(0.55f), Modifier.padding(horizontal = Guga.rem(1.6f), vertical = Guga.rem(0.8f)), lineGap = Guga.rem(0.4f)) },
+                    )
                     if (audios.isNotEmpty()) PickRow("音轨", audios, audio.coerceIn(0, audios.lastIndex), openPick == "audio", { openPick = if (openPick == "audio") null else "audio" }, { audio = it; openPick = null })
                     PickRow("字幕", subs, sub.coerceIn(0, subs.lastIndex), openPick == "sub", { openPick = if (openPick == "sub") null else "sub" }, { sub = it; openPick = null })
                 }
@@ -309,7 +313,7 @@ private fun TiltPoster(t: Title, modifier: Modifier = Modifier) {
 
 /** 选择器的一行：标签 | 当前项（名字 + 小字）| 下拉箭头（只有一项时没有箭头、点不开）。推开的纸片盖在下面的行上。 */
 @Composable
-private fun PickRow(label: String, options: List<PickOption>, selected: Int, open: Boolean, onToggle: () -> Unit, onPick: (Int) -> Unit, force: Boolean = false) {
+private fun PickRow(label: String, options: List<PickOption>, selected: Int, open: Boolean, onToggle: () -> Unit, onPick: (Int) -> Unit, force: Boolean = false, footer: (@Composable () -> Unit)? = null) {
     val colors = Guga.colors
     val cur = options[selected]
     val many = options.size > 1
@@ -317,8 +321,10 @@ private fun PickRow(label: String, options: List<PickOption>, selected: Int, ope
     Row(Modifier.fillMaxWidth().then(if (many || force) Modifier.deskFocusRing(press).pressable(press, label = "$label：${cur.name}", onClick = onToggle) else Modifier).padding(vertical = Guga.rem(1.3f)).testTag("d-pick-$label"), verticalAlignment = Alignment.CenterVertically) {
         BasicText(label, Modifier.width(Guga.rem(7.2f)), style = Guga.song(rsp(1.3f), color = colors.faint), maxLines = 1)
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            cur.source?.let { SourceDot(it, Guga.rem(0.7f), gap = Guga.rem(0.7f)) }
             BasicText(cur.name, Modifier.weight(1f, fill = false), style = Guga.song(rsp(1.5f), FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (cur.note.isNotEmpty()) BasicText(cur.note, Modifier.padding(start = Guga.rem(0.8f)), style = Guga.song(rsp(1.2f), color = colors.faint), maxLines = 1)
+            cur.source?.let { SourceTags(it, rsp(1.05f), 1.dp, gap = Guga.rem(0.6f)) }
+            if (cur.note.isNotEmpty()) BasicText(cur.note, Modifier.padding(start = Guga.rem(0.8f)).then(if (cur.source != null) Modifier.weight(1f, fill = false) else Modifier), style = Guga.song(rsp(1.2f), color = colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (many) Icon(if (open) GuguIcon.ChevronUp else GuguIcon.ChevronDown, colors.ink, Guga.rem(1.4f))
     }
@@ -326,7 +332,15 @@ private fun PickRow(label: String, options: List<PickOption>, selected: Int, ope
     if (open && (many || force)) {
         Box(Modifier.zIndex(4f).fillMaxWidth().height(0.dp).wrapContentHeight(Alignment.Top, unbounded = true)) {
             DSlip(Modifier.padding(start = Guga.rem(7.2f)).fillMaxWidth().testTag("d-pick-list")) {
-                options.forEachIndexed { i, o -> DSlipRow(o.name, null, i == selected, { onPick(i) }, note = o.note) }
+                options.forEachIndexed { i, o ->
+                    val r = o.source
+                    DSlipRow(
+                        o.name, null, i == selected, { onPick(i) }, note = o.note,
+                        tags = if (r == null) null else { onInk -> SourceTags(r, rsp(1.05f), 1.dp, onInk = onInk, gap = Guga.rem(0.6f)) },
+                        lead = if (r?.server == null) null else { onInk -> SourceDot(r, Guga.rem(0.65f), onInk = onInk, gap = Guga.rem(0.65f)) },
+                    )
+                }
+                footer?.invoke()
             }
         }
     }

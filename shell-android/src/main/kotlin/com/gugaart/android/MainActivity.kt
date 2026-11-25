@@ -406,6 +406,10 @@ class MainActivity : ComponentActivity() {
             android.net.TrafficStats.getUidRxBytes(android.os.Process.myUid()).takeIf { it != android.net.TrafficStats.UNSUPPORTED.toLong() }
         }
         val deviceId = local.get(LocalKeys.DEVICE_ID) ?: "gugaart-${UUID.randomUUID()}".also { local.set(LocalKeys.DEVICE_ID, it) }
+        // 片库搜索的本地索引（1.4.1，docs/search.md §1）：按「服务器 + 用户」一份，文件名是键的 SHA-256，里面没有令牌
+        com.gugaart.ui.search.SearchIndexStore.disk = FileBlobCache(File(cacheDir, "search-index"), maxEntries = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_ENTRIES, maxBytes = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_BYTES)
+        // 1.5.0 跨服务器验收（debug 包 -Pgugaart.mockServers）：几台 Mock 预先存成几台服务器；release 的 MOCK_ACCOUNT 是空串 = 什么都不做
+        com.gugaart.ui.data.DevMockServers.urls = com.gugaart.ui.data.DevMockServers.fromMockAccountJson(BuildConfig.MOCK_ACCOUNT)
         return PlatformDeps(
             uiMode = if (tv) UiMode.Tv else UiMode.Phone,
             identity = ClientInfo(device = Build.MODEL ?: "Android", deviceId = deviceId, version = BuildConfig.VERSION_NAME),

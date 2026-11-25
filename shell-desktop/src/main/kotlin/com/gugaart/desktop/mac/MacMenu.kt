@@ -9,13 +9,17 @@ import com.gugaart.ui.desktop.DesktopCommand
 import com.gugaart.ui.desktop.DesktopCommandSink
 import com.gugaart.ui.desktop.DesktopCommands
 import com.gugaart.ui.desktop.PlayerCommandSink
+import com.gugaart.ui.servers.PingState
+import com.gugaart.ui.servers.ServerEntry
+import com.gugaart.ui.servers.key
+import com.gugaart.ui.servers.serverTitle
 import com.gugaart.ui.wide.WideTab
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.player.PlayerKeyCommand
 
 /**
  * M2-4（ADR 0004 §2.4）：macOS 应用菜单栏的**模型**（纯函数，单测）+ 渲染。
- * 我们只出六个菜单（文件 / 编辑 / 显示 / 播放 / 窗口 / 帮助），命令与 ⌘ 键照 `design/macos/notes.md` §2 和命令表 [DesktopCommand]；
+ * 我们只出七个菜单（文件 / 编辑 / 显示 / 片库 / 播放 / 窗口 / 帮助；「片库」是 1.5.0 的换服务器），命令与 ⌘ 键照 `design/macos/notes.md` §2 和命令表 [DesktopCommand]；
  * 最前面那个应用菜单（咕咕嘎嘎）是**系统的**：「关于 / 设置… ⌘, / 退出 ⌘Q」由 `MacSession.installAppHandlers` 经
  * `java.awt.Desktop` 的处理器接上，这里不再自己出一个同名菜单（以前出了，菜单栏上就是两个「咕咕嘎嘎」，D-lead-39），
  * 「检查更新…」放进「帮助」；
@@ -35,6 +39,8 @@ data class MacMenuItem(
     val checked: Boolean = false,
     /** 不在命令表里、但要有快捷键的那一项（「关闭窗口」⌘W，D-lead-14）。 */
     val keys: String? = null,
+    /** 子菜单（「片库 › 换服务器」）：有它就是一个子菜单，[label] 是它的标题。 */
+    val submenu: List<MacMenuItem>? = null,
 ) {
     /** 菜单上印的 ⌘ 键（和命令表一致）。 */
     val shortcut: String? get() = cmd?.cmdHint ?: keys
@@ -43,8 +49,26 @@ data class MacMenuItem(
 data class MacMenu(val title: String, val items: List<MacMenuItem>)
 
 object MacMenuModel {
-    /** [reprint]：「付印新刊」有没有页面接着（只在首页挂上，[DesktopCommandSink.reprintReady]）；没有就灰，照「筛选」的待遇。 */
-    fun items(route: Route, tab: WideTab?, playing: Boolean, pip: Boolean = false, pipActive: Boolean = false, reprint: Boolean = true): List<MacMenu> {
+    /** 「片库 › 换服务器」里一台的动作名：`server:<serverId>/<userId>`（[MacSession] 交给 `DesktopServerMenu.switchToKey`）。 */
+    const val SERVER_ACTION = "server:"
+
+    /**
+     * 「片库 › 换服务器」的子菜单：每台一项（正在用的那台打勾），最后「添加服务器…」。名字 = 备注，没有就服务器名；
+     * 同一台存了几个账号时后面带账号名；连不上的那台后面写「（连不上）」。纯函数，有单测。
+     */
+    fun serverItems(servers: List<ServerEntry>): List<MacMenuItem> {
+        val repeated = servers.groupingBy { it.serverId }.eachCount().filterValues { it > 1 }.keys
+        return servers.map { e ->
+            val name = serverTitle(e) + (if (e.serverId in repeated) " · ${e.userName}" else "") + (if (e.ping == PingState.Offline) "（连不上）" else "")
+            MacMenuItem(name, action = SERVER_ACTION + e.key, checked = e.isCurrent)
+        } + MacMenuItem("添加服务器…", action = "add-server")
+    }
+
+    /**
+     * [reprint]：「付印新刊」有没有页面接着（只在首页挂上，[DesktopCommandSink.reprintReady]）；没有就灰，照「筛选」的待遇。
+     * [servers]：已保存的服务器（数据层的列表，当前那台在前）——「片库 › 换服务器」列出全部（1.5.0）。
+     */
+    fun items(route: Route, tab: WideTab?, playing: Boolean, pip: Boolean = false, pipActive: Boolean = false, reprint: Boolean = true, servers: List<ServerEntry> = emptyList()): List<MacMenu> {
         val play = playing
         return listOf(
             MacMenu(
@@ -72,6 +96,14 @@ object MacMenuModel {
                     MacMenuItem("返回", cmd = DesktopCommand.Back),
                     MacMenuItem("前进", cmd = DesktopCommand.Forward, enabled = DesktopCommands.enabled(DesktopCommand.Forward, route, tab)),
                     MacMenuItem("筛选", cmd = DesktopCommand.Filter, enabled = DesktopCommands.enabled(DesktopCommand.Filter, route, tab)),
+                ),
+            ),
+            // 1.5.0：换服务器。子菜单列出全部（当前打勾）；「服务器列表…」⌘⇧S = 顶栏胶囊的下拉（带在线状态、搜索、改备注 / 删除）
+            MacMenu(
+                "片库",
+                listOf(
+                    MacMenuItem("换服务器", submenu = serverItems(servers), enabled = !play),
+                    MacMenuItem("服务器列表…", cmd = DesktopCommand.Servers, enabled = DesktopCommands.enabled(DesktopCommand.Servers, route, tab)),
                 ),
             ),
             MacMenu(
@@ -123,14 +155,30 @@ object MacMenuModel {
  * [onAction] 分发非命令表动作；命令走 [DesktopCommandSink] / [PlayerCommandSink]。
  */
 @Composable
-fun FrameWindowScope.MacMenuBar(route: Route, tab: WideTab?, playing: Boolean, onAction: (String) -> Unit, pip: Boolean = false, pipActive: Boolean = false) {
+fun FrameWindowScope.MacMenuBar(route: Route, tab: WideTab?, playing: Boolean, onAction: (String) -> Unit, pip: Boolean = false, pipActive: Boolean = false, servers: List<ServerEntry> = emptyList()) {
     // 在组合里读：首页挂上 / 撤下付印的回调时菜单跟着变灰 / 变亮
     val reprint = DesktopCommandSink.reprintReady?.invoke() == true
-    val menus = MacMenuModel.items(route, tab, playing, pip, pipActive, reprint)
+    val menus = MacMenuModel.items(route, tab, playing, pip, pipActive, reprint, servers)
     MenuBar {
         for (m in menus) {
             Menu(m.title) {
                 for (item in m.items) {
+                    // 子菜单（「片库 › 换服务器」）：每台一个勾选项（正在用的那台打勾），「添加服务器…」前面一道分隔线
+                    val sub = item.submenu
+                    if (sub != null) {
+                        Menu(item.label, enabled = item.enabled) {
+                            for (s in sub) {
+                                val action = s.action ?: continue
+                                if (action.startsWith(MacMenuModel.SERVER_ACTION)) {
+                                    CheckboxItem(s.label, checked = s.checked, onCheckedChange = { onAction(action) })
+                                } else {
+                                    Separator()
+                                    Item(s.label, onClick = { onAction(action) })
+                                }
+                            }
+                        }
+                        continue
+                    }
                     // 画中画是勾选项（开着打勾）；点了和别的动作一样交给 onAction
                     if (item.action == "pip") {
                         CheckboxItem(item.label, checked = item.checked, enabled = item.enabled, onCheckedChange = { onAction("pip") })
@@ -163,7 +211,9 @@ fun FrameWindowScope.MacMenuBar(route: Route, tab: WideTab?, playing: Boolean, o
 internal fun macCmdShortcut(cmd: DesktopCommand?): KeyShortcut? {
     val hint = cmd?.cmdHint ?: return null
     if (!hint.startsWith("⌘")) return null
-    val key = when (hint.removePrefix("⌘")) {
+    // ⌘⇧S（换服务器）：⌘ + ⇧ + 键
+    val shift = hint.startsWith("⌘⇧")
+    val key = when (hint.removePrefix("⌘").removePrefix("⇧")) {
         "K" -> Key.K
         "," -> Key.Comma
         "R" -> Key.R
@@ -175,7 +225,8 @@ internal fun macCmdShortcut(cmd: DesktopCommand?): KeyShortcut? {
         "3" -> Key.Three
         "4" -> Key.Four
         "5" -> Key.Five
+        "S" -> Key.S
         else -> null
     } ?: return null
-    return KeyShortcut(key, meta = true)
+    return KeyShortcut(key, meta = true, shift = shift)
 }

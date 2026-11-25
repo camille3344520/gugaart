@@ -436,7 +436,7 @@ private fun ShortcutTable(modifier: Modifier = Modifier) {
         }
         val mod = LocalDesktopHost.current.modifier
         BasicText(
-            "别处：${DesktopCommand.Search.hint(mod) ?: "Ctrl K"} 搜索 · ${DesktopCommand.Settings.hint(mod) ?: "Ctrl ,"} 设置 · ${DesktopCommand.Filter.hint(mod) ?: "Ctrl F"} 筛选 · 详情页 V 收藏 / W 标记已看 / [ ] 换季 / Enter 播放",
+            "别处：${DesktopCommand.Search.hint(mod) ?: "Ctrl K"} 搜索 · ${DesktopCommand.Settings.hint(mod) ?: "Ctrl ,"} 设置 · ${DesktopCommand.Filter.hint(mod) ?: "Ctrl F"} 筛选 · ${DesktopCommand.Servers.hint(mod) ?: "Ctrl Shift S"} 换服务器 · 详情页 V 收藏 / W 标记已看 / [ ] 换季 / Enter 播放",
             Modifier.padding(top = Guga.rem(1.4f)), style = Guga.note(rsp(1.15f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         // macOS：多一张 ⌘ 键位表（内容 = cmdHint 非空的命令；M2-3）

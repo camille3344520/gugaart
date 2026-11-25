@@ -94,6 +94,19 @@ object PlayerRestart {
             // 字幕关着的（null）就保持关：-1
             subtitleIndex = snap.subtitleIndex ?: -1,
         )
+        // 1.5.0 B3：放着别台的源 → 新控制器也要用那台的客户端（条目 id 是那台的）
+        play.remote?.let { r -> RemotePlay.handOff(RemoteHandoff(play.homeItemId, r.serverId, r.serverName, r.itemId, snap.sourceId)) }
         tick++
+    }
+
+    /**
+     * 换到另一个条目的源（1.5.0「源」：同一台上没被 Emby 合并的重复片 = 另一个条目 id）：上游 `setSource` 只换得了同一条目里的片源，
+     * 所以在当前位置重开那一个条目（音轨 / 字幕交给设置重新选），路由跟着换成它（返回、「正在播放」认的是路由里的条目）。
+     */
+    fun switchItem(play: PlaySession, graph: AppGraph, itemId: String, mediaSourceId: String?) {
+        val at = play.controller.clock.value.positionMs.toLong().coerceAtLeast(0L)
+        pending = PlayRequest(itemId = itemId, mediaSourceId = mediaSourceId?.takeIf { it.isNotEmpty() }, startMs = at)
+        tick++
+        graph.nav.replace(com.gugugaga.app.nav.Route.Play(itemId, mediaSourceId = mediaSourceId?.takeIf { it.isNotEmpty() }, startMs = at))
     }
 }

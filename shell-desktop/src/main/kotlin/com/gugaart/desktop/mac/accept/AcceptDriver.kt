@@ -403,6 +403,30 @@ internal class AcceptDriver(private val windowOf: () -> ComposeWindow?, val out:
         true
     }
 
+    /** 顶层菜单 [title] 下子菜单 [subTitle] 里的条目：标题、可用、打勾（NSMenuItem.state == on）。1.5.0「片库 › 换服务器」用。 */
+    fun nestedMenuItems(title: String, subTitle: String): List<Triple<String, Boolean, Boolean>> = Objc.onMain {
+        val sub = nestedMenu(title, subTitle) ?: return@onMain emptyList()
+        Objc.array(Objc.msg(sub, "itemArray")).map { Triple(Objc.string(Objc.msg(it, "title")) ?: "?", Objc.msgBool(it, "isEnabled"), Objc.msgLong(it, "state") == 1L) }
+    }
+
+    /** 真的点子菜单里的一条（同 [clickMenuItem]，多一层）。 */
+    fun clickNestedMenuItem(title: String, subTitle: String, itemTitle: String): Boolean = Objc.onMain {
+        val sub = nestedMenu(title, subTitle) ?: return@onMain false
+        val idx = Objc.array(Objc.msg(sub, "itemArray")).indexOfFirst { Objc.string(Objc.msg(it, "title")) == itemTitle }
+        if (idx < 0) return@onMain false
+        Objc.send(sub, "performActionForItemAtIndex:", idx)
+        true
+    }
+
+    private fun nestedMenu(title: String, subTitle: String): Pointer? {
+        val app = Objc.msg(Objc.cls("NSApplication"), "sharedApplication")!!
+        val menu = Objc.msg(app, "mainMenu") ?: return null
+        val top = Objc.array(Objc.msg(menu, "itemArray")).firstOrNull { Objc.string(Objc.msg(it, "title")) == title } ?: return null
+        val sub = Objc.msg(top, "submenu") ?: return null
+        val item = Objc.array(Objc.msg(sub, "itemArray")).firstOrNull { Objc.string(Objc.msg(it, "title")) == subTitle } ?: return null
+        return Objc.msg(item, "submenu")
+    }
+
     /** Dock 图标菜单的条目（M2-10；Taskbar 的 PopupMenu）。 */
     fun dockMenuLabels(): List<String> = runCatching {
         val tb = java.awt.Taskbar.getTaskbar()

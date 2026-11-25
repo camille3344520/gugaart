@@ -33,6 +33,9 @@ enum class DesktopCommand(val label: String, val ctrlHint: String?, val cmdHint:
     Filter("筛选", "Ctrl F", "⌘F"),
     Favorite("收藏 · 盖章", "V", "V"),
     Played("标记已看", "W", "W"),
+
+    /** 1.5.0：顶栏服务器胶囊的下拉（[DesktopServerMenu]）开 / 关。 */
+    Servers("换服务器…", "Ctrl Shift S", "⌘⇧S"),
 }
 
 /** 提示文字写 Ctrl 还是 ⌘（由壳提供的 [LocalDesktopHost] 决定）。 */
@@ -102,6 +105,8 @@ object DesktopCommands {
     fun enabled(cmd: DesktopCommand, route: Route, tab: WideTab?): Boolean = when (cmd) {
         DesktopCommand.Forward -> false
         DesktopCommand.Filter -> route is Route.Library
+        // 播放器里没有顶栏（胶囊不在）：不开
+        DesktopCommand.Servers -> route !is Route.Play
         else -> true
     }
 
@@ -141,6 +146,13 @@ object DesktopCommands {
                 graph.togglePlayed(chrome, t.id, chrome.isPlayed(t.id, t.played))
                 true
             } ?: false
+            DesktopCommand.Servers -> {
+                if (graph.nav.route is Route.Play || graph.session.session.value == null) return false
+                DesktopContextMenu.close()
+                DesktopAccountMenu.closeAll()
+                DesktopServerMenu.toggle()
+                true
+            }
         }
     }
 

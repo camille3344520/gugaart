@@ -1,6 +1,7 @@
 package com.gugaart.desktop.mac
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -154,6 +155,8 @@ internal class MacSession private constructor(val options: MacOptions) {
                 undecorated = false,
                 onPreviewKeyEvent = { PlayerKeyRouter.dispatch(it) },
             ) {
+                // 1.5.0：「片库 › 换服务器」列出全部已保存的服务器（和顶栏胶囊同一份数据层列表）
+                val savedServers by androidx.compose.runtime.remember(graph) { com.gugaart.ui.servers.sharedServerSwitcher(graph) }.entries.collectAsState()
                 // M2-4：系统菜单栏（七个菜单；命令走命令表 / 播放接收者，不碰引擎）
                 MacMenuBar(
                     route = graph.nav.route,
@@ -163,6 +166,7 @@ internal class MacSession private constructor(val options: MacOptions) {
                     // A10：「播放 › 画中画」按能力出现，勾选跟着系统的画中画
                     pip = pictureInPicture != null,
                     pipActive = pictureInPicture?.active == true,
+                    servers = savedServers,
                 )
                 // M2-10：Dock 续看随会话就绪 / 切换刷新（启动时会话还没恢复，先印搜索+付印，恢复后补续看）
                 LaunchedEffect(Unit) {
@@ -275,6 +279,8 @@ internal class MacSession private constructor(val options: MacOptions) {
                         // 画中画小窗自己的播放 / 暂停、关小窗 = 暂停、进度条和 ±跳：走这一页的控制器（和键盘、「正在播放」同一条路）
                         engines?.bindPipPlayback(it.controller)
                     },
+                    // 验收缝：根界面的那一个画报设置 store 交给运行器（改设置要改界面正在用的那一份）
+                    com.gugaart.ui.screens.settings.LocalGugaSettingsSink provides { s -> accept?.onSettingsStore(s) },
                 ) {
                     // 视频层在 Compose 层之下（ADR 0004 §4「实测（MP-0）」）：Compose 会先用窗口色把画布铺满，根上清一次，
                     // 上面没画东西的地方（播放器页的洞）才透得出画面；别的页面自己铺不透明的底，不受影响。
@@ -359,7 +365,9 @@ internal class MacSession private constructor(val options: MacOptions) {
             // 「帮助 › 开源许可」= 关于下面那一页（D-lead-41）
             "licenses" -> graph.nav.navigate(com.gugugaga.app.nav.Route.Settings(com.gugaart.ui.screens.settings.OpenSourceLicenses.KEY))
             "shortcuts" -> graph.nav.navigate(com.gugugaga.app.nav.Route.Settings("playback"))
-            "switch-server" -> graph.nav.navigate(com.gugugaga.app.nav.Route.Servers)
+            // 1.5.0：「文件 › 切换账号 / 服务器…」= 顶栏服务器胶囊的下拉（和账号菜单那一项一样）
+            "switch-server" -> com.gugaart.ui.desktop.DesktopServerMenu.open = true
+            "add-server" -> graph.nav.navigate(com.gugugaga.app.nav.Route.Servers)
             "check-update" -> graph.update.checkNow()
             "quit", "close-window" -> quit()
             // 和账号菜单同一个二次确认（纸片对话框）
@@ -369,7 +377,8 @@ internal class MacSession private constructor(val options: MacOptions) {
             "always-on-top" -> controls.setAlwaysOnTop(!controls.alwaysOnTop)
             // A10：和播放器顶栏的钮同一个对象
             "pip" -> pictureInPicture?.toggle()
-            else -> {}
+            // 「片库 › 换服务器」里的一台：直接切；切不过去时顶栏的下拉会打开，原因写在那一行下面
+            else -> if (action.startsWith(MacMenuModel.SERVER_ACTION)) com.gugaart.ui.desktop.DesktopServerMenu.switchToKey(action.removePrefix(MacMenuModel.SERVER_ACTION))
         }
     }
 

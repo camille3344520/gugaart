@@ -18,9 +18,8 @@ import kotlinx.serialization.json.put
  * 字体文件由用户从本机选（Windows 文件对话框 / 安卓系统文件选择器），**复制进应用自己的存储**（壳给的目录），和 `:danmaku` 自带的四款并列可选；
  * 可以删除；选中状态存本地（键 [ImportedFontStore.KEY]，和画报的其它本地状态一样放在上游的 `LocalStore` 里，不动上游的 `gugu.settings.v1`）。
  *
- * **画面上用不用得上**：上游 `:danmaku` 的 `DanmakuLayer` 只认 `DanmakuFont` 这个封闭的枚举（四款），没有接受外部 `FontFamily` 的入口
- * （`docs/adr/0003-danmaku-custom-font.md`）。所以现在：导入、预览、选中、删除、持久化都是真的；弹幕画面在上游开缝之前仍用内置的那一款。
- * [ImportedFontStore.rendererReady] 是这道缝的开关。
+ * **画面上**：上游 `:danmaku` 开了 `LocalDanmakuFontOverride`（`docs/adr/0003-danmaku-custom-font.md` 方案 B），弹幕画面用选中的那款画；
+ * 1.4.1 起字幕也能选导入的字体（[SubStylePrefs.font] = `imported:<id>`）。[ImportedFontStore.rendererReady] 是这道缝的开关。
  */
 data class ImportedFont(
     /** 稳定的 id（文件内容的哈希的前几位 + 序号），也是应用存储里的文件名（不带扩展名）。 */
@@ -113,14 +112,22 @@ class ImportedFontStore(private val local: LocalStore, private val host: FontImp
     }
 
     companion object {
+        private var shared: Triple<LocalStore, FontImportHost?, ImportedFontStore>? = null
+
+        /** 全进程一个（同一个 LocalStore + 文件缝 = 同一个仓）：设置页、播放器面板、弹幕画面看同一份选中状态。 */
+        fun of(local: LocalStore, host: FontImportHost?): ImportedFontStore {
+            shared?.let { (l, h, s) -> if (l === local && h === host) return s }
+            return ImportedFontStore(local, host).also { shared = Triple(local, host, it) }
+        }
+
         const val KEY = "gugaart.danmakuFonts.v1"
         const val MAX_BYTES = 40L * 1024 * 1024
 
         /**
-         * 弹幕画面能不能用导入的字体：要等上游 `:danmaku` 给 `DanmakuLayer` 开一个外部 `FontFamily` 的入口（ADR 0003）。
-         * 开了之后把这里改成 true，并在 `player/PlaySession.kt` 把选中的字体交进去。
+         * 弹幕画面能不能用导入的字体：上游 `:danmaku` 开了 `LocalDanmakuFontOverride`（ADR 0003 方案 B，上游 `feat/danmaku-font-family`），
+         * 播放器在弹幕槽外面把选中的那款交进去（`player/StyleApply.kt`）。
          */
-        const val rendererReady = false
+        const val rendererReady = true
 
         fun encode(s: ImportedFontState): String = buildJsonObject {
             put("fonts", buildJsonArray {
@@ -169,5 +176,8 @@ fun fontDisplayName(fileName: String): String {
     return base.ifEmpty { "导入的字体" }.take(40)
 }
 
-/** 从应用存储里的字体文件造一个 `FontFamily`（预览那一行用；上游开缝之后弹幕画面也用它）。读不了 → null。 */
+/** 从应用存储里的字体文件造一个 `FontFamily`（预览那一行、弹幕画面用；ADR 0003 的缝开了以后弹幕经 LocalDanmakuFontOverride 用上它）。读不了 → null。 */
 expect fun fileFontFamily(path: String): FontFamily?
+
+/** 应用存储里一个字体文件的字节（字幕要它的家族名：[fontFamilyName]）。读不了 / 超过上限 → null。 */
+expect fun readFontFile(path: String): ByteArray?

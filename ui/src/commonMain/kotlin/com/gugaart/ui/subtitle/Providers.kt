@@ -69,6 +69,8 @@ data class SubtitleHit(
     val url: String? = null,
     /** 服务器源：`RemoteSubtitleInfo.Id`。 */
     val serverId: String? = null,
+    /** 服务器源：`RemoteSubtitleInfo.DownloadCount`（别家没有 = null）。智能匹配按它加一点分。 */
+    val downloadCount: Int? = null,
 ) {
     /** 选了能不能存进 Emby（只有服务器源能：这台 Emby 没有上传字幕的接口，§4.1）。 */
     val toEmby: Boolean get() = source == SubSource.Server
@@ -214,6 +216,7 @@ object SubtitleProviders {
                 match = if ((o["IsHashMatch"] as? JsonPrimitive)?.booleanOrNull == true) SubMatch.Fingerprint else SubMatch.Server,
                 provider = provider,
                 serverId = id,
+                downloadCount = (o["DownloadCount"] as? JsonPrimitive)?.intOrNull?.takeIf { it >= 0 },
             )
         }
     }

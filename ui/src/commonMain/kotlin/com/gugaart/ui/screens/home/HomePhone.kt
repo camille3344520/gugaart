@@ -75,6 +75,7 @@ import com.gugaart.ui.screens.StatusBand
 import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.play
 import com.gugaart.ui.screens.toggleFavorite
+import com.gugaart.ui.servers.MastheadServerLine
 import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.theme.coverScale
 import com.gugaart.ui.theme.feel
@@ -145,7 +146,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                     Column(Modifier.fillMaxWidth()) {
                         Spacer(Modifier.height(dimens.statusBar + 8.dp))
                         if (offline) OfflineBar(onRetry = onRefresh)
-                        Masthead(volume = "VOL. $volume", date = date, modifier = Modifier.padding(horizontal = dimens.margin), issue = volume, dateSlot = { com.gugaart.ui.screens.me.RankChip(date, it) })
+                        PhoneMasthead(volume, date)
                         CoverFlow(
                             flow,
                             covers.map { it.art.poster },
@@ -215,7 +216,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                 }
             } else {
                 Spacer(Modifier.height(dimens.statusBar + 8.dp))
-                Masthead(volume = "VOL. $volume", date = date, modifier = Modifier.padding(horizontal = dimens.margin), issue = volume, dateSlot = { com.gugaart.ui.screens.me.RankChip(date, it) })
+                PhoneMasthead(volume, date)
             }
 
             // ---- 目录区 ----
@@ -255,6 +256,20 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
         }
         // 状态栏：滚动 2 dp 就变实心，内容从它下面硬切
         StatusBand(solid = scroll.value > with(LocalDensity.current) { 2.dp.toPx() })
+    }
+}
+
+/**
+ * 手机首页的报头 + 下面一行小字「当前服务器 ⌄」（1.5.0：点它换服务器，[ServerSheet]）。
+ * 那一行压在报头下线和海报流之间的空里，不占版面：报头（刊名正中的徽记）、海报流、片名 logo 一个像素都不挪。
+ */
+@Composable
+private fun PhoneMasthead(volume: Int, date: String) {
+    val dimens = Guga.dimens
+    Box(Modifier.padding(horizontal = dimens.margin)) {
+        Masthead(volume = "VOL. $volume", date = date, issue = volume, dateSlot = { com.gugaart.ui.screens.me.RankChip(date, it) })
+        // 报头高 44，下线之下 0–22 dp：海报流离报头 18 dp（矮屏 ×0.86），这一行的字落在这一截里
+        MastheadServerLine(Modifier.align(Alignment.BottomStart).offset(y = 22.dp))
     }
 }
 

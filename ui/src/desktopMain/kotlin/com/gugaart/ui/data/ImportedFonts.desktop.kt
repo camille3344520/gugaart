@@ -9,3 +9,9 @@ actual fun fileFontFamily(path: String): FontFamily? = try {
 } catch (_: Exception) {
     null
 }
+
+actual fun readFontFile(path: String): ByteArray? = try {
+    File(path).takeIf { it.isFile && it.length() <= ImportedFontStore.MAX_BYTES }?.readBytes()
+} catch (_: Exception) {
+    null
+}

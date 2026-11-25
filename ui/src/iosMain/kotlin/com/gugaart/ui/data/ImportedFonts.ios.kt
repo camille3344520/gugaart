@@ -22,3 +22,13 @@ actual fun fileFontFamily(path: String): FontFamily? = try {
 } catch (_: Exception) {
     null
 }
+
+/** 同 [fileFontFamily] 的读法：整个文件读成字节；读不了 = null。 */
+@OptIn(ExperimentalForeignApi::class)
+actual fun readFontFile(path: String): ByteArray? = try {
+    val data = NSData.dataWithContentsOfFile(path)
+    val n = data?.length?.toInt() ?: 0
+    if (data == null || n == 0 || n > ImportedFontStore.MAX_BYTES) null else data.bytes!!.reinterpret<UByteVar>().readBytes(n)
+} catch (_: Exception) {
+    null
+}

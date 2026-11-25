@@ -124,7 +124,6 @@ import com.gugugaga.app.player.PlayerSlots
 import com.gugugaga.app.player.PlayController
 import com.gugugaga.app.player.PlayerSnapshot
 import com.gugugaga.app.player.VeilLayer
-import com.gugugaga.app.player.VideoSurface
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.ds.glass.GlassBackend
 import com.gugugaga.ds.glass.GlassScene
@@ -413,7 +412,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                 }
             }
             Box(Modifier.align(Alignment.TopCenter).padding(top = gapTop).size(fw, fh).clipToBounds().then(if (show) Modifier.border(1.dp, colors.ink.copy(alpha = 0.14f)) else Modifier).testTag("player-frame")) {
-                Picture(play, snap, engine, slots, render.enabled, duration, showBuffer, onClick = {
+                Picture(play, snap, engine, slots, render.enabled, duration, showBuffer, controls = show, onClick = {
                     controller.userGesture()
                     controller.togglePlay()
                     controls.bump()
@@ -604,11 +603,11 @@ fun pictureTopGap(available: Float, picture: Float, area: Float): Float {
 
 /** 画面这一块：原生视频层的占位（把矩形报给引擎）+ 暂停 / 缓冲的压暗 + 「跳过片头」玻璃胶囊。点一下 = 播放 / 暂停，双击 = 全屏。 */
 @Composable
-private fun BoxScope.Picture(play: PlaySession, snap: PlayerSnapshot, engine: PlayerEngine?, slots: PlayerSlots, danmakuOn: Boolean, duration: Double, showBuffer: Boolean, onClick: () -> Unit, onDoubleClick: () -> Unit) {
+private fun BoxScope.Picture(play: PlaySession, snap: PlayerSnapshot, engine: PlayerEngine?, slots: PlayerSlots, danmakuOn: Boolean, duration: Double, showBuffer: Boolean, controls: Boolean, onClick: () -> Unit, onDoubleClick: () -> Unit) {
     val controller = play.controller
     val colors = Guga.colors
     LocalPlayerStill.current?.let { still -> Canvas(Modifier.matchParentSize()) { drawCover(still, Framing(0.5f, 0.3f)) } }
-    VideoSurface(engine, Modifier.matchParentSize()) { VeilLayer(controller.veil) }
+    com.gugaart.ui.player.GugaVideoSurface(engine, Modifier.matchParentSize()) { VeilLayer(controller.veil) }
     val dim = when {
         showBuffer -> PlayerSpec.BUFFER_DIM
         snap.paused && snap.phase == PlayPhase.Ready -> PlayerSpec.PAUSE_DIM
@@ -629,6 +628,12 @@ private fun BoxScope.Picture(play: PlaySession, snap: PlayerSnapshot, engine: Pl
     }
     // 开播那几秒：片源的效果（杜比视界 / HDR10 / 杜比全景声…）
     com.gugaart.ui.player.FormatFlash(snap, 1.15f, Modifier.align(Alignment.TopStart).padding(start = Guga.rem(2f), top = Guga.rem(2f)))
+    // 字幕智能匹配的那句提示：排在徽章那一行下面（不叠）；「找到…」控件出来时在，「已自动加载…」亮几秒就淡出（subtitle/BestMatchUi.kt）
+    // 下面一格：「换到别台的源没成功」那一句（亮 4 秒，player/NoticeFlash.kt）；两样同时在时上下排开，不叠
+    Column(Modifier.align(Alignment.TopStart).padding(start = Guga.rem(2f), top = Guga.rem(2f) + 56.dp), verticalArrangement = Arrangement.spacedBy(Guga.rem(0.6f))) {
+        com.gugaart.ui.subtitle.AutoBestFlash(play, controls, scale = 1.15f, maxWidth = Guga.rem(56f))
+        com.gugaart.ui.player.PlayerNoticeFlash(play, 1.15f, maxWidth = Guga.rem(56f))
+    }
     // 「跳过片头 / 片尾」：玻璃胶囊（播放器里唯一的玻璃）。播放页不在根的 GlassScene 里：这里自己起一个「视频底图」场景（底图不画，画面是原生层），
     // 后端先用上游的 Plates 退路——视频取帧供底图的那一套（上游 PlayerGlassScene）是 internal，接不上。
     snap.skip?.let { skip ->

@@ -30,6 +30,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.subtitle.ApplyState
+import com.gugaart.ui.subtitle.ExactTag
+import com.gugaart.ui.subtitle.ScoredHit
+import com.gugaart.ui.subtitle.applyLineOf
+import com.gugaart.ui.subtitle.bestCardText
+import com.gugaart.ui.tv.detail.TvActionButton
 import com.gugaart.ui.subtitle.SearchLang
 import com.gugaart.ui.subtitle.SourceState
 import com.gugaart.ui.subtitle.SubtitleHit
@@ -57,8 +62,9 @@ object TvSubtitleSearchSpec {
     const val HITS = 16
 }
 
-/** 电视字幕搜索这一栏的焦点键（从上往下：结果、换个名字搜、语言）。纯函数，有单测。 */
-fun tvSubtitleKeys(hits: Int, online: Boolean): List<String> = buildList {
+/** 电视字幕搜索这一栏的焦点键（从上往下：最合适的「用上」、结果、换个名字搜、语言）。纯函数，有单测。 */
+fun tvSubtitleKeys(hits: Int, online: Boolean, best: Boolean = false): List<String> = buildList {
+    if (best) add("sbs-best")
     repeat(hits) { add("sbs-h-$it") }
     if (online) add("sbs-query")
     add("sbs-lang")
@@ -76,14 +82,24 @@ fun BoxScope.TvSubtitleSearch(s: SubtitleSearchSession, editing: Boolean, onEdit
     val groups = LocalTvGroups.current
     val scope = rememberCoroutineScope()
     val hits = s.hits.take(TvSubtitleSearchSpec.HITS)
-    val keys = tvSubtitleKeys(hits.size, s.online)
+    val best = s.best
+    val keys = tvSubtitleKeys(hits.size, s.online, best = best != null)
     val dark = TvPlayerSpec.DARK
+    val scroll = rememberScrollState()
     // 结果到了、焦点还停在下面的输入行 / 语言行（刚打开时没有结果）：挪到第一条
     LaunchedEffect(hits.isNotEmpty()) {
-        if (hits.isNotEmpty() && !editing && (groups.current == "sbs-query" || groups.current == "sbs-lang")) g.focus.request("sbs-h-0")
+        if (hits.isNotEmpty() && !editing && (groups.current == "sbs-query" || groups.current == "sbs-lang")) g.focus.request(if (best != null) "sbs-best" else "sbs-h-0")
+    }
+    // 最合适的出来了（1.4.1 U2）：焦点默认落在卡上的「用上」——还没动过（停在第一条 / 输入行 / 语言行）才挪，正在输入不挪；
+    // 手动搜完也一样（焦点从输入行回到这里，栏滚回顶上）
+    LaunchedEffect(best?.hit?.key) {
+        if (best != null && !editing && groups.current in TV_BEST_STEAL_FROM) {
+            scroll.animateScrollTo(0)
+            g.focus.request("sbs-best")
+        }
     }
     Box(Modifier.align(Alignment.CenterStart).width(TvSubtitleSearchSpec.WIDTH).fillMaxHeight().background(dark.copy(alpha = 0.96f)).border(1.dp, colors.line).testTag("tv-sub-search")) {
-        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(start = 64.dp, end = 48.dp, top = 56.dp, bottom = 56.dp)) {
+        Column(Modifier.fillMaxHeight().verticalScroll(scroll).padding(start = 64.dp, end = 48.dp, top = 56.dp, bottom = 56.dp)) {
             Row(verticalAlignment = Alignment.Bottom) {
                 BasicText("搜索字幕", style = Guga.song(44.sp, FontWeight.Black, letterSpacing = 0.1.em), maxLines = 1)
                 BasicText("SUBTITLES", Modifier.padding(start = 16.dp, bottom = 8.dp), style = Guga.numeral(20.sp, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
@@ -98,8 +114,9 @@ fun BoxScope.TvSubtitleSearch(s: SubtitleSearchSession, editing: Boolean, onEdit
             }
             BasicText("上下选　确定 = 用这一条　返回 = 收起", Modifier.padding(top = 8.dp, bottom = 12.dp), style = Guga.song(20.sp, color = colors.faint), maxLines = 1)
             TvGroup("sbs", keys, horizontal = false, default = keys.first())
+            if (best != null) TvBestCard(best, s.apply) { SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, best.hit, g, scope) }
             if (hits.isEmpty() && !s.searching) BasicText("没有搜到。可以换个名字搜，或者换成英文。", Modifier.padding(vertical = 10.dp), style = Guga.song(24.sp, color = colors.dim), maxLines = 1)
-            hits.forEachIndexed { i, h -> TvHitRow(h, i, s.apply) { SubtitleSearchBoard.choose(h, g, scope) } }
+            hits.forEachIndexed { i, h -> TvHitRow(h, i, s.apply, best = best?.takeIf { it.hit.key == h.key }) { SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, h, g, scope) } }
             if (s.online) {
                 BasicText("换个名字搜", Modifier.padding(top = 22.dp, bottom = 8.dp), style = Guga.song(22.sp, FontWeight.Bold, colors.spot, letterSpacing = 0.2.em), maxLines = 1)
                 TvBlockFocus("sbs-query", { onEditing(true) }, Modifier.fillMaxWidth().then(if (editing) Modifier.border(3.dp, colors.spot) else Modifier.border(2.dp, colors.line)), label = "换个名字搜字幕", kind = TvFocusKind.Row) { focused ->
@@ -141,7 +158,7 @@ fun BoxScope.TvSubtitleSearch(s: SubtitleSearchSession, editing: Boolean, onEdit
 
 /** 一条结果（电视）：名称 + 小字 + 去向；焦点 = 米白实底。选中以后小字换成进度 / 结果。 */
 @Composable
-private fun TvHitRow(h: SubtitleHit, i: Int, apply: ApplyState?, onPick: () -> Unit) {
+private fun TvHitRow(h: SubtitleHit, i: Int, apply: ApplyState?, best: ScoredHit? = null, onPick: () -> Unit) {
     val colors = Guga.colors
     val mine = when (apply) {
         is ApplyState.Working -> apply.key == h.key
@@ -153,6 +170,12 @@ private fun TvHitRow(h: SubtitleHit, i: Int, apply: ApplyState?, onPick: () -> U
         val ink = if (focused) colors.onInk else colors.ink
         Row(Modifier.fillMaxWidth().heightIn(min = 92.dp).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
+                if (best != null) BasicText(
+                    if (best.score.isExactHash) "最合适 · 完全对得上" else "最合适",
+                    Modifier.padding(bottom = 2.dp).testTag("tv-sub-hit-best"),
+                    style = Guga.song(20.sp, FontWeight.Black, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot, letterSpacing = 0.2.em),
+                    maxLines = 1,
+                )
                 BasicText(h.name, style = Guga.song(27.sp, FontWeight.Black, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val line = if (mine) when (apply) {
                     is ApplyState.Working -> apply.step
@@ -176,5 +199,32 @@ private fun TvHitRow(h: SubtitleHit, i: Int, apply: ApplyState?, onPick: () -> U
                 maxLines = 1,
             )
         }
+    }
+}
+
+/** 焦点在这几处（还没动过）时，最合适的一出来就把焦点挪到它的「用上」上。 */
+private val TV_BEST_STEAL_FROM = setOf(null, "sbs-h-0", "sbs-query", "sbs-lang")
+
+/**
+ * 「最合适」卡（电视，1.4.1 U2）：小标、字幕名、理由、语言 · 格式 · 来源 · 去向；卡本身不拿焦点，焦点在下面的「用上」上（打开栏时默认在这里）。
+ * 下键从「用上」走到完整的单子。
+ */
+@Composable
+private fun TvBestCard(best: ScoredHit, apply: ApplyState?, onUse: () -> Unit) {
+    val colors = Guga.colors
+    val c = bestCardText(best, inPlayer = true)
+    val mine = applyLineOf(best.hit, apply)
+    Column(Modifier.padding(bottom = 18.dp).fillMaxWidth().border(2.dp, colors.ink).padding(horizontal = 24.dp, vertical = 20.dp).testTag("tv-sub-best")) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicText(c.kicker, style = Guga.song(24.sp, FontWeight.Black, colors.spot, letterSpacing = 0.3.em), maxLines = 1)
+            BasicText("BEST MATCH", Modifier.padding(start = 14.dp), style = Guga.numeral(20.sp, colors.faint, letterSpacing = 0.2.em), maxLines = 1)
+            Spacer(Modifier.weight(1f))
+            if (c.exact) ExactTag(20.sp, 2.dp)
+        }
+        BasicText(c.name, Modifier.padding(top = 10.dp), style = Guga.song(28.sp, FontWeight.Black, lineHeight = 38.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (c.reasons.isNotEmpty()) BasicText(c.reasons, Modifier.padding(top = 6.dp), style = Guga.song(22.sp, color = colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(c.meta, Modifier.padding(top = 4.dp), style = Guga.song(21.sp, color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (mine != null) BasicText(mine.first, Modifier.padding(top = 8.dp).testTag("tv-sub-best-apply"), style = Guga.song(21.sp, color = if (mine.second) colors.seal else colors.spot), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TvActionButton("sbs-best", "用上", onUse, Modifier.padding(top = 16.dp).fillMaxWidth().testTag("tv-sub-best-use"), primary = true)
     }
 }

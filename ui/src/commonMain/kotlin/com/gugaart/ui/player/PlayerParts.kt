@@ -300,38 +300,63 @@ fun PanelHeader(panel: PlayerPanel, title: String = panel.word, kicker: String =
     BasicText(title, Modifier.padding(top = 2.dp * t.k, bottom = 6.dp * t.k), style = Guga.song(t.panelTitle, FontWeight.Black), maxLines = 1)
 }
 
-/** 面板里的一行单选：实心小方块 + 字（选中加粗）+ 右边可有一行小字。 */
+/**
+ * 面板里的一行单选：实心小方块 + 字（选中加粗）+ 右边可有一行小字。
+ * [sub]：字下面的第二行（版本的规格「4K · HDR10 · DTS-HD MA · 直连」）；[tags]：字后面的小签（「推荐」「另一份文件」）；
+ * [lead]：字前面的一样东西（「源」的服务器小圆点）。[tagsBelow]：小签放到字下面一行（手机横屏的页边窄，名字要先读得全）。
+ */
 @Composable
-fun PanelOption(text: String, selected: Boolean, onClick: () -> Unit, note: String? = null, number: String? = null) {
+fun PanelOption(text: String, selected: Boolean, onClick: () -> Unit, note: String? = null, number: String? = null, sub: String? = null, tags: (@Composable () -> Unit)? = null, lead: (@Composable () -> Unit)? = null, tagsBelow: Boolean = false) {
     val colors = Guga.colors
     val press = rememberPressState()
     val t = Guga.player
+    val twoLines = sub != null || tags != null || lead != null
     Column {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 34.dp * t.k).pressGraphics(press).pressable(press, label = text, onClick = onClick).testTag(if (selected) "panel-option-on" else "panel-option"),
+            Modifier.fillMaxWidth().heightIn(min = 34.dp * t.k).pressGraphics(press).pressable(press, label = text, onClick = onClick)
+                .then(if (twoLines) Modifier.padding(vertical = 5.dp * t.k) else Modifier)
+                .testTag(if (selected) "panel-option-on" else "panel-option"),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp * t.k),
         ) {
             if (number != null) BasicText(number, Modifier.width(30.dp * t.k), style = Guga.numeral(if (number.length >= 4) t.numberLong else t.number, if (selected) colors.spot else colors.dim), maxLines = 1)
             else RadioMark(selected, size = 6.dp * t.k)
-            BasicText(text, Modifier.weight(1f), style = Guga.song(t.option, if (selected) FontWeight.Bold else FontWeight.Normal, if (selected) (if (number != null) colors.spot else colors.ink) else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val style = Guga.song(t.option, if (selected) FontWeight.Bold else FontWeight.Normal, if (selected) (if (number != null) colors.spot else colors.ink) else colors.dim)
+            if (!twoLines) BasicText(text, Modifier.weight(1f), style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            else Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    lead?.invoke()
+                    BasicText(text, Modifier.weight(1f, fill = false), style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!tagsBelow) tags?.invoke()
+                }
+                if (tagsBelow && tags != null) Row(Modifier.padding(top = 2.dp * t.k), verticalAlignment = Alignment.CenterVertically) { tags() }
+                if (!sub.isNullOrEmpty()) BasicText(sub, Modifier.padding(top = 2.dp * t.k), style = Guga.song(t.note, color = colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             if (note != null) BasicText(note, style = Guga.note(t.note, colors.faint), maxLines = 1)
         }
         Rule()
     }
 }
 
-/** 面板里的一行步进：标签 + 〔−〕值〔+〕。直接改值，画面实时变。 */
+/**
+ * 面板里的一行步进：标签 + 〔−〕值〔+〕。直接改值，画面实时变。[cycle]：值是一串名字（字体）里轮着换——键换成 ‹ ›，值占满中间一栏（名字比数字长）。
+ */
 @Composable
-fun PanelStepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit) {
+fun PanelStepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit, cycle: Boolean = false) {
     val colors = Guga.colors
     val t = Guga.player
     Row(Modifier.fillMaxWidth().heightIn(min = 40.dp * t.k).testTag("panel-stepper"), verticalAlignment = Alignment.CenterVertically) {
         BasicText(label, Modifier.width(48.dp * t.k), style = Guga.song(t.label, color = colors.dim), maxLines = 1)
-        Spacer(Modifier.weight(1f))
-        StepKey(GuguIcon.Minus, "$label 减", onMinus)
-        BasicText(value, Modifier.width(52.dp * t.k), style = Guga.song(t.option, FontWeight.Bold).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center), maxLines = 1)
-        StepKey(GuguIcon.Plus, "$label 加", onPlus)
+        if (!cycle) Spacer(Modifier.weight(1f))
+        StepKey(if (cycle) GuguIcon.ChevronLeft else GuguIcon.Minus, if (cycle) "$label 上一个" else "$label 减", onMinus)
+        BasicText(
+            value,
+            if (cycle) Modifier.weight(1f) else Modifier.width(52.dp * t.k),
+            style = Guga.song(t.option, FontWeight.Bold).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        StepKey(if (cycle) GuguIcon.ChevronRight else GuguIcon.Plus, if (cycle) "$label 下一个" else "$label 加", onPlus)
     }
 }
 

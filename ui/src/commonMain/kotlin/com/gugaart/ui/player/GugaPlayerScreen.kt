@@ -79,7 +79,6 @@ import com.gugugaga.app.player.PlayerDanmaku
 import com.gugugaga.app.player.PlayerSlots
 import com.gugugaga.app.player.PlayerSnapshot
 import com.gugugaga.app.player.VeilLayer
-import com.gugugaga.app.player.VideoSurface
 import com.gugugaga.app.player.playerGestures
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.core.PlaybackMode
@@ -145,7 +144,10 @@ fun GugaPlayerScreen(route: Route.Play) {
     }
     val snapForEps by play.controller.snapshot.collectAsState()
     val episodes = rememberPlayerEpisodes(snapForEps)
-    CompositionLocalProvider(LocalPlayerEpisodes provides episodes) {
+    // 字幕样式 → 引擎（三端一处）；弹幕用上游没有的字体（导入的 / 思源宋体 / 站酷快乐体）→ 上游的缝 LocalDanmakuFontOverride
+    RememberSubtitleStyleApply(play)
+    val danmakuFont = rememberDanmakuFontOverride()
+    CompositionLocalProvider(LocalPlayerEpisodes provides episodes, com.gugugaga.danmaku.ui.LocalDanmakuFontOverride provides danmakuFont) {
         when (Guga.uiMode) {
             UiMode.Phone -> PlayerPhone(play, danmaku, slots)
             UiMode.Desktop -> com.gugaart.ui.desktop.DesktopPlayer(play, danmaku, slots)
@@ -304,7 +306,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val picture: @Composable BoxScope.(Boolean) -> Unit = { inset ->
         // 第 0 层：画面（原生层；这里只占位并把矩形报给引擎）。测试里用一张剧照顶着
         LocalPlayerStill.current?.let { still -> Canvas(Modifier.matchParentSize()) { drawCover(still, Framing(0.5f, 0.3f)) } }
-        VideoSurface(engine, Modifier.matchParentSize()) { VeilLayer(controller.veil) }
+        com.gugaart.ui.player.GugaVideoSurface(engine, Modifier.matchParentSize()) { VeilLayer(controller.veil) }
         // 换片的那一段（用户 2026-11-15：「切换到其他影片的时候在加载的时候会卡成其他影片的那一画面」）：引擎和画面层是复用的，
         // 新片子第一帧到之前，屏幕上留着的是上一部的最后一帧（换集时上游还特意用截图挡着）。这一部还没出过画面时，用它自己的剧照盖住。
         NewItemCover(snap.itemId, snap.phase, art)
@@ -341,6 +343,12 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
         Box(Modifier.matchParentSize().padding(horizontal = side)) { EdgeHints(gestures) }
         // 开播那几秒：片源的效果（杜比视界 / HDR10 / 杜比全景声…）
         FormatFlash(snap, 1f, Modifier.align(Alignment.TopStart).padding(start = 16.dp + side, top = 64.dp))
+        // 字幕智能匹配的那句提示（「找到完全对得上的字幕 · 用上」/「已自动加载：… · 撤销」）：排在徽章那一行下面（开播缓冲久了两样可能同时在，不叠）（subtitle/BestMatchUi.kt）
+        // 下面一格：「换到别台的源没成功」那一句（亮 4 秒，player/NoticeFlash.kt）；两样同时在时上下排开，不叠
+        Column(Modifier.align(Alignment.TopStart).padding(start = 16.dp + if (inset) 0.dp else side, top = 64.dp + 40.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (!locked) com.gugaart.ui.subtitle.AutoBestFlash(play, controls = showControls || inset, scale = 1f, maxWidth = 380.dp)
+            PlayerNoticeFlash(play, 1f, maxWidth = 380.dp)
+        }
         if (locked) {
             // 锁屏：只留左缘一个锁（点它解开）；别的手势都不响应
             Row(Modifier.align(Alignment.BottomStart).padding(start = 12.dp + side, bottom = 96.dp).background(colors.inkWell).testTag("player-lock"), verticalAlignment = Alignment.CenterVertically) {

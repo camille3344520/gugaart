@@ -21,7 +21,12 @@ plugins {
 // 谷歌 AVD 上宿主机是 10.0.2.2。账号是 tools/mock-emby 的夹具（demo / demo），从不是真实凭据；release 的这个字段永远是空串。
 val mockAccountUrl: String? = providers.gradleProperty("gugaart.mockAccount").orNull?.trim()?.takeIf { it.isNotEmpty() }
 if (mockAccountUrl != null) require(Regex("""^https?://[^\s"\\]+$""").matches(mockAccountUrl)) { "-Pgugaart.mockAccount 必须是 http(s) 地址：$mockAccountUrl" }
-val mockAccountJson: String = if (mockAccountUrl == null) "" else """{"server":"$mockAccountUrl","username":"demo","password":"demo"}"""
+// 1.5.0 跨服务器验收：-Pgugaart.mockServers=<地址>,<地址> → 同一个 debug 字段里多一个 servers 数组（只和 mockAccount 一起用；上游解析时忽略它，
+// 画报的 DevMockServers 读它，把几台 Mock 存成几台服务器）。release 照旧是空串。
+val mockServerUrls: List<String> = providers.gradleProperty("gugaart.mockServers").orNull?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+mockServerUrls.forEach { require(Regex("""^https?://[^\s"\\]+$""").matches(it)) { "-Pgugaart.mockServers 必须是 http(s) 地址：$it" } }
+val mockServersJson: String = if (mockServerUrls.isEmpty()) "" else mockServerUrls.joinToString(",", prefix = ""","servers":[""", postfix = "]") { "\"$it\"" }
+val mockAccountJson: String = if (mockAccountUrl == null) "" else """{"server":"$mockAccountUrl","username":"demo","password":"demo"$mockServersJson}"""
 fun javaLiteral(v: String): String = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 // ---- release 签名：gugaart 专用证书（2026-11-14 生成，在仓库外）----

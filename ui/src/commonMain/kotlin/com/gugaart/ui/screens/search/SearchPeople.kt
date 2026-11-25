@@ -10,6 +10,10 @@ import com.gugugaga.core.ImageUrlOptions
 import com.gugugaga.core.ItemsRequestOptions
 import com.gugugaga.core.LibraryQuery
 import com.gugugaga.core.NamedListOptions
+import com.gugaart.ui.search.DocMemo
+import com.gugaart.ui.search.SearchIndexStore
+import com.gugaart.ui.search.SearchMatch
+import com.gugaart.ui.search.SearchQuery
 
 /*
  * 按演员名字搜（用户 2026-11-16：「搜索也支持按演员名字搜索，不过缩写的话还是影片排在前面」）。
@@ -25,27 +29,29 @@ const val PEOPLE_MAX = 6000
 @Immutable
 data class PersonHit(val person: Person, val range: IntRange?)
 
-/** 本地人名单：服务器 `/Persons`，按名字排，带头像地址。 */
-suspend fun loadPeopleIndex(client: EmbyClient): List<Person> =
+/**
+ * 本地人名单：1.4.1 起是搜索索引里那一份（[SearchIndexStore]：本用户可见的 `/Persons` 分页取全，不再截在 [PEOPLE_MAX]；
+ * 和片、单集同一份缓存、同一次刷新）。
+ */
+suspend fun loadPeopleIndex(client: EmbyClient): List<Person> = SearchIndexStore.get(client).people
+
+/** 只取前 [PEOPLE_MAX] 位的旧版人名单（不进缓存；留给只想要一小份的地方）。 */
+suspend fun loadPeopleIndexDirect(client: EmbyClient): List<Person> =
     client.getPersons(NamedListOptions(limit = PEOPLE_MAX, sortBy = "SortName", sortOrder = "Ascending")).items
         .filter { !it.name.isNullOrBlank() }
         .map { Person(it.id, it.name.orEmpty(), photo = client.personImage(it.id, it.imageTags["Primary"], ImageUrlOptions(maxWidth = 360))) }
 
-/** 人名匹配：和片名同一套（原文命中优先、越靠前越好；字母数字再按拼音首字母）。纯函数，有单测。 */
+/** 人名匹配：和片名同一套分档（docs/search.md：整词 > 前缀 > 子串（「幼斌」→ 李幼斌）> 全拼 > 首字母 > 缩写 > 英文）。纯函数，有单测。 */
 fun searchPeopleLocal(people: List<Person>, query: String, limit: Int = 12): List<PersonHit> {
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
-    return people.distinctBy { it.id }
-        .mapNotNull { p -> Pinyin.score(p.name, q)?.let { Triple(p, it, Pinyin.match(p.name, q)) } }
-        .sortedWith(compareBy<Triple<Person, Int, IntRange?>> { it.second }.thenBy { it.first.name.length }.thenBy { it.first.name })
-        .take(limit)
-        .map { PersonHit(it.first, it.third) }
+    return SearchMatch.search(DocMemo.people(people), SearchQuery(q), limit).map { PersonHit(it.item, it.range) }
 }
 
 /** 本地命中的在前，服务器另外找到的接在后面（同一个人只留一次）。 */
 fun mergePeople(local: List<PersonHit>, remote: List<Person>, query: String): List<PersonHit> {
     val seen = local.map { it.person.id }.toHashSet()
-    return local + remote.filter { seen.add(it.id) }.map { PersonHit(it, Pinyin.match(it.name, query.trim())) }
+    return local + remote.filter { seen.add(it.id) }.map { PersonHit(it, SearchMatch.range(it.name, query.trim())) }
 }
 
 /** 演员排在片子前面吗。缩写（只有字母数字）一律片子在前；名字正好是 / 以它开头（至少两个字）、又没有片名正好是它 → 演员在前。纯函数，有单测。 */

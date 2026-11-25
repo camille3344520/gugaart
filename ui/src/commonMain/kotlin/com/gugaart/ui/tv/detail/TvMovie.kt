@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -46,7 +48,10 @@ import com.gugaart.ui.screens.LocalChrome
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.detail.rememberItemStills
 import com.gugaart.ui.screens.detail.showStills
-import com.gugaart.ui.screens.detail.specLine
+import com.gugaart.ui.screens.detail.SourceDot
+import com.gugaart.ui.screens.detail.SourceProgress
+import com.gugaart.ui.screens.detail.SourceTags
+import com.gugaart.ui.screens.detail.rememberSourcesState
 import com.gugaart.ui.screens.detail.streamRow
 import com.gugaart.ui.screens.toggleFavorite
 import com.gugaart.ui.screens.togglePlayed
@@ -54,7 +59,6 @@ import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.tv.TvFocusKind
 import com.gugaart.ui.tv.TvSpec
 import com.gugugaga.app.data.rememberImage
-import com.gugugaga.app.nav.Route
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.core.MediaSourceInfo
 import com.gugugaga.core.MediaStream
@@ -65,9 +69,8 @@ import com.gugugaga.ds.icons.GuguIcon
 fun tvGb(bytes: Long?): String? = bytes?.takeIf { it > 0 }?.let { "${kotlin.math.round(it / 1073741824.0 * 10) / 10} GB" }
 fun tvMbps(bits: Long?): String? = bits?.takeIf { it > 0 }?.let { "${kotlin.math.round(it / 1_000_000.0 * 10) / 10} Mbps" }
 
-/** 版本的一行：名字 + 「1080p · SDR · MKV · 2.1 GB」。 */
-fun tvVersionRow(s: MediaSourceInfo): Pair<String, String> =
-    (s.name?.takeIf { it.isNotBlank() } ?: "未命名") to listOfNotNull(specLine(s), s.container?.uppercase(), tvGb(s.size)).joinToString(" · ")
+/** 「版本」按钮里的小字：选中那个源的名字，太长截到 12 个字（按钮排在一行里）。纯函数。 */
+fun tvVersionSub(title: String): String = if (title.length > 12) title.take(11) + "…" else title
 
 /** 按钮里的小字：默认音轨 / 默认字幕的名字（「关 · 有 3 条」「无」）。纯函数，有单测。 */
 fun tvSubtitleSummary(subs: List<MediaStream>, selected: Int?): String = when {
@@ -136,12 +139,14 @@ fun TvMovie(movie: Title, today: Today) {
     val stills = rememberItemStills(movie.id)
     val hasStills = showStills(stills)
 
-    var sourceIndex by remember(movie.id) { mutableStateOf(0) }
-    val source = movie.sources.getOrNull(sourceIndex)
+    // 版本 = 「源」（本台的版本 + 没被合并的重复片）：选中的那个决定音轨 / 字幕 / 徽章 / 开播
+    val sources = rememberSourcesState(movie)
+    val picked = sources.selected
+    val source = picked?.mediaSource ?: movie.sources.firstOrNull()
     val audios = source?.mediaStreams.orEmpty().filter { it.type == "Audio" }
     val subs = com.gugaart.ui.player.chineseSubtitlesFirst(source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" })
-    var audio by remember(movie.id, sourceIndex) { mutableStateOf((audios.firstOrNull { it.isDefault == true } ?: audios.firstOrNull())?.index) }
-    var sub by remember(movie.id, sourceIndex) { mutableStateOf(subs.firstOrNull { it.isDefault == true }?.index) }
+    var audio by remember(movie.id, picked?.itemId, source?.id) { mutableStateOf((audios.firstOrNull { it.isDefault == true } ?: audios.firstOrNull())?.index) }
+    var sub by remember(movie.id, picked?.itemId, source?.id) { mutableStateOf(subs.firstOrNull { it.isDefault == true }?.index) }
     // 页边选项栏：ver / tracks / null
     var side by remember { mutableStateOf(preset.state?.takeIf { it == "ver" || it == "tracks" }) }
     var sideFrom by remember { mutableStateOf("cta-audio") }
@@ -180,7 +185,11 @@ fun TvMovie(movie: Title, today: Today) {
     // 页边栏打开后焦点进去：落在选中的那一项
     LaunchedEffect(side) {
         when (side) {
-            "ver" -> groups.enterWhenReady("side-ver", graph.focus)
+            // 「版本」每次打开都落在选中的那一行（不是上次停的那一行）
+            "ver" -> {
+                groups.forget("side-ver")
+                groups.enterWhenReady("side-ver", graph.focus)
+            }
             "tracks" -> {
                 kotlinx.coroutines.delay(1)
                 groups.enterWhenReady(if (sideFrom == "cta-sub" && groups.has("side-sub")) "side-sub" else if (groups.has("side-audio")) "side-audio" else "side-sub", graph.focus)
@@ -189,7 +198,7 @@ fun TvMovie(movie: Title, today: Today) {
         }
     }
     val play: () -> Unit = {
-        graph.playback.play(Route.Play(movie.id, mediaSourceId = source?.id?.takeIf { movie.sources.size > 1 && it.isNotEmpty() }, startMs = movie.positionSec?.times(1000), audio = audio, subtitle = sub))
+        graph.playback.play(sources.playRoute(movie.positionSec?.times(1000), audio = audio, subtitle = sub))
     }
 
     TvGroupsRoot(groups, Modifier.testTag("tv-movie")) {
@@ -204,7 +213,7 @@ fun TvMovie(movie: Title, today: Today) {
                     val lead = tvFirstSentence(movie.overview)
                     if (lead.isNotEmpty()) BasicText(lead, Modifier.padding(top = 18.dp).width(980.dp), style = Guga.song(28.sp, FontWeight.SemiBold, lineHeight = 43.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     // 版本只有一个时不出现入口（真实数据里通常只有一个）；没有音轨 / 字幕信息的同理
-                    val keys = listOfNotNull("cta-play", "cta-ver".takeIf { movie.sources.size > 1 }, "cta-audio".takeIf { audios.isNotEmpty() }, "cta-sub".takeIf { source != null }, "cta-fav", "cta-played")
+                    val keys = listOfNotNull("cta-play", "cta-ver".takeIf { sources.sources.size > 1 }, "cta-audio".takeIf { audios.isNotEmpty() }, "cta-sub".takeIf { source != null }, "cta-fav", "cta-played")
                     TvGroup("cta", keys, default = "cta-play")
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     FlowRow(Modifier.padding(top = 26.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
@@ -212,7 +221,7 @@ fun TvMovie(movie: Title, today: Today) {
                             "cta-play", if (movie.progress > 0f) "续看" else "播放", play, icon = GuguIcon.Play, primary = true,
                             sub = if (movie.progress > 0f) Rules.remaining(movie.progress, movie.runtimeSec) else null, progress = movie.progress, default = true,
                         )
-                        if (movie.sources.size > 1) TvActionButton("cta-ver", "版本", { sideFrom = "cta-ver"; side = "ver" }, icon = GuguIcon.Layers, sub = specLine(source)?.substringBefore(" · "))
+                        if (sources.sources.size > 1) TvActionButton("cta-ver", sources.sectionTitle, { sideFrom = "cta-ver"; side = "ver" }, icon = GuguIcon.Layers, sub = picked?.let { tvVersionSub(sources.rowText(it).title) })
                         if (audios.isNotEmpty()) TvActionButton("cta-audio", "音轨", { sideFrom = "cta-audio"; side = "tracks" }, icon = GuguIcon.AudioLines, sub = audios.firstOrNull { it.index == audio }?.let { streamRow(it).name })
                         if (source != null) TvActionButton("cta-sub", "字幕", { if (subs.isNotEmpty()) { sideFrom = "cta-sub"; side = "tracks" } }, icon = GuguIcon.Captions, sub = tvSubtitleSummary(subs, sub))
                         TvActionButton("cta-fav", "收藏", {
@@ -243,12 +252,25 @@ fun TvMovie(movie: Title, today: Today) {
                     .testTag("tv-movie-side-$side"),
             ) {
                 if (side == "ver") {
-                    TvSecHead("版本", "VERSIONS", trailing = "${movie.sources.size} 个")
-                    val keys = movie.sources.indices.map { "ver-$it" }
-                    TvGroup("side-ver", keys, horizontal = false, default = "ver-$sourceIndex")
-                    movie.sources.forEachIndexed { i, s ->
-                        val (name, note) = tvVersionRow(s)
-                        TvOption("ver-$i", name, note, i == sourceIndex) { sourceIndex = i }
+                    // 每个源一行（只往后接、不重排，所以按位置编键）；焦点先落在选中的那一行；确定 = 选中 + 记住 + 收起。
+                    // 有别的服务器参与时叫「源」：每行前面是服务器名和小圆点，单子最后是别台的进展；行多了在这一块里滚（焦点带着走）
+                    val rows = sources.sources
+                    TvSecHead(sources.sectionTitle, sources.sectionEnglish, trailing = "${rows.size} 个")
+                    val keys = rows.indices.map { "ver-$it" }
+                    TvGroup("side-ver", keys, horizontal = false, default = "ver-${rows.indexOfFirst(sources::isSelected).coerceAtLeast(0)}")
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                        rows.forEachIndexed { i, s ->
+                            val r = sources.rowText(s)
+                            TvOption(
+                                "ver-$i", r.title, r.spec, sources.isSelected(s),
+                                tags = { focused -> SourceTags(r, 20.sp, 2.dp, onInk = focused, gap = 12.dp) },
+                                lead = if (r.server == null) null else { focused -> SourceDot(r, 12.dp, onInk = focused, gap = 12.dp) },
+                            ) {
+                                sources.pick(s)
+                                closeSide()
+                            }
+                        }
+                        SourceProgress(sources, 21.sp, 10.dp, Modifier.padding(top = 18.dp, start = 20.dp), lineGap = 8.dp)
                     }
                     BasicText("码率超过设置里的上限时，会先问你要不要服务器转码。", Modifier.padding(top = 34.dp), style = Guga.song(21.sp, color = colors.faint, lineHeight = 34.sp))
                 } else {
@@ -278,20 +300,26 @@ fun TvMovie(movie: Title, today: Today) {
     }
 }
 
-/** 页边选项（设计稿 `.li.opt`）：左 小方块（选中 = 专色实心），名字 + 第二行的区分；焦点 = 整行米白。 */
+/** 页边选项（设计稿 `.li.opt`）：左 小方块（选中 = 专色实心），名字 + 第二行的区分；焦点 = 整行米白。[tags]：名字后面的小签（参数 = 有没有焦点）。 */
 @Composable
-fun TvOption(key: String, name: String, note: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun TvOption(key: String, name: String, note: String, selected: Boolean, modifier: Modifier = Modifier, tags: (@Composable (focused: Boolean) -> Unit)? = null, dim: Boolean = false, lead: (@Composable (focused: Boolean) -> Unit)? = null, onClick: () -> Unit) {
     val colors = Guga.colors
     TvBlockFocus(key, onClick, modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = name) { focused ->
-        val ink = if (focused) colors.onInk else colors.ink
+        // [dim]：灰着的一项（按了不变，例如「参与的服务器」里正在用的那一台）
+        val ink = (if (focused) colors.onInk else colors.ink).let { if (dim) it.copy(alpha = 0.45f) else it }
         Row(Modifier.fillMaxWidth().heightIn(min = 88.dp).padding(horizontal = 20.dp, vertical = 8.dp).testTag(if (selected) "tv-option-on" else "tv-option"), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.size(18.dp).then(
+                Modifier.size(18.dp).then(if (dim) Modifier.alpha(0.45f) else Modifier).then(
                     if (selected) Modifier.background(if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot) else Modifier.border(2.dp, ink.copy(alpha = 0.6f)),
                 ),
             )
             Column(Modifier.padding(start = 22.dp)) {
-                BasicText(name, style = Guga.song(27.sp, FontWeight.Bold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (tags == null && lead == null) BasicText(name, style = Guga.song(27.sp, FontWeight.Bold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                else Row(verticalAlignment = Alignment.CenterVertically) {
+                    lead?.invoke(focused)
+                    BasicText(name, Modifier.weight(1f, fill = false), style = Guga.song(27.sp, FontWeight.Bold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    tags?.invoke(focused)
+                }
                 if (note.isNotEmpty()) BasicText(note, style = Guga.song(21.sp, color = if (focused) colors.onInk.copy(alpha = 0.7f) else colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }

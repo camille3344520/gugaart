@@ -108,9 +108,12 @@ Windows / macOS / 安卓 / iPhone（带播放内核的包）带的是同一份�
 | Coil、Kermit、multiplatform-settings、Kyant backdrop / shapes | Apache-2.0 |
 | 液态玻璃着色器（移植自 liquid_glass_widgets、liquid_glass_renderer：上游 designsystem 的玻璃材质与着色器；Copyright (c) 2024–2026 Sebastian Degenaar；Copyright 2025 Tim Lehmann for whynotmake.it） | MIT |
 | MeiamSubtitles（字幕搜索：迅雷 CID / 射手哈希的算法、两家接口的用法、下载内容的解码与校验，移植成 Kotlin 并有改动；Copyright Meiam；<https://github.com/91270/MeiamSubtitles> 提交 b0427939） | Apache-2.0（原文 `third_party/meiamsub/LICENSE`） |
+| OpenCC 繁简字表（片库搜索：把繁体折成简体再比；取 OpenCC `TSCharacters` 的单字、第一个候选，改写成 Kotlin 常量；<https://github.com/BYVoid/OpenCC>） | Apache-2.0（原文 `third_party/opencc/LICENSE`） |
+| Unicode CLDR 拼音数据（片库搜索的全拼表：ICU `Han-Latin` 转写的每字主读音，去掉声调；© Unicode, Inc.） | Unicode-3.0（Unicode License V3，原文 `third_party/unicode/LICENSE`） |
 | Lucide 图标（矢量路径） | ISC |
 | 思源宋体子集 Noto Serif SC（界面字体） | SIL Open Font License 1.1（`third_party/fonts/noto-serif-sc/OFL.txt`） |
 | 思源黑体子集 Noto Sans SC（iOS 内嵌字幕字体） | SIL Open Font License 1.1（`third_party/fonts/noto-sans-sc/OFL.txt`） |
+| 站酷快乐体 ZCOOL KuaiLe（字幕 / 弹幕字体，选用时下载，不随包） | SIL Open Font License 1.1 · Copyright 2018 The ZCOOL KuaiLe Project Authors · 来源 github.com/google/fonts `ofl/zcoolkuaile` |
 
 > 应用里「设置 › 关于 › 开源许可」列的是同一份内容（`ui/…/screens/settings/OpenSourceLicenses.kt`，单测逐行对这里的表）；改一边要改另一边。
 

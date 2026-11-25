@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.gugugaga.app.model.isStrmSource
 import com.gugugaga.core.BaseItemDto
 import com.gugugaga.core.EmbyClient
 import com.gugugaga.core.EmbyException
@@ -47,6 +48,16 @@ data class SubtitleTarget(
     val read: ReadPlan?,
     /** 选之前这个片源已有的外挂字幕（index → 路径），用来认出服务器新存的那一条。 */
     val externalBefore: Map<Int, String?>,
+    /** 片源是 strm / 远程直链：服务器插件的 IsHashMatch 在这一集上不算数（docs/subtitle-search.md §1.4）。 */
+    val isStrm: Boolean = false,
+    /** 元数据里的季 / 集 / 年份（文件名里没写时靠它；季集对不上直接扣到底）。 */
+    val season: Int? = null,
+    val episode: Int? = null,
+    val year: Int? = null,
+    /** 元数据里的片名 / 剧名（strm 的文件名常常是网盘的乱码，片名 token 靠它）。 */
+    val name: String? = null,
+    /** 备选查询（中文剧集「剧名 第N集」/ 电影纯片名）：主查询没搜到时再试一次。 */
+    val altQuery: String? = null,
 ) {
     override fun toString(): String = "SubtitleTarget(item=$itemId, source=$mediaSourceId, read=$read)"
 
@@ -88,11 +99,44 @@ data class SubtitleTarget(
             item.name.takeIf { it.isNotBlank() },
         ).joinToString(" · ") else listOfNotNull(item.name, item.productionYear?.let { "($it)" }).joinToString(" ")
 
+        /** 文件名看起来有没有意义（能拿去按名字搜）：纯数字 / 哈希样 / 太短 / 全是通用词 / 单个短 token 又和条目名毫无交集 = 无意义
+         * （strm 的 CDN 名常常是 `0.mp4`、`a1b2c3d4.mkv` 这种）。有分隔符的正常发布名照旧有意义。纯函数，有单测。 */
+        fun fileNameLooksMeaningful(fileName: String?, item: BaseItemDto): Boolean {
+            val trimmed = fileName?.trim().orEmpty()
+            val base = trimmed.substringBeforeLast('.', trimmed).trim()
+            // 「太短」只针对拉丁/数字名；中文片名常常只有两三个字
+            if (base.length < (if (base.any(::isCjkChar)) 2 else 4)) return false
+            if (base.all { it in '0'..'9' }) return false
+            if (HASH_NAME.matches(base)) return false
+            val tokens = base.split(NAME_SPLIT).filter { it.isNotEmpty() }
+            if (tokens.isEmpty() || tokens.all { it.lowercase() in GENERIC_FILE_WORDS }) return false
+            val hasSeparator = base.any { it !in 'A'..'Z' && it !in 'a'..'z' && it !in '0'..'9' && !isCjkChar(it) }
+            if (!hasSeparator && base.length <= 12) {
+                val names = listOfNotNull(item.name, item.seriesName).flatMap { it.split(NAME_SPLIT).filter { t -> t.isNotEmpty() } }
+                val lower = base.lowercase()
+                if (names.none { it.lowercase() == lower || it.contains(base) || base.contains(it) }) return false
+            }
+            return true
+        }
+
+        /** 文件名无意义时按元数据构造的查询：电影「片名 年份」，单集「剧名 S01E05」。纯函数，有单测。 */
+        fun metadataNameQuery(item: BaseItemDto): String = if (item.type == "Episode" && item.seriesName != null) {
+            "${item.seriesName} S${(item.parentIndexNumber ?: 1).toString().padStart(2, '0')}E${(item.indexNumber ?: 1).toString().padStart(2, '0')}"
+        } else listOfNotNull(item.name.takeIf { it.isNotBlank() }, item.productionYear?.takeIf { it > 0 }?.toString()).joinToString(" ")
+
+        /** 备选查询：中文剧集再试「剧名 第N集」；电影带年份时再试纯片名。null = 没有备选。纯函数，有单测。 */
+        fun altNameQueryOf(item: BaseItemDto): String? {
+            val series = item.seriesName
+            return when {
+                item.type == "Episode" && series != null && series.any(::isCjkChar) -> "$series 第${item.indexNumber ?: 1}集"
+                item.type != "Episode" -> item.productionYear?.takeIf { it > 0 }?.let { item.name.takeIf { n -> n.isNotBlank() } }
+                else -> null
+            }
+        }
+
         fun nameQueryOf(item: BaseItemDto, fileName: String?): String {
-            if (fileName != null && VIDEO_EXT.containsMatchIn(fileName)) return fileName
-            return if (item.type == "Episode" && item.seriesName != null) {
-                "${item.seriesName} S${(item.parentIndexNumber ?: 1).toString().padStart(2, '0')}E${(item.indexNumber ?: 1).toString().padStart(2, '0')}"
-            } else item.name
+            if (fileName != null && VIDEO_EXT.containsMatchIn(fileName) && fileNameLooksMeaningful(fileName, item)) return fileName
+            return metadataNameQuery(item)
         }
 
         /**
@@ -123,6 +167,12 @@ data class SubtitleTarget(
                 size = source?.size,
                 read = read,
                 externalBefore = externalSubtitles(source),
+                isStrm = strmTarget != null || (source != null && isStrmSource(source)),
+                season = item.parentIndexNumber.takeIf { item.type == "Episode" },
+                episode = item.indexNumber.takeIf { item.type == "Episode" },
+                year = item.productionYear?.takeIf { it > 0 },
+                name = (if (item.type == "Episode") item.seriesName ?: item.name else item.name).takeIf { it.isNotBlank() },
+                altQuery = altNameQueryOf(item),
             )
         }
 
@@ -186,6 +236,8 @@ class SubtitleSearchSession(
     private val client: EmbyClient?,
     private val net: SubtitleNet,
     val online: Boolean,
+    /** 设置里的首选字幕语言（上游 `subtitleLangs` 的代码数组，顺序 = 优先级）。 */
+    val subtitleLangs: List<String> = SmartMatch.DEFAULT_LANGS,
 ) {
     var lang by mutableStateOf(SearchLang.Chinese)
     var query by mutableStateOf(target.nameQuery)
@@ -199,6 +251,13 @@ class SubtitleSearchSession(
         private set
     var hits: List<SubtitleHit> by mutableStateOf(emptyList())
         private set
+    /** 智能匹配的单子：按分数从高到低（[SmartMatch.rank]）。老的 [hits] 顺序不变，界面要用哪一套自己选。 */
+    var smartHits: List<ScoredHit> by mutableStateOf(emptyList())
+        private set
+
+    /** 「最合适」：分数最高且过门槛的那条；一条都没过 = null。 */
+    var best: ScoredHit? by mutableStateOf(null)
+        private set
     var apply: ApplyState? by mutableStateOf(null)
         internal set
 
@@ -211,8 +270,19 @@ class SubtitleSearchSession(
     val searching: Boolean get() = listOf(server, thunder, shooter).any { it == SourceState.Busy || it == SourceState.Idle } || print == PrintState.Busy
 
     private fun publish() {
-        hits = rankHits(serverHits + shooterHits + thunderHits, target.runtimeMs)
+        val all = serverHits + shooterHits + thunderHits
+        hits = rankHits(all, target.runtimeMs)
+        // 智能匹配（1.4.1 P2）：同一批结果再按「和这一集对不对得上」打一次分，界面拿 smartHits / best 显示「最合适」
+        smartHits = SmartMatch.rank(all, smartFile())
+        best = smartHits.firstOrNull { it.score.passes }
     }
+
+    /** 打分用的「这一集」：手动改过查询词就拿查询词当片名 token（同一套打分）。 */
+    fun smartFile(): SmartFile = SmartFile.of(target, subtitleLangs, query)
+
+    /** 这一条的分数（界面每一行要写理由时用）。 */
+    fun scoreOf(hit: SubtitleHit): SmartScore =
+        smartHits.firstOrNull { it.hit.key == hit.key }?.score ?: SmartMatch.score(hit, smartFile())
 
     /** 全部重搜（打开时、换语言时）。 */
     suspend fun run() = coroutineScope {
@@ -325,19 +395,30 @@ class SubtitleSearchSession(
         }
         val q = query.trim().ifEmpty { target.nameQuery }
         thunder = SourceState.Busy
-        val r = net.getText(SubtitleProviders.thunderUrl(q))
+        var r = net.getText(SubtitleProviders.thunderUrl(q))
+        var hits = if (r.ok) SubtitleProviders.parseThunder(r.text, cid) else emptyList()
+        // 元数据查询没搜到 → 再试备选（中文剧集「剧名 第N集」/ 电影纯片名）；手动改过查询词就不擅自换
+        val alt = target.altQuery
+        if (r.ok && hits.isEmpty() && alt != null && alt != q && q == target.nameQuery) {
+            val r2 = net.getText(SubtitleProviders.thunderUrl(alt))
+            if (r2.ok) {
+                r = r2
+                hits = SubtitleProviders.parseThunder(r2.text, cid)
+            }
+        }
         thunder = if (r.ok) {
-            thunderHits = SubtitleProviders.parseThunder(r.text, cid)
+            thunderHits = hits
             publish()
-            SourceState.Done(thunderHits.size)
+            SourceState.Done(hits.size)
         } else SourceState.Failed(r.failed ?: "迅雷回了 ${r.status}")
     }
 
     private suspend fun searchShooter(hash: String?) {
         shooter = SourceState.Busy
-        val r = net.postForm(SubtitleProviders.SHOOTER_API, SubtitleProviders.shooterForm(hash, target.fileName, lang))
+        // 按名字配的那一路也用 nameQuery：strm 的 CDN 文件名无意义时它是元数据查询（§3）
+        val r = net.postForm(SubtitleProviders.SHOOTER_API, SubtitleProviders.shooterForm(hash, target.nameQuery, lang))
         shooter = if (r.ok) {
-            shooterHits = SubtitleProviders.parseShooter(r.text, target.fileName, lang, hashSent = !hash.isNullOrEmpty())
+            shooterHits = SubtitleProviders.parseShooter(r.text, target.nameQuery, lang, hashSent = !hash.isNullOrEmpty())
             publish()
             SourceState.Done(shooterHits.size)
         } else SourceState.Failed(r.failed ?: "射手回了 ${r.status}")
@@ -403,3 +484,14 @@ internal fun resolveLocation(base: String, loc: String): String = when {
     loc.startsWith("/") -> hostOf(base) + loc
     else -> base.substringBeforeLast('/') + "/" + loc
 }
+
+/** 哈希样的文件名（`a1b2c3d4`、32/40 位十六进制）：拿去按名字搜没有意义。 */
+private val HASH_NAME = Regex("^[0-9a-fA-F]{8,}$")
+
+/** 分词：拉丁 / 数字 / 中日韩文字以外都当分隔。 */
+private val NAME_SPLIT = Regex("[^A-Za-z0-9" + '\u4e00' + "-" + '\u9fff' + "]+")
+
+/** 网盘 / 中转常见的通用文件名：本身不含片名信息。 */
+private val GENERIC_FILE_WORDS = setOf("stream", "video", "play", "playlist", "index", "master", "download", "media", "file", "movie", "film", "tmp", "temp", "out", "output", "default", "main")
+
+private fun isCjkChar(c: Char): Boolean = c >= '\u4e00' && c <= '\u9fff'

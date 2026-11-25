@@ -102,7 +102,7 @@ object SubtitleSearchBoard {
         }
 
     private var netCache: SubtitleNet? = null
-    private fun net(): SubtitleNet = netCache ?: netFactory().also { netCache = it }
+    internal fun net(): SubtitleNet = netCache ?: netFactory().also { netCache = it }
 
     /** 测试缝：直接给一个搜索（离屏截图）。 */
     fun show(s: SubtitleSearchSession, fromPlayer: PlaySession?) {
@@ -119,7 +119,7 @@ object SubtitleSearchBoard {
         problem = null
     }
 
-    private fun online(g: AppGraph): Boolean = GugaPrefs.parse(g.deps.local.get(com.gugaart.ui.data.GugaSettingsStore.KEY)).subtitleOnline
+    internal fun online(g: AppGraph): Boolean = GugaPrefs.parse(g.deps.local.get(com.gugaart.ui.data.GugaSettingsStore.KEY)).subtitleOnline
 
     /** 播放器里打开：这一集的信息控制器都有了（播放信息、strm 目标），马上开搜。 */
     fun openInPlayer(play: PlaySession, g: AppGraph) {
@@ -164,8 +164,15 @@ object SubtitleSearchBoard {
      */
     fun choose(hit: SubtitleHit, g: AppGraph, scope: kotlinx.coroutines.CoroutineScope = g.scope) {
         val s = session ?: return
+        chooseIn(s, play, hit, g, scope)
+    }
+
+    /**
+     * 同 [choose]，但搜索是外面给的（[s]）：播放器里「找到完全对得上的字幕 · 用上」那句提示用自动加载那一次的搜索，不开栏（1.4.1 U2）。
+     * [player] = 那一次播放（null = 播放器外）。
+     */
+    fun chooseIn(s: SubtitleSearchSession, player: PlaySession?, hit: SubtitleHit, g: AppGraph, scope: kotlinx.coroutines.CoroutineScope = g.scope) {
         if (s.apply is ApplyState.Working) return
-        val player = play
         scope.launch {
             try {
                 if (hit.toEmby) {
@@ -338,6 +345,14 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
     val g = LocalGraph.current
     val colors = Guga.colors
     val scope = rememberCoroutineScope()
+    val scroll = rememberScrollState()
+    // 手动「换个名字搜」：搜完、有最合适的 → 滚回顶上（那张卡在上面，1.4.1 U2）
+    val searchName: () -> Unit = {
+        scope.launch {
+            s.runName()
+            if (s.best != null) scroll.animateScrollTo(0)
+        }
+    }
     BackHandlerOf(onClose)
     Box(
         Modifier.align(Alignment.CenterStart).width(width).fillMaxHeight()
@@ -347,7 +362,7 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
             .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } }
             .testTag("sub-search"),
     ) {
-        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Column(Modifier.fillMaxHeight().verticalScroll(scroll).padding(horizontal = 20.dp, vertical = 18.dp)) {
             DrawerHead(onClose)
             BasicText(s.target.title, Modifier.padding(top = 12.dp), style = Guga.song(14.sp, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
             BasicText(s.target.fileName, Modifier.padding(top = 2.dp), style = Guga.song(12.sp, color = colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -379,10 +394,15 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
-            // 结果
+            // 最合适（1.4.1 U2）：结果上面一张卡，一点即用；没有过门槛的就没有这张卡。手动搜索之后同一套打分，照样在这里
+            val best = s.best
+            if (best != null) BestCard(best, s.apply, inPlayer) { SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, best.hit, g, scope) }
+            // 结果（完整的单子照旧；最合适那条在行上也标一下）
             Column(Modifier.padding(top = 10.dp).testTag("sub-results")) {
                 if (s.hits.isEmpty() && !s.searching) BasicText("没有搜到。可以换个名字搜，或者换成英文。", Modifier.padding(vertical = 10.dp), style = Guga.song(13.sp, color = colors.dim), maxLines = 2)
-                s.hits.take(30).forEachIndexed { i, h -> HitRow(h, i, s.apply, inPlayer) { SubtitleSearchBoard.choose(h, g, scope) } }
+                s.hits.take(30).forEachIndexed { i, h ->
+                    HitRow(h, i, s.apply, inPlayer, best = best?.takeIf { it.hit.key == h.key }) { SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, h, g, scope) }
+                }
             }
             if (s.online) {
                 // 手动：换个名字搜（只重搜迅雷；服务器和射手不吃自由文本）
@@ -398,10 +418,10 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
                             singleLine = true,
                             cursorBrush = SolidColor(colors.spot),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { scope.launch { s.runName() } }),
+                            keyboardActions = KeyboardActions(onSearch = { searchName() }),
                         )
                     }
-                    PrimaryButton("搜索", { scope.launch { s.runName() } }, Modifier.padding(start = 10.dp).testTag("sub-query-go"), icon = null, enabled = s.query.isNotBlank() && s.thunder != SourceState.Busy)
+                    PrimaryButton("搜索", searchName, Modifier.padding(start = 10.dp).testTag("sub-query-go"), icon = null, enabled = s.query.isNotBlank() && s.thunder != SourceState.Busy)
                 }
                 BasicText(SUBTITLE_PRIVACY_NOTE, Modifier.padding(top = 14.dp).testTag("sub-privacy"), style = Guga.song(11.sp, color = colors.faint, lineHeight = 17.sp), maxLines = 4)
             }
@@ -412,7 +432,7 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
 
 /** 一条结果：名称 + 小字（简 · SRT · 迅雷 · 文件名）+ 右端去向印记；选中以后小字换成进度 / 结果。 */
 @Composable
-private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, inPlayer: Boolean, onPick: () -> Unit) {
+private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, inPlayer: Boolean, best: ScoredHit? = null, onPick: () -> Unit) {
     val colors = Guga.colors
     val press = rememberPressState()
     val mine = when (apply) {
@@ -428,6 +448,12 @@ private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, inPlayer: Boo
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
+            if (best != null) BasicText(
+                if (best.score.isExactHash) "最合适 · 完全对得上" else "最合适",
+                Modifier.padding(bottom = 2.dp).testTag("sub-hit-best"),
+                style = Guga.song(11.sp, FontWeight.Black, colors.spot, letterSpacing = 0.2.em),
+                maxLines = 1,
+            )
             BasicText(h.name, style = Guga.song(14.sp, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
             val line = if (mine) when (apply) {
                 is ApplyState.Working -> apply.step

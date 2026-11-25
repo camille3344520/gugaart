@@ -1,5 +1,6 @@
 package com.gugaart.ui.screens.search
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.HatchPlate
@@ -60,6 +62,13 @@ import com.gugaart.ui.data.titleOf
 import com.gugaart.ui.screens.LocalChrome
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.ReportScroll
+import com.gugaart.ui.search.DocMemo
+import com.gugaart.ui.search.FieldKind
+import com.gugaart.ui.search.SearchHit
+import com.gugaart.ui.search.LibraryEngine
+import com.gugaart.ui.search.SearchIndexStore
+import com.gugaart.ui.search.SearchMatch
+import com.gugaart.ui.search.SearchQuery
 import com.gugaart.ui.screens.StatusBand
 import com.gugaart.ui.screens.open
 import com.gugaart.ui.theme.Guga
@@ -73,20 +82,76 @@ import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
 import kotlinx.coroutines.delay
 
-/** 搜索要用的本地索引：全库的片名（电影 + 剧集），拼音首字母在本地匹配（decisions Q8），不问服务器。 */
+/**
+ * 搜索要用的本地索引。[titles] = 全库的电影 + 剧集（词云、「共 N 部」、题材 / 年份那一路用）；
+ * [engine] = 1.4.1 自己写的搜索（`ui/…/search/`，docs/search.md）：片（含合集 / 其它视频、原名、排序名）、单集、人物都在里面，
+ * 按「服务器 + 用户」缓存、10 分钟后台增量刷新（[SearchIndexStore]）。null = 旧的只有片名的索引（[loadSearchIndex]）。
+ */
 @Immutable
-data class SearchIndex(val titles: List<Title>, val total: Int)
+data class SearchIndex(val titles: List<Title>, val total: Int, val engine: LibraryEngine? = null)
 
 /** 服务器那一半：片 / 剧（1.3.1 起也问）、单集和人物（它们数量大，不建本地索引）。 */
 @Immutable
 data class RemoteHits(val episodes: List<Title>, val people: List<Person>, val titles: List<Title> = emptyList())
 
-/** 命中的一部片 + 命中的字的范围（上专色）。 */
+/**
+ * 命中的一部片 + 命中的字的范围（上专色）。
+ * [original] / [originalRange]：是原名（`OriginalTitle`）命中的——片名不高亮，界面在片名下面加一行「原名命中：Iron Man」，命中的原名上专色。
+ * [direct]：「剧名 + 集号」直达时，这一行是那部剧，[direct] 是那一集（界面给一个「第 12 集」签）。
+ */
 @Immutable
-data class TitleHit(val title: Title, val range: IntRange?)
+data class TitleHit(
+    val title: Title,
+    val range: IntRange?,
+    val original: String? = null,
+    val originalRange: IntRange? = null,
+    val direct: Title? = null,
+)
+
+/** 引擎的命中 → [TitleHit]（原名命中时带上原名和其中命中的字）。 */
+fun SearchHit<Title>.toTitleHit(): TitleHit =
+    if (field == FieldKind.Original) TitleHit(item, null, fieldText, fieldRange) else TitleHit(item, range)
+
+/** 原名命中那一行的前缀（纯函数用的常量；界面拼 [originalHitText]）。 */
+const val ORIGINAL_HIT_PREFIX = "原名命中："
+
+/** 「原名命中：Iron Man」（命中的原名上 [color]）；不是原名命中 = null。 */
+fun originalHitText(hit: TitleHit, color: androidx.compose.ui.graphics.Color): androidx.compose.ui.text.AnnotatedString? {
+    val o = hit.original ?: return null
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(ORIGINAL_HIT_PREFIX)
+        append(highlighted(o, hit.originalRange, color))
+    }
+}
+
+/** 直达那一集的签：「第 12 集」；不是第 1 季的写「第 2 季 第 12 集」。不是直达 = null。纯函数，有单测。 */
+fun directTag(hit: TitleHit): String? {
+    val e = hit.direct ?: return null
+    val ep = e.episodeNo ?: return null
+    return listOfNotNull(e.seasonNo?.takeIf { it != 1 }?.let { "第 $it 季" }, "第 $ep 集").joinToString(" ")
+}
+
+/** 搜索结果行上的类型名（以前只分剧集 / 电影，合集、其它视频也写成了「电影」）。纯函数，有单测。 */
+fun searchKindLabel(kind: Kind): String = when (kind) {
+    Kind.Movie -> "电影"
+    Kind.Series -> "剧集"
+    Kind.BoxSet -> "合集"
+    Kind.Episode -> "单集"
+    Kind.Season -> "季"
+    Kind.Person -> "人物"
+    Kind.Other -> "视频"
+}
 
 private val INDEX_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "Overview", "CommunityRating"))
 
+/** 1.4.1 的索引（三端的搜索页用这个）：[SearchIndexStore] 那份（内存 → 磁盘 → 服务器；旧了后台刷新）。 */
+suspend fun loadLibraryIndex(client: EmbyClient): SearchIndex {
+    val s = SearchIndexStore.get(client)
+    val titles = s.titles.filter { it.kind == Kind.Movie || it.kind == Kind.Series }
+    return SearchIndex(titles, titles.size, s.engine)
+}
+
+/** 只有电影 + 剧集片名的旧索引（发现页的词云、单测用；搜索页用 [loadLibraryIndex]）。 */
 suspend fun loadSearchIndex(client: EmbyClient, pageSize: Int = 5000): SearchIndex {
     // 1.3.1：分页取全（不再截断在 5000 部）——截断之外的片子以前本地永远搜不到。[pageSize] 只为单测能强制走多页。
     val out = ArrayList<Title>()
@@ -105,15 +170,41 @@ suspend fun loadSearchIndex(client: EmbyClient, pageSize: Int = 5000): SearchInd
 }
 
 /**
- * 本地匹配：原文命中优先、越靠前越好；全是字母数字的查询词再按拼音首字母匹配（`yxj` → 颜心记）。
+ * 本地匹配（1.4.1 起走 `ui/…/search/` 的分档匹配，docs/search.md）：整词 > 前缀 > 子串 > 全拼 > 首字母 > 中文缩写 > 英文前缀 / 错一个字母；
+ * 繁简、全半角、标点、中文数字 / 罗马数字都先折成一样。
  * 查询词正好是一个题材（「喜剧」）或年份（「2024」）时，片名命中之后再接上这个题材 / 这一年的片子（词云里点的多半是这些），高分在前。纯函数，有单测。
  */
 fun searchTitles(index: List<Title>, query: String, limit: Int = 30): List<TitleHit> {
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
-    val byName = index.mapNotNull { t -> Pinyin.score(t.name, q)?.let { Triple(t, it, Pinyin.match(t.name, q)) } }
-        .sortedWith(compareBy<Triple<Title, Int, IntRange?>> { it.second }.thenBy { it.first.name.length }.thenBy { it.first.name })
-        .map { TitleHit(it.first, it.third) }
+    val byName = SearchMatch.search(DocMemo.titles(index), SearchQuery(q), limit).map { it.toTitleHit() }
+    return withTags(index, q, byName, limit)
+}
+
+/**
+ * 搜索页用的：[SearchIndex.engine] 在就用它（片名 / 原名 / 排序名、合集、其它视频；「剧名 + 集号」时那部剧排第一），
+ * 不在（旧索引）就退回 [searchTitles] 的列表版。
+ */
+fun searchTitles(index: SearchIndex?, query: String, limit: Int = 30): List<TitleHit> {
+    val engine = index?.engine ?: return searchTitles(index?.titles.orEmpty(), query, limit)
+    val q = query.trim()
+    if (q.isEmpty()) return emptyList()
+    val direct = engine.directWithSeries(q)?.let { (series, eps) -> series?.let { TitleHit(it.item, null, direct = eps.firstOrNull()?.item) } }
+    val byName = (listOfNotNull(direct) + engine.titles(q, limit).map { it.toTitleHit() }).distinctBy { it.title.id }
+    return withTags(index.titles, q, byName, limit)
+}
+
+/** 单集（本地索引）：「剧名 + 集号」直达的那一集在最前，接着是集名命中的。索引没好 → 空（界面用服务器那一路）。 */
+fun searchEpisodesLocal(index: SearchIndex?, query: String, limit: Int = 30): List<Title> =
+    index?.engine?.episodes(query.trim(), limit)?.map { it.item }.orEmpty()
+
+/** 本地的单集在前，服务器另外找到的接在后面（同一集只留一次）。 */
+fun mergeEpisodes(local: List<Title>, remote: List<Title>): List<Title> {
+    val seen = local.mapTo(HashSet()) { it.id }
+    return local + remote.filter { seen.add(it.id) }
+}
+
+private fun withTags(index: List<Title>, q: String, byName: List<TitleHit>, limit: Int): List<TitleHit> {
     val year = q.toIntOrNull()?.takeIf { q.length == 4 && it in 1880..2100 }
     val byTag = if (year == null && index.none { t -> t.genres.any { it.equals(q, ignoreCase = true) } }) emptyList() else {
         val named = byName.map { it.title.id }.toSet()
@@ -127,6 +218,12 @@ fun searchTitles(index: List<Title>, query: String, limit: Int = 30): List<Title
 suspend fun searchRemote(client: EmbyClient, query: String): RemoteHits {
     val q = query.trim()
     if (q.isEmpty()) return RemoteHits(emptyList(), emptyList())
+    // 1.4.1：本地索引好了就不再问 Emby（它的 SearchTerm 只认词的开头，本地那一路是它的超集）；人物没取到（服务器关了 /Persons）的话人物照旧问
+    SearchIndexStore.peek(client)?.let { snap ->
+        val people = if (snap.people.isNotEmpty() || Pinyin.isInitialsQuery(q)) emptyList()
+        else client.searchPeople(q, limit = 12).map { Person(it.id, it.name, photo = client.personImage(it.id, it.imageTag, ImageUrlOptions(maxWidth = 360))) }
+        return RemoteHits(emptyList(), people)
+    }
     // 1.3.1：片 / 剧**任何词都问服务器**。以前「≤6 个纯字母」整段跳过（本意是挡拼音首字母 yxj），
     // 把 dune / up / her 这类英文片名也一起挡了：本地索引只有中文片名时就「搜不到」。
     // 片 + 剧这一路条目少，拼音首字母问过去也只是 0 条，不亏。
@@ -171,7 +268,7 @@ fun SearchScreen(initial: String?) {
         delay(250)
         settled = query
     }
-    val index = rememberLoad("search-index") { loadSearchIndex(it) }
+    val index = rememberLoad("search-index") { loadLibraryIndex(it) }
     val remote = rememberLoad("search-remote", settled) { searchRemote(it, settled) }
     // 1.3.1：服务器那一路的结果，只在「就是当前这个词、而且这份结果就是按这个词取来的」时算数（remoteResultsReady）。
     // 以前只看 settled == query：换了词、新请求还在路上时，上一个词的结果会被当成当前词的结果画出来
@@ -180,9 +277,9 @@ fun SearchScreen(initial: String?) {
     // 本地命中 + 服务器片名兜底（去重，本地优先）
     val remoteTitles = remote.value?.titles.orEmpty().takeIf { remoteReady }.orEmpty()
     val hits = remember(index.value, remoteTitles, query) {
-        val local = searchTitles(index.value?.titles.orEmpty(), query)
+        val local = searchTitles(index.value, query)
         val seen = local.map { it.title.id }.toSet()
-        local + remoteTitles.filter { it.id !in seen }.map { TitleHit(it, Pinyin.match(it.name, query)) }
+        local + remoteTitles.filter { it.id !in seen }.map { TitleHit(it, SearchMatch.range(it.name, query)) }
     }
     // 演员：本地人名单（名字 / 拼音缩写）+ 服务器的人物搜索；打名字正好是某位演员 → 演员和 ta 的作品排在前面，缩写照旧片子在前
     val peopleIndex = rememberLoad("search-people") { loadPeopleIndex(it) }
@@ -233,7 +330,7 @@ fun SearchScreen(initial: String?) {
                 if (query.isNotEmpty()) TextLink("清除", { query = "" }, Modifier.padding(start = 12.dp), color = colors.dim)
             }
             Rule(strong = true)
-            val episodes = remote.value?.episodes.orEmpty().takeIf { remoteReady }.orEmpty()
+            val episodes = remember(index.value, remote.value, remoteReady, query) { mergeEpisodes(searchEpisodesLocal(index.value, query), remote.value?.episodes.orEmpty().takeIf { remoteReady }.orEmpty()) }
             when {
                 q.isEmpty() -> PhoneSearchIdle(recents.items, cloud, ::pick, recents::clear)
                 hits.isEmpty() && episodes.isEmpty() && people.isEmpty() ->
@@ -270,16 +367,16 @@ fun SearchScreen(initial: String?) {
                         if (rest.isNotEmpty()) {
                             SectionHeader("片", "TITLES", Modifier.padding(top = dimens.sectionGap), trailing = "${rest.size}")
                             for ((i, h) in rest.withIndex()) {
-                                TitleRow(i + 1, h) { openHit(h.title.id) }
+                                TitleRow(i + 1, h, { e -> openHit(e.id) }) { openHit(h.title.id) }
                                 Rule()
                             }
                         }
                     } else if (hits.isNotEmpty()) {
                         SectionHeader("片", "TITLES", Modifier.padding(top = 26.dp), trailing = "${hits.size}")
-                        BestMatch(hits.first()) { openHit(hits.first().title.id) }
+                        BestMatch(hits.first(), { openHit(hits.first().title.id) }, { e -> openHit(e.id) })
                         Rule()
                         for ((i, h) in hits.drop(1).withIndex()) {
-                            TitleRow(i + 2, h) { openHit(h.title.id) }
+                            TitleRow(i + 2, h, { e -> openHit(e.id) }) { openHit(h.title.id) }
                             Rule()
                         }
                     }
@@ -290,7 +387,7 @@ fun SearchScreen(initial: String?) {
                             Row(Modifier.fillMaxWidth().heightIn(min = 86.dp).pressGraphics(press).pressable(press, label = e.name) { openHit(e.seriesId ?: e.id) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 BasicText("E${e.episodeNo ?: ""}", Modifier.width(66.dp), style = Guga.numeral(if ((e.episodeNo ?: 0) >= 1000) 15.sp else type.row * 1.1f, colors.spot), maxLines = 1)
                                 Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                                    BasicText(highlighted(e.name, Pinyin.match(e.name, q), colors.spot), style = Guga.song(type.row, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    BasicText(highlighted(e.name, SearchMatch.range(e.name, q), colors.spot), style = Guga.song(type.row, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     BasicText(
                                         listOfNotNull(e.seriesName, e.seasonNo?.let { "第 $it 季" }, "已看".takeIf { e.played }).joinToString(" · "),
                                         Modifier.padding(top = 4.dp),
@@ -316,7 +413,7 @@ fun SearchScreen(initial: String?) {
 
 /** 最佳匹配：海报 + 片名（logo / 宋体，**允许折行**）+ 年份 · 题材 · 集数 + 简介头几行 +「翻开 →」。是 16:9 以内的图版，不是全窗。 */
 @Composable
-private fun BestMatch(hit: TitleHit, onOpen: () -> Unit) {
+private fun BestMatch(hit: TitleHit, onOpen: () -> Unit, onDirect: (Title) -> Unit) {
     val colors = Guga.colors
     val type = Guga.type
     val t = hit.title
@@ -332,8 +429,10 @@ private fun BestMatch(hit: TitleHit, onOpen: () -> Unit) {
                 // 超长片名：允许折行，命中的字上专色
                 BasicText(highlighted(t.name, hit.range, colors.spot), style = Guga.song(if (Rules.titleUnits(t.name) > 9) type.row * 1.15f else type.title * 0.8f, FontWeight.Black, lineHeight = type.title * 0.95f), maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
+            originalHitText(hit, colors.spot)?.let { BasicText(it, Modifier.padding(top = 6.dp).testTag("search-original"), style = Guga.song(type.caption, color = colors.dim), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            directTag(hit)?.let { tag -> DirectTag(tag, Modifier.padding(top = 8.dp)) { onDirect(hit.direct!!) } }
             BasicText(
-                listOfNotNull(t.year?.toString(), t.genres.take(2).joinToString(" · ").takeIf { it.isNotEmpty() }, t.count?.takeIf { t.kind == Kind.Series }?.let { "全 $it 集" }).joinToString(" · "),
+                listOfNotNull(searchKindLabel(t.kind).takeIf { t.kind != Kind.Movie && t.kind != Kind.Series }, t.year?.toString(), t.genres.take(2).joinToString(" · ").takeIf { it.isNotEmpty() }, t.count?.takeIf { t.kind == Kind.Series }?.let { "全 $it 集" }).joinToString(" · "),
                 Modifier.padding(top = 8.dp),
                 style = Guga.song(type.caption * 1.08f, FontWeight.Bold),
                 maxLines = 1,
@@ -347,7 +446,7 @@ private fun BestMatch(hit: TitleHit, onOpen: () -> Unit) {
 
 /** 其余命中的片：斜体专色编号 + 片名（两行截断，命中的字上专色）+ 副行 + 小海报 46 × 69。 */
 @Composable
-private fun TitleRow(number: Int, hit: TitleHit, onOpen: () -> Unit) {
+private fun TitleRow(number: Int, hit: TitleHit, onDirect: (Title) -> Unit = {}, onOpen: () -> Unit) {
     val colors = Guga.colors
     val type = Guga.type
     val t = hit.title
@@ -356,8 +455,10 @@ private fun TitleRow(number: Int, hit: TitleHit, onOpen: () -> Unit) {
         BasicText(Rules.episodeNo(number), Modifier.width(54.dp), style = Guga.numeral(26.sp, colors.spot), maxLines = 1)
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             BasicText(highlighted(t.name, hit.range, colors.spot), style = Guga.song(type.row, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            originalHitText(hit, colors.spot)?.let { BasicText(it, Modifier.padding(top = 4.dp).testTag("search-original"), style = Guga.song(type.caption, color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            directTag(hit)?.let { tag -> DirectTag(tag, Modifier.padding(top = 6.dp)) { onDirect(hit.direct!!) } }
             BasicText(
-                listOfNotNull(if (t.kind == Kind.Series) "剧集" else "电影", t.year?.toString(), t.rating?.let { "$it 分" }).joinToString(" · "),
+                listOfNotNull(searchKindLabel(t.kind), t.year?.toString(), t.rating?.let { "$it 分" }).joinToString(" · "),
                 Modifier.padding(top = 4.dp),
                 style = Guga.song(type.caption, color = colors.dim).copy(fontStyle = FontStyle.Normal),
                 maxLines = 1,
@@ -368,3 +469,33 @@ private fun TitleRow(number: Int, hit: TitleHit, onOpen: () -> Unit) {
         }
     }
 }
+
+/**
+ * 「剧名 + 集号」直达的签（docs/search.md §4）：米白细框 + 米白粗字「第 12 集　→」，点了直接打开那一集（不是那部剧）。
+ * 纸面语言的小方框，不用专色当底、不靠颜色表达。[size] 不给 = 手机的说明字号。
+ */
+@Composable
+fun DirectTag(tag: String, modifier: Modifier = Modifier, size: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified, onOpen: () -> Unit) {
+    val colors = Guga.colors
+    val s = if (size == androidx.compose.ui.unit.TextUnit.Unspecified) Guga.type.caption else size
+    val press = rememberPressState()
+    BasicText(
+        "$tag　→",
+        modifier.pressGraphics(press).pressable(press, label = tag, onClick = onOpen).border(1.dp, colors.ink).padding(horizontal = 8.dp, vertical = 3.dp).testTag("search-direct"),
+        style = Guga.song(s, FontWeight.Bold, colors.ink, letterSpacing = 0.06.em),
+        maxLines = 1,
+    )
+}
+
+/** 电脑左栏「联想」的一行：一部片（[title] 在）或一位人物。[note] = 名字后面的小字（类型 · 年份 · 直达的那一集 / 「人物」）。 */
+@Immutable
+data class Suggestion(val id: String, val name: String, val range: IntRange?, val note: String, val title: TitleHit? = null)
+
+/**
+ * 联想：片最多 7 条在前，接着最多 2 位人物（设计稿 `design/desktop/js/screens-a2.js` 的 `sug`：片 7 + 人物 2 + 合集 2；合集已经在片里）。
+ * 以前只有片：只有演员命中时左栏是一个空的「联想」。纯函数，有单测。
+ */
+fun suggestionsOf(titles: List<TitleHit>, people: List<PersonHit>): List<Suggestion> =
+    titles.take(7).map { h ->
+        Suggestion(h.title.id, h.title.name, h.range, listOfNotNull(searchKindLabel(h.title.kind), h.title.year?.toString(), directTag(h)).joinToString(" · "), h)
+    } + people.take(2).map { Suggestion(it.person.id, it.person.name, it.range, "人物") }

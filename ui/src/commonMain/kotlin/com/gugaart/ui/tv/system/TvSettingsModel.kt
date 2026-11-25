@@ -3,7 +3,14 @@ package com.gugaart.ui.tv.system
 import com.gugaart.ui.update.updater
 import com.gugaart.ui.data.GugaPrefs
 import com.gugaart.ui.data.GugaSettingsStore
+import com.gugaart.ui.data.FontChoice
+import com.gugaart.ui.data.SUB_SCALES
+import com.gugaart.ui.data.SubOutline
+import com.gugaart.ui.data.SubPosition
+import com.gugaart.ui.data.SubStylePrefs
 import com.gugaart.ui.data.SubtitleDefault
+import com.gugaart.ui.data.currentLabel
+import com.gugaart.ui.data.subScaleText
 import com.gugaart.ui.screens.settings.AREA_CHOICES
 import com.gugaart.ui.screens.settings.GugaSection
 import com.gugaart.ui.screens.settings.NotesChoice
@@ -82,8 +89,47 @@ class TvHead(override val label: String, val english: String) : TvSetting {
 /** 开关：确定 = 开 / 关。 */
 class TvToggle(override val id: String, override val label: String, override val note: String?, val on: Boolean, val set: (Boolean) -> Unit) : TvSetting
 
-/** 选择器里的一项。 */
-class TvPick(val label: String, val note: String? = null)
+/** 选择器里的一项。[locked]：灰着、按了不变（「参与的服务器」里正在用的那一台）；[tag]：名字后面的细框小签（「本台」）。 */
+class TvPick(val label: String, val note: String? = null, val locked: Boolean = false, val tag: String? = null)
+
+/**
+ * 「多台服务器」那一组（1.5.0 B4-UI）要的东西：已保存的服务器（数据层的列表，同一台几个账号只算一台）、
+ * 现在的偏好、写回（数据层的 [com.gugaart.ui.data.OtherServersPrefsStore]）。null = 不出这一组。
+ */
+class TvOtherServers(
+    val servers: List<com.gugaart.ui.servers.ServerEntry>,
+    val prefs: com.gugaart.ui.data.OtherServersPrefs,
+    val setEnabled: (Boolean) -> Unit,
+    val setIncluded: (serverId: String, on: Boolean) -> Unit,
+)
+
+/** 「多台服务器」的行：开关 + 已保存两台以上时的勾选单（正在用的那台灰着、写「本台」）。纯数据，有单测。 */
+fun tvOtherServerRows(o: TvOtherServers): List<TvSetting> {
+    val copy = com.gugaart.ui.screens.settings.OtherServersCopy
+    val servers = o.servers.distinctBy { it.serverId }
+    val ported = com.gugaart.ui.servers.hostsNeedingPort(servers)
+    val rows = mutableListOf<TvSetting>(
+        TvHead(copy.GROUP, "SERVERS"),
+        TvToggle("otherServers", copy.TOGGLE, copy.TOGGLE_NOTE, o.prefs.enabled) { o.setEnabled(it) },
+    )
+    if (servers.size >= 2) {
+        val others = servers.filterNot { it.isCurrent }
+        val on = servers.indices.filter { i -> servers[i].isCurrent || copy.included(servers[i], o.prefs) }.toSet()
+        rows += TvChoice(
+            "otherServersList", copy.LIST, if (o.prefs.enabled) copy.LIST_NOTE else copy.LIST_OFF,
+            copy.summary(others, o.prefs),
+            servers.map { e ->
+                val host = com.gugaart.ui.servers.serverHost(e.address)
+                TvPick(com.gugaart.ui.servers.serverTitle(e), if (host in ported) com.gugaart.ui.servers.serverHostPort(e.address) else host, locked = e.isCurrent, tag = if (e.isCurrent) copy.CURRENT else null)
+            },
+            on, "SERVERS", multi = true,
+        ) { i ->
+            val e = servers[i]
+            if (!e.isCurrent) o.setIncluded(e.serverId, !copy.included(e, o.prefs))
+        }
+    }
+    return rows
+}
 
 /** 一组值里选一个（或几个，[multi]）：确定 = 打开选择器；选择器里确定 = 选中并收起（多选 = 勾 / 去勾，不收起）。 */
 class TvChoice(
@@ -95,8 +141,13 @@ class TvChoice(
     val selected: Set<Int>,
     val english: String = "",
     val multi: Boolean = false,
+    /** 字幕样式的几行：选择器里焦点停在第 i 项时，预览条按这份样式排（「字体选择带预览」）。null = 不出预览。 */
+    val preview: ((Int) -> SubStylePrefs)? = null,
     val pick: (Int) -> Unit,
 ) : TvSetting
+
+/** 字体的两张单子（字幕 / 弹幕；画面那一层算好交进来，这一层保持纯数据）和字幕字体的状态那一句。 */
+class TvFontChoices(val subtitle: List<FontChoice>, val danmaku: List<FontChoice>, val subtitleStatus: String? = null)
 
 /** 只读的一行（版本号、设备名）：不接焦点。 */
 class TvInfo(override val id: String, override val label: String, val value: String?, override val note: String? = null) : TvSetting
@@ -210,6 +261,10 @@ fun tvSettingRows(
     backup: com.gugaart.ui.backup.BackupController? = null,
     /** Trakt（账号分区里）。null = 不出这一块。 */
     trakt: TvTrakt? = null,
+    /** 字幕 / 弹幕的字体单子（1.4.1）。null = 字幕样式里没有「字体」一行、弹幕的字体只列上游的四款。 */
+    fonts: TvFontChoices? = null,
+    /** 播放分区的「多台服务器」（1.5.0）。null = 不出这一组。 */
+    otherServers: TvOtherServers? = null,
 ): List<TvSetting> = when (section) {
     GugaSection.Look -> {
         val ui = settings.uiSettings
@@ -269,7 +324,7 @@ fun tvSettingRows(
             one("skipMarkers", "跳过片头 / 片尾", null, listOf("off" to "关闭", "button" to "显示按钮", "auto" to "自动跳过"), p.skipMarkers, "SKIP") { put("skipMarkers", JsonPrimitive(it)) },
             one("seekStep", "快进 / 快退步长", "长按时逐级加速到 ×3", SEEK_STEP_CHOICES_SEC.map { it to "$it 秒" }, p.seekStepSec, "STEP") { put("seekStepSec", JsonPrimitive(it)) },
             steps("defaultRate", "默认倍速", null, RATE_CHOICES, p.defaultRate, ::scaleText, "SPEED") { put("defaultRate", num(it)) },
-        )
+        ) + (otherServers?.let(::tvOtherServerRows) ?: emptyList())
     }
     GugaSection.Strm -> {
         val a = StrmSettings.of(settings)
@@ -296,8 +351,10 @@ fun tvSettingRows(
             }) { put("subtitleMode", JsonPrimitive(it)) },
             langs("subtitleLangs", "首选字幕语言", SUBTITLE_LANGS, p.subtitleLangs, "SUBTITLES") { put("subtitleLangs", jsonStrings(it)) },
             // 字幕搜索（1.4.0，docs/subtitle-search.md §6）：画报自己的键 subtitleOnline
-            TvToggle("subtitleOnline", "在线字幕源（迅雷 / 射手）", "搜索字幕时也问迅雷和射手：会发送文件名和文件指纹；关掉只用服务器的字幕源", prefs.subtitleOnline) { on -> store.update { it.copy(subtitleOnline = on) } },
-        )
+            TvToggle("subtitleOnline", "在线字幕源（迅雷 / 射手）", com.gugaart.ui.screens.settings.SUBTITLE_ONLINE_NOTE, prefs.subtitleOnline) { on -> store.update { it.copy(subtitleOnline = on) } },
+            // 字幕智能匹配（1.4.1 U2）：画报自己的键 subtitleAutoBest，默认关
+            TvToggle("subtitleAutoBest", "自动加载最合适的字幕", com.gugaart.ui.screens.settings.SUBTITLE_AUTO_BEST_NOTE, prefs.subtitleAutoBest) { on -> store.update { it.copy(subtitleAutoBest = on) } },
+        ) + tvSubtitleStyleRows(prefs.subStyle, store, fonts?.subtitle, fonts?.subtitleStatus)
     }
     GugaSection.Danmaku -> {
         val dm = settings.danmakuPrefs
@@ -331,7 +388,9 @@ fun tvSettingRows(
             TvToggle("dm-top", "顶部弹幕", null, r.top) { mode("top", it) },
             TvToggle("dm-bottom", "底部弹幕", null, r.bottom) { mode("bottom", it) },
             TvHead("样式", "STYLE"),
-            one("dm-font", "字体", null, DanmakuFont.entries.map { it to it.label }, r.font, "FONT") { render("font", JsonPrimitive(it.id)) },
+            fonts?.danmaku?.let { list ->
+                TvChoice("dm-font", "字体", "和字幕共用同一套字体", list.currentLabel(), list.map { TvPick(it.label, it.note) }, list.indices.filter { list[it].selected }.toSet(), "FONT") { list[it].pick() }
+            } ?: one("dm-font", "字体", null, DanmakuFont.entries.map { it to it.label }, r.font, "FONT") { render("font", JsonPrimitive(it.id)) },
             one("dm-weight", "粗细", null, DanmakuWeight.entries.map { it to it.label }, r.weight, "WEIGHT") { render("weight", JsonPrimitive(it.id)) },
             TvHead("匹配", "MATCHING"),
             TvToggle("autoMatch", "播放时自动匹配弹幕", "按 TMDB 身份 + 集号匹配", dm.autoMatch) { put("autoMatch", JsonPrimitive(it)) },
@@ -497,4 +556,39 @@ private fun tvTraktRows(t: TvTrakt): List<TvSetting> {
         }
     }
     return rows
+}
+
+/**
+ * 设置 › 字幕与音轨 的「字幕样式」一组在电视上的行（和手机 / 电脑同一个键 `subStyle`）：字号、粗体、字体（[fonts] 为 null 时不排）、描边、阴影、
+ * 位置、是否也改 ASS、恢复默认。字号 / 字体 / 描边 / 位置的选择器里，焦点停在哪一项，上面的预览条就按那一项排。纯数据，有单测。
+ */
+fun tvSubtitleStyleRows(s: SubStylePrefs, store: GugaSettingsStore, fonts: List<FontChoice>?, fontStatus: String?): List<TvSetting> {
+    fun set(f: (SubStylePrefs) -> SubStylePrefs) = store.update { it.copy(subStyle = f(it.subStyle)) }
+    val at = nearestIndex(SUB_SCALES, s.scale)
+    return listOfNotNull(
+        TvHead("字幕样式", "STYLE"),
+        TvChoice(
+            "sub-scale", "字号", com.gugaart.ui.screens.settings.SUBTITLE_STYLE_NOTE, subScaleText(s.scale), SUB_SCALES.map { TvPick(subScaleText(it)) }, setOf(at), "SIZE",
+            preview = { i -> s.copy(scale = SUB_SCALES[i]) },
+        ) { i -> set { it.copy(scale = SUB_SCALES[i]) } },
+        TvToggle("sub-bold", "粗体", null, s.bold) { on -> set { it.copy(bold = on) } },
+        fonts?.let { list ->
+            TvChoice(
+                "sub-font", "字体", fontStatus ?: "和弹幕共用：思源黑体、思源宋体、霞鹜文楷、得意黑随包，站酷快乐体用到时下载", list.currentLabel(),
+                list.map { TvPick(it.label, it.note) }, list.indices.filter { list[it].selected }.toSet(), "FONT",
+                preview = { i -> s.copy(font = list[i].key) },
+            ) { i -> list[i].pick() }
+        },
+        TvChoice(
+            "sub-outline", "描边", null, s.outline.label, SubOutline.entries.map { TvPick(it.label) }, setOf(SubOutline.entries.indexOf(s.outline)), "OUTLINE",
+            preview = { i -> s.copy(outline = SubOutline.entries[i]) },
+        ) { i -> set { it.copy(outline = SubOutline.entries[i]) } },
+        TvToggle("sub-shadow", "阴影", null, s.shadow) { on -> set { it.copy(shadow = on) } },
+        TvChoice(
+            "sub-position", "位置", "最下面一行离画面底边多远", s.position.label, SubPosition.entries.map { TvPick(it.label) }, setOf(SubPosition.entries.indexOf(s.position)), "POSITION",
+            preview = { i -> s.copy(position = SubPosition.entries[i]) },
+        ) { i -> set { it.copy(position = SubPosition.entries[i]) } },
+        TvToggle("sub-overrideAss", "也改 ASS 特效字幕", "默认不改：ASS 自带的字体、颜色、位置照原样，只跟着字号缩放", s.overrideAss) { on -> set { it.copy(overrideAss = on) } },
+        TvAction("sub-reset", "恢复默认的字幕样式", null, "恢复默认", confirm = "再按一次确定：恢复默认的字幕样式") { set { SubStylePrefs() } },
+    )
 }

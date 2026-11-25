@@ -45,6 +45,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
@@ -292,7 +293,9 @@ object DesktopKeys {
         // Esc（和根上的「返回」一样在抬起时处理）：先关我们的菜单，再收页面自己的面板（[onEscape]）；都没有就不消费，交回根上的「返回」
         if (e.key == Key.Escape) {
             if (e.type != KeyEventType.KeyUp) return false
-            val open = DesktopContextMenu.target != null || DesktopAccountMenu.open || DesktopAccountMenu.switching || DesktopAccountMenu.leaving
+            // 换服务器的下拉：先收推开的管理，再收下拉
+            if (DesktopServerMenu.escape()) return true
+            val open = DesktopContextMenu.target != null || DesktopAccountMenu.open || DesktopAccountMenu.leaving
             if (open) {
                 DesktopContextMenu.close()
                 DesktopAccountMenu.closeAll()
@@ -304,6 +307,11 @@ object DesktopKeys {
         val ctrl = e.isCtrlPressed || e.isMetaPressed
         if (e.isAltPressed) return false
         if (ctrl) {
+            // 1.5.0：Ctrl Shift S / ⌘⇧S = 换服务器的下拉
+            if (e.isShiftPressed && e.key == Key.S) {
+                if (!DesktopCommandSink.claimOnce(DesktopCommand.Servers)) return true
+                return DesktopCommands.run(DesktopCommand.Servers, graph, nav, chrome, idle)
+            }
             val c = when (e.key) {
                 Key.K -> DesktopCommand.Search
                 Key.Comma -> DesktopCommand.Settings
@@ -336,6 +344,8 @@ object DesktopKeys {
         }
         if (e.key == Key.F5) return DesktopCommands.run(DesktopCommand.Reprint, graph, nav, chrome, idle)
         if (typing || graph.isTyping) return false
+        // 换服务器的下拉开着：1–9 = 切到第几台（行首印着数字）
+        if (DesktopServerMenu.open) digitOf(e.key)?.let { n -> return DesktopServerMenu.pickNth(n) }
         return when (e.key) {
             Key.Slash -> DesktopCommands.run(DesktopCommand.Search, graph, nav, chrome, idle)
             Key.V -> DesktopCommands.run(DesktopCommand.Favorite, graph, nav, chrome, idle)
@@ -345,6 +355,20 @@ object DesktopKeys {
             Key.Enter, Key.NumPadEnter -> onEnter?.invoke() ?: false
             else -> false
         }
+    }
+
+    /** 数字键（主键盘一排和小键盘）→ 1–9；别的键 = null。 */
+    internal fun digitOf(key: Key): Int? = when (key) {
+        Key.One, Key.NumPad1 -> 1
+        Key.Two, Key.NumPad2 -> 2
+        Key.Three, Key.NumPad3 -> 3
+        Key.Four, Key.NumPad4 -> 4
+        Key.Five, Key.NumPad5 -> 5
+        Key.Six, Key.NumPad6 -> 6
+        Key.Seven, Key.NumPad7 -> 7
+        Key.Eight, Key.NumPad8 -> 8
+        Key.Nine, Key.NumPad9 -> 9
+        else -> null
     }
 
     fun openSearch(graph: AppGraph) {

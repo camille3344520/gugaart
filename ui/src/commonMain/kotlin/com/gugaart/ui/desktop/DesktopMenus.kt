@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,12 +22,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,7 +45,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.gugaart.ui.Today
-import com.gugaart.ui.components.ProofTick
 import com.gugaart.ui.data.Kind
 import com.gugaart.ui.data.Rules
 import com.gugaart.ui.data.Title
@@ -61,11 +56,6 @@ import com.gugaart.ui.screens.togglePlayed
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.ui.LocalGraph
-import com.gugugaga.core.EmbyException
-import com.gugugaga.core.StoredAccount
-import com.gugugaga.core.StoredServer
-import com.gugugaga.core.apiBaseOf
-import com.gugugaga.core.describeEmbyError
 import com.gugugaga.ds.components.GlassMorph
 import com.gugugaga.ds.components.PopoverAlign
 import com.gugugaga.ds.glass.MaterialName
@@ -76,7 +66,6 @@ import com.gugugaga.ds.physics.pressGraphics
 import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
 import com.gugugaga.ds.theme.LocalOnGlass
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** 菜单 / 对话框的数（设计稿 `p=account` `p=dialogs`，rem）。 */
@@ -90,22 +79,17 @@ object DeskMenuSpec {
     const val CTX_W = 23.2f
     const val CTX_ROW = 3.6f
 
-    /** 「换一个片库」对话框的宽。 */
-    const val SWITCH_W = 64f
 }
 
 /**
  * 账号菜单：从账号圆钮里「长」出来（上游 `GlassMorph`：圆钮的 `Clear` 玻璃一路变成面板的 `Pop`，内容是纸面语言的字）。设计稿 `p=account`（默认 / `switch`）。
  * 状态放在这里，[DesktopChrome] 画圆钮（挂 [anchor]）并调 [Host]。
  *
- * 切换账号 / 换服务器 / 退出登录全部是上游 `SessionManager` 的动作（做法同手机的 `screens/me/MeScreen.kt`）；添加服务器 / 登录别的账号走上游路由。
- * 「换一个片库」和「退出登录」的二次确认是**纸片**对话框，不是玻璃。
+ * 退出登录是上游 `SessionManager` 的动作；「切换账号 / 服务器」打开顶栏服务器胶囊的下拉（[DesktopServerMenu]，1.5.0 取代原来的「换一个片库」对话框）。
+ * 「退出登录」的二次确认是**纸片**对话框，不是玻璃。
  */
 object DesktopAccountMenu {
     var open: Boolean by mutableStateOf(false)
-
-    /** 「换一个片库」对话框开着（设计稿 `account-switch`）。 */
-    var switching: Boolean by mutableStateOf(false)
 
     /** 退出登录的二次确认开着。 */
     var leaving: Boolean by mutableStateOf(false)
@@ -119,7 +103,6 @@ object DesktopAccountMenu {
 
     fun closeAll() {
         open = false
-        switching = false
         leaving = false
     }
 
@@ -159,9 +142,11 @@ object DesktopAccountMenu {
                     open = false
                     g.nav.navigate(Route.History("favorites"))
                 }
-                AccountRow(GuguIcon.UserRound, "切换账号 / 服务器", tag = "account-switch") {
+                // 1.5.0：原来弹「换一个片库」对话框；现在打开顶栏服务器胶囊的下拉（同一份列表，账号各占一行）
+                // 键位提示只在 Mac 上印（「⌘⇧S」短；Windows 的「Ctrl Shift S」在 28 rem 宽的菜单里会把字挤掉，写在下拉底下）
+                AccountRow(GuguIcon.UserRound, "切换账号 / 服务器", if (LocalDesktopHost.current.modifier == ModifierGlyph.Cmd) DesktopCommand.Servers.cmdHint else null, tag = "account-switch") {
                     open = false
-                    switching = true
+                    DesktopServerMenu.open = true
                 }
                 AccountRule()
                 AccountRow(GuguIcon.SlidersHorizontal, "设置", DesktopCommand.Settings.hint(LocalDesktopHost.current.modifier) ?: "Ctrl ,") {
@@ -180,7 +165,6 @@ object DesktopAccountMenu {
                 }
             }
         }
-        if (switching) SwitchDialog()
         if (leaving) {
             PaperDialog("desktop-leave", onDismiss = { leaving = false }, width = 44f) {
                 BasicText("退出「${s.userName}」", style = Guga.song(rsp(2.6f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -233,111 +217,6 @@ object DesktopAccountMenu {
     @Composable
     private fun AccountRule() {
         Box(Modifier.padding(horizontal = Guga.rem(2f), vertical = Guga.rem(0.6f)).fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.16f)))
-    }
-
-    /** 「换一个片库」：已保存的服务器和各自的账号（上游 `SessionManager.saved()`）。地址不上版面。 */
-    @OptIn(ExperimentalLayoutApi::class)
-    @Composable
-    private fun SwitchDialog() {
-        val g = LocalGraph.current
-        val colors = Guga.colors
-        val session by g.session.session.collectAsState()
-        val s = session ?: return
-        val revision by g.session.revision.collectAsState()
-        val scope = rememberCoroutineScope()
-        var servers by remember { mutableStateOf<List<StoredServer>>(emptyList()) }
-        LaunchedEffect(revision, s.userId) { servers = g.session.saved().servers }
-        val current = servers.firstOrNull { it.id == s.serverId || it.serverId == s.serverId || apiBaseOf(it.address) == s.serverUrl }
-        var busy by remember { mutableStateOf<String?>(null) }
-        var problem by remember { mutableStateOf<String?>(null) }
-
-        fun switchTo(server: StoredServer, account: StoredAccount) {
-            if (busy != null) return
-            busy = server.id + "|" + account.userId
-            problem = null
-            scope.launch {
-                try {
-                    g.session.switchAccount(server.id, account.userId)
-                    switching = false
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (e is EmbyException && e.kind == EmbyException.Kind.Unauthorized) {
-                        // 令牌失效：去登录页重新输密码（密码由用户自己输入）
-                        switching = false
-                        g.nav.navigate(Route.Login(switch = true, server = apiBaseOf(server.address), user = account.userName))
-                    } else {
-                        problem = describeEmbyError(e)
-                    }
-                } finally {
-                    busy = null
-                }
-            }
-        }
-
-        PaperDialog("desktop-switch", onDismiss = { switching = false }, width = DeskMenuSpec.SWITCH_W, closable = true) {
-            Row(horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.4f))) {
-                BasicText("换一个片库", Modifier.alignByBaseline(), style = Guga.song(rsp(3f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 1)
-                BasicText("SERVERS & ACCOUNTS", Modifier.alignByBaseline(), style = Guga.numeral(rsp(1.15f), colors.spot, letterSpacing = 0.2.em), maxLines = 1)
-            }
-            Spacer(Modifier.height(Guga.rem(1.6f)))
-            for (server in servers) {
-                val isCurrent = server.id == current?.id
-                Row(Modifier.fillMaxWidth().padding(top = Guga.rem(1.2f)), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        BasicText(server.remark?.takeIf { it.isNotBlank() } ?: server.name, style = Guga.song(rsp(2f), FontWeight.Black, if (isCurrent) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        BasicText(
-                            when {
-                                busy?.startsWith(server.id + "|") == true -> "正在切换……"
-                                server.accounts.isEmpty() -> "还没有登录过"
-                                else -> "${server.accounts.size} 个账号保存在这台电脑上"
-                            },
-                            Modifier.padding(top = Guga.rem(0.4f)),
-                            style = Guga.note(rsp(1.25f), colors.faint),
-                            maxLines = 1,
-                        )
-                    }
-                    if (isCurrent) {
-                        ProofTick(true, size = Guga.rem(1.6f), box = false)
-                        BasicText("已连接", Modifier.padding(start = Guga.rem(1.2f)), style = Guga.song(rsp(1.3f), FontWeight.SemiBold), maxLines = 1)
-                    }
-                }
-                FlowRow(Modifier.fillMaxWidth().padding(top = Guga.rem(1.4f), bottom = Guga.rem(1.6f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1f)), verticalArrangement = Arrangement.spacedBy(Guga.rem(0.8f))) {
-                    for (a in server.accounts) {
-                        val on = isCurrent && a.userId == s.userId
-                        DeskChip(a.userName, { if (on) switching = false else switchTo(server, a) }, solid = on, tag = "switch-account")
-                    }
-                    DeskChip(
-                        "+ 登录别的账号",
-                        {
-                            switching = false
-                            g.nav.navigate(Route.Login(switch = true, server = apiBaseOf(server.address)))
-                        },
-                    )
-                }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(colors.line))
-            }
-            problem?.let { BasicText(it, Modifier.padding(top = Guga.rem(1.2f)), style = Guga.song(rsp(1.3f), color = colors.seal)) }
-            Row(Modifier.fillMaxWidth().padding(top = Guga.rem(2.8f)), verticalAlignment = Alignment.CenterVertically) {
-                DeskLink(
-                    "+ 添加服务器",
-                    {
-                        switching = false
-                        g.nav.navigate(Route.Servers)
-                    },
-                )
-                Spacer(Modifier.weight(1f))
-                DeskLink(
-                    "管理服务器",
-                    {
-                        switching = false
-                        g.nav.navigate(Route.Servers)
-                    },
-                )
-                Spacer(Modifier.width(Guga.rem(1.4f)))
-                DeskButton("完成", { switching = false }, icon = null, small = true)
-            }
-        }
     }
 }
 

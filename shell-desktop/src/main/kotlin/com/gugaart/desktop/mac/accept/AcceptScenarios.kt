@@ -1,7 +1,9 @@
 package com.gugaart.desktop.mac.accept
 
 import com.gugaart.desktop.mac.SystemNowPlayingCenter
+import com.gugaart.ui.update.updater
 import com.gugaart.ui.data.Pinyin
+import com.gugaart.ui.servers.key
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.player.PlayPhase
 import com.gugugaga.core.BaseItemDto
@@ -22,7 +24,7 @@ internal object AcceptScenarios {
     /** 输入框里打的：一个带 `/` `:` `?` `=` `.` 的地址 + 三个字母（j f k 在播放器里是快进 / 全屏 / 暂停——漏出去了一看就知道，也不写服务器）。 */
     const val PROBE_TEXT = "http://a.b/c?d=1jfk"
 
-    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib", "subs-first", "sub-switch", "shader", "subtitle-search")
+    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib", "subs-first", "sub-switch", "shader", "subtitle-search", "search141", "sub-style", "specials141", "servers150", "sources150", "switchback150", "serversettings150", "remote150")
 
     fun all(host: AcceptHost): List<Scenario> = listOf(
         Scenario("window", "窗口外观：红绿灯、报头让位、深色、失焦变淡、全屏、改尺寸", listOf("X01", "X08", "B22", "P20", "G03"), 180) { window(it) },
@@ -40,6 +42,14 @@ internal object AcceptScenarios {
         Scenario("sub-switch", "切字幕传到内核（dc934d0a）：有内嵌轨时选外挂 SRT 仍 sid≠no；外挂→内嵌→关", listOf("P06"), 180) { subSwitch(it) },
         Scenario("shader", "1.3.1 画质增强：Anime4K / FSR 单选、下发 glsl-shaders、关恢复、重开沿用", listOf("P07"), 300) { shader(it) },
         Scenario("subtitle-search", "1.4.0 字幕搜索：字幕面板「搜索字幕…」→ 三路结果 → 选服务器源进 Emby 并选上；选迅雷 / 射手的仅本次加载（只在 Mock 上跑）", listOf("P06"), 420) { subtitleSearch(it) },
+        Scenario("search141", "1.4.1 自写搜索：缩写（复联）/ 人名后两字（云熙）/ 剧名 + 集号（颜心记 5）/ 原名命中（iron man）/ 排序", listOf("S01", "S04"), 300) { search141(it) },
+        Scenario("sub-style", "1.4.1 字幕样式：150% + 粗体 + 文楷 + 粗描边 + 抬高；也改 ASS 开 / 关；站酷快乐体第一次下载（只在 Mock 上跑）", listOf("P06", "T05"), 420) { subStyle141(it) },
+        Scenario("specials141", "1.4.1 重画的 10 张特别称号章：「我的」页的特别称号一栏（小尺寸不糊）", listOf("M03"), 180) { specials141(it) },
+        Scenario("servers150", "1.5.0 换服务器：三台 Mock（一台停掉）——顶栏胶囊下拉来回切、点离线的写原因、⌘⇧S + 数字、菜单栏「片库 › 换服务器」（只在 Mock 上跑）", listOf("A2"), 600) { servers150(it) },
+        Scenario("sources150", "1.5.0 详情页「源」：990201 本台 4K（推荐）+1080p（另一份文件）+别台行（服务器名+延迟）；选 1080p 放 990202、选别台放那台（查 Mock sessions；要 --mock-servers 预存三台）", listOf("A2"), 600) { sources150(it) },
+        Scenario("switchback150", "1.5.0 切走再切回：首页第一帧就是上次的内容（不空骨架），记切回用时（要 --mock-servers 预存三台）", listOf("A2"), 300) { switchback150(it) },
+        Scenario("serversettings150", "1.5.0 设置 › 播放 › 多台服务器：关「从其它服务器找片源」后详情页只剩本台的源（要 --mock-servers 预存三台）", listOf("A2"), 300) { serverSettings150(it) },
+        Scenario("remote150", "1.5.0 播放器画质面板「版本」：换到别台从当前位置接着放；停掉那台再换 → 「换到「X」没成功，继续播放当前的」4 秒后消失（要 --mock-servers 预存三台 + GUGAART_ACCEPT_STOP）", listOf("A2"), 600) { remote150(it) },
     )
 
     // ================================================================== 1. 窗口外观
@@ -301,11 +311,17 @@ internal object AcceptScenarios {
 
         // ---- 搜索框（点搜索胶囊进去，框自己拿焦点）
         c.reset()
+        // 先收掉称号 / 特别称号纸片：Mock 账号看过很多部，第一次进首页会弹纸片盖在页面上，
+        // 纸片开着时 Esc 先被它吃掉，搜索页就退不出（search-esc 误判）。照 iOS runner 的 closeSlips。
+        closeSlips(c)
         d.tree().tag("desktop-search")?.let { d.click(it) }
         if (c.waitTag("desktop-search-field", 6_000) != null) {
             field(c, "search-field", "搜索框：打地址和字母都进框（S05 / S01）", "desktop-search-field", secret = false, rows = "S05 S01")
+            // 称号自动检查在登录后 ~4s 才异步弹纸片，可能正好落在打字之后；纸片开着会吃掉 Esc。按 Esc 前再收一次。
+            closeSlips(c)
             d.key(KeyEvent.VK_ESCAPE)
             val cleared = d.waitFor(2_000) { d.tree().tag("desktop-search-field")?.editable.isNullOrEmpty() }
+            closeSlips(c)
             d.key(KeyEvent.VK_ESCAPE)
             val left = d.waitFor(3_000) { c.route !is Route.Search }
             c.expect("search-esc", "搜索框里按 Esc 先清空，再按一次回上一页（B29）", cleared && left, values = mapOf("现在的页面" to c.path))
@@ -378,7 +394,10 @@ internal object AcceptScenarios {
         }
         c.nav(Route.Item(item.id), 2_000)
         val t0 = System.currentTimeMillis()
-        c.nav(Route.Play(item.id, startMs = startMsOf(item)), 300)
+        // 从头播（不 seek 到续看点）：Mock 的续看点按「假时长」算（如 381s），远超 60s 样片，seek 被夹到片尾→立即 EOF→
+        // 自动换集，awaitFirstFrame 在换集瞬间测不到稳定首帧而误判「40s 没首帧」（1.3.2 / 1.4.0 同样复现，非回归）。
+        // 从头播样片能正常走完，首帧稳定；弹幕源搜索框只需要「在播」，不依赖续看位置。
+        c.nav(Route.Play(item.id, startMs = null), 300)
         val ff = c.awaitFirstFrame(t0)
         if (ff == null) {
             c.check("dm-search", "播放器 › 弹幕源 › 手动搜索框（D04）", Verdict.Fail, "40 秒内没出首帧，进不了弹幕面板")
@@ -480,8 +499,10 @@ internal object AcceptScenarios {
         if (d.waitFor(2_500) { (vol() ?: -1) == (v3 ?: -9) + 1 }) c.check("cmd-r", "⌘R 付印新刊（M2-3）", Verdict.Pass, values = mapOf("之前" to v3, "之后" to vol()))
         else c.skip("cmd-r", "⌘R 付印新刊（M2-3）", "M2-3 还没做：DesktopKeys 只认 ⌘K ⌘, ⌘F，⌘R 不起作用", values = mapOf("期号" to vol()))
 
-        // ← →：首页翻封面（B01）。读封面里程表的读屏整数（Odometer 的 contentDescription）；
-        // 不依赖 desktop-spread 子树（滚到目录区时它不在组合里），排除报头那个里程表（那是付印期号，不随翻封面变）。
+        // ← →：首页翻封面（B01）。封面里程表 RollingNumber 用 clearAndSetSemantics 只留 contentDescription（整数），
+        // testTag("odometer") 被抹掉（Odometer.kt:50），所以按读屏说明是纯整数来认，不靠 tag；优先封面区 desktop-spread
+        // 子树里的那个，排除报头里程表（那是付印期号，不随翻封面变）。先收纸片，免得纸片盖住封面区读不到。
+        closeSlips(c)
         fun spread(): String {
             val t = d.tree()
             val mast = t.tag("masthead-volume")
@@ -494,7 +515,9 @@ internal object AcceptScenarios {
                 }
                 return false
             }
-            val odo = t.nodes.filter { it.tag == "odometer" && !underMast(it) }
+            val spreadNode = t.tag("desktop-spread")
+            val pool = if (spreadNode != null) listOf(spreadNode) + t.descendants(spreadNode) else t.nodes
+            val odo = pool.filter { n -> !underMast(n) && n.desc.any { it.matches(Regex("\\d+")) } }
             return odo.flatMap { it.desc }.joinToString("/")
         }
         val s0 = spread()
@@ -1209,12 +1232,12 @@ internal object AcceptScenarios {
         c.reset()
         d.waitFor(10_000) { d.tree().has("masthead-volume") }
         val titles = d.mainMenuItems()
-        // 第一个是系统的应用菜单（咕咕嘎嘎），后面六个是我们自己的（D-lead-39：不再自己出第二个「咕咕嘎嘎」）；
-        // 系统可能再挂自动项，只核对：应用菜单只有一个且在最前、我们的六个都在、顺序对
-        val ours = listOf("文件", "编辑", "显示", "播放", "窗口", "帮助")
+        // 第一个是系统的应用菜单（咕咕嘎嘎），后面七个是我们自己的（D-lead-39：不再自己出第二个「咕咕嘎嘎」；1.5.0 多了「片库」）；
+        // 系统可能再挂自动项，只核对：应用菜单只有一个且在最前、我们的七个都在、顺序对
+        val ours = listOf("文件", "编辑", "显示", "片库", "播放", "窗口", "帮助")
         val orderOk = ours.all { it in titles } && titles.count { it == "咕咕嘎嘎" } <= 1 &&
             ours.map { titles.indexOf(it) } == ours.map { titles.indexOf(it) }.sorted() && titles.indexOf("文件") == 1
-        c.expect("menu-seven", "菜单栏 = 系统应用菜单 + 我们的六个、没有重复的「咕咕嘎嘎」、顺序对（X11 / M2-4，D-lead-39）", orderOk, values = mapOf("菜单" to titles.joinToString(" ")))
+        c.expect("menu-seven", "菜单栏 = 系统应用菜单 + 我们的七个、没有重复的「咕咕嘎嘎」、顺序对（X11 / M2-4，D-lead-39）", orderOk, values = mapOf("菜单" to titles.joinToString(" ")))
         // 应用菜单里有系统的「关于」「设置…」（处理器接上了才可用）；「检查更新…」在「帮助」里
         val appItems = titles.firstOrNull()?.let { d.submenuItems(it) }.orEmpty().filter { it.first.isNotBlank() }
         val aboutOn = appItems.any { (it.first.startsWith("关于") || it.first.startsWith("About")) && it.second }
@@ -1278,6 +1301,221 @@ internal object AcceptScenarios {
     private fun resumeItem(c: Ctx): BaseItemDto? = runCatching { runBlocking { c.client().getResume(limit = 1).items.firstOrNull() } }.getOrNull()
 
     private fun startMsOf(item: BaseItemDto): Long? = item.userData?.playbackPositionTicks?.takeIf { it > 0 }?.let { it / 10_000 }
+
+    /** 收起「称号」/「特别称号」纸片（照 iOS runner 的 closeSlips）：纸片走 SheetHost(onClose)，开着时 Esc 被它吃掉，
+     *  搜索页退不出（search-esc）、首页封面里程表也被盖住（arrows-flip）。置空 RankBoard 的弹出态 = 点「收下」；记账在弹出之前已做完。 */
+    // ================================================================== 1.5.0 换服务器（三台 Mock）
+
+    /**
+     * 三台 Mock（外面起好：第一台由 `-Pgugaart.mockAccount` 静默登录，另两台的地址在环境变量 `GUGAART_ACCEPT_SERVERS`，只认 127.0.0.1 / localhost）。
+     * ① 真的走「添加服务器」那一屏加上另两台（地址 → 连接 → 夹具账号 demo / demo → 登录）；② 写 `GUGAART_ACCEPT_STOP` 那个文件，外面的脚本看到就停掉最后一台
+     * （当成离线），等它真的连不上；③ 顶栏胶囊 → 下拉，来回切、点离线的那台（不切、那一行下面写原因）；④ ⌘⇧S 打开、按 2 切到第二台；
+     * ⑤ 菜单栏「片库 › 换服务器」：列出三台、当前打勾，点一台切过去，点离线的那台 = 下拉打开、写原因。每一步截本窗口。
+     */
+    private fun servers150(c: Ctx) {
+        val d = c.d
+        val g = c.graph
+        val sw = com.gugaart.ui.servers.sharedServerSwitcher(g)
+        fun port(): String? = g.session.session.value?.serverUrl?.substringAfterLast(':')?.takeWhile { it.isDigit() }
+        fun rows(): List<AcceptDriver.Node> = d.tree().nodes.filter { it.tag == "server-row" || it.tag == "server-row-current" }
+        fun rowOf(p: String): AcceptDriver.Node? = d.tree().let { t -> t.nodes.firstOrNull { (it.tag == "server-row" || it.tag == "server-row-current") && ":$p" in t.textUnder(it) } }
+        fun menuOpen() = d.ui { com.gugaart.ui.desktop.DesktopServerMenu.open }
+        fun openMenu(): Boolean {
+            if (menuOpen()) return true
+            d.tree().tag("desktop-server-pill")?.let { d.click(it) }
+            return d.waitFor(4_000) { d.tree().has("desktop-server-menu") }
+        }
+        fun pingsSettled() = d.waitFor(10_000, 200) { sw.entries.value.none { it.ping == com.gugaart.ui.servers.PingState.Checking || it.ping == com.gugaart.ui.servers.PingState.Unknown } }
+
+        c.reset()
+        closeSlips(c)
+        if (!d.waitFor(20_000) { d.tree().has("desktop-server-pill") }) {
+            c.check("servers-pill", "顶栏账号圆钮左边有服务器胶囊", Verdict.Fail, "顶栏没有服务器胶囊", shots = listOf(d.shot("srv-00-no-pill")))
+            return
+        }
+        val first = port()
+        val extra = System.getenv("GUGAART_ACCEPT_SERVERS").orEmpty().split(',').map { it.trim() }
+            .filter { Regex("""^http://(127\.0\.0\.1|localhost):\d+$""").matches(it) }
+        if (extra.size < 2 || first == null) {
+            c.skip("servers-add", "加另外两台 Mock", "没给 GUGAART_ACCEPT_SERVERS（两台 127.0.0.1 的 Mock 地址）或没登录第一台：跳过")
+            return
+        }
+        // ---- ① 加两台：真的走「添加服务器」那一屏
+        val added = extra.map { url -> url to addMockServer(c, url) }
+        val viaUi = added.all { it.second.second == "界面" }
+        c.check(
+            "servers-add", "「添加服务器」那一屏加上另外两台 Mock（地址 → 连接 → demo / demo → 登录），数据层列表里有三台",
+            if (added.all { it.second.first } && d.waitFor(5_000) { sw.entries.value.size >= 3 }) (if (viaUi) Verdict.Pass else Verdict.NeedsHuman) else Verdict.Fail,
+            if (viaUi) "" else "界面那条路没走通，退回上游登录接口加的（看「方式」）",
+            values = mapOf("结果" to added.joinToString { "${it.first.substringAfterLast(':')}=${it.second.first}" }, "方式" to added.joinToString { "${it.first.substringAfterLast(':')}=${it.second.second}" }, "列表" to sw.entries.value.size),
+            shots = listOf(d.shot("srv-01-added", "加完第三台")),
+        )
+        // ---- ② 停掉最后一台（外面的脚本看到这个文件就停它，只停它自己起的那个进程）
+        val offPort = extra.last().substringAfterLast(':')
+        System.getenv("GUGAART_ACCEPT_STOP")?.let { java.io.File(it).writeText("stop $offPort\n") }
+        val down = d.waitFor(60_000, 500) { !reachable(extra.last()) }
+        c.expect("servers-offline-ready", "最后一台 Mock（:$offPort）停掉了，当成离线的那台", down)
+        // 回到第一台（日常：从常用的那台开始）
+        if (port() != first) {
+            sw.entries.value.firstOrNull { ":$first" in it.address }?.let { e -> runBlocking { sw.switchTo(e.serverId, e.userId) } }
+            d.waitFor(10_000) { port() == first }
+        }
+        c.reset()
+        closeSlips(c)
+        d.waitFor(10_000) { d.tree().has("desktop-server-pill") }
+        Thread.sleep(1_500)
+        c.expect("servers-pill", "顶栏账号圆钮左边是服务器胶囊（当前服务器名 + 在线小点）", d.tree().has("desktop-server-pill"), values = mapOf("胶囊" to d.tree().textUnder("desktop-server-pill")), shots = listOf(d.shot("srv-02-pill", "顶栏胶囊")))
+
+        // ---- ③ 下拉：三台、在线状态；来回切
+        val opened = openMenu()
+        pingsSettled()
+        Thread.sleep(600)
+        val texts = rows().map { d.tree().textUnder(it) }
+        c.expect(
+            "servers-dropdown", "点胶囊垂下纸片：三台都在，当前那台第一个；在线的写毫秒，停掉的那台写「连不上」", opened && texts.size >= 3 && texts.any { "连不上" in it && ":$offPort" in it } && texts.first().contains(":$first"),
+            values = mapOf("行" to texts.joinToString(" | ")), shots = listOf(d.shot("srv-03-dropdown", "下拉")),
+        )
+        val second = extra.first().substringAfterLast(':')
+        val t0 = System.currentTimeMillis()
+        rowOf(second)?.let { d.click(it) }
+        val switched = d.waitFor(10_000) { port() == second && !menuOpen() }
+        c.expect("servers-switch", "点第二台：切过去（会话换成 :$second），下拉收起", switched, values = mapOf("用时 ms" to (System.currentTimeMillis() - t0), "现在" to port()), shots = listOf(d.shot("srv-04-switched", "切到第二台")))
+        Thread.sleep(1_200)
+        openMenu()
+        pingsSettled()
+        val t1 = System.currentTimeMillis()
+        rowOf(first)?.let { d.click(it) }
+        val back = d.waitFor(10_000) { port() == first && !menuOpen() }
+        c.expect("servers-switch-back", "再切回第一台（:$first）", back, values = mapOf("用时 ms" to (System.currentTimeMillis() - t1), "现在" to port()), shots = listOf(d.shot("srv-05-switched-back", "切回第一台")))
+        Thread.sleep(1_200)
+
+        // ---- 点离线的那台：不切，那一行下面写原因
+        openMenu()
+        pingsSettled()
+        rowOf(offPort)?.let { d.click(it) }
+        val noted = d.waitFor(8_000) { d.tree().textUnder("server-note")?.contains(com.gugaart.ui.servers.ServerSwitchCopy.OFFLINE) == true }
+        c.expect("servers-offline", "点停掉的那台：不切（还在 :$first）、下拉不收，那一行下面写「连不上这台服务器，没有切换」", noted && port() == first && menuOpen(), values = mapOf("现在" to port()), shots = listOf(d.shot("srv-06-offline", "点离线的那台")))
+        d.key(KeyEvent.VK_ESCAPE)
+        val escClosed = d.waitFor(3_000) { !menuOpen() }
+        c.expect("servers-esc", "Esc 收起下拉", escClosed)
+
+        // ---- ④ ⌘⇧S 打开、按 2 切到第二台
+        d.key(KeyEvent.VK_S, cmd = true, shift = true)
+        val keyOpened = d.waitFor(4_000) { menuOpen() && d.tree().has("desktop-server-menu") }
+        pingsSettled()
+        Thread.sleep(500)
+        val keyShot = d.shot("srv-07-cmd-shift-s", "⌘⇧S 打开的下拉")
+        val row2 = rows().getOrNull(1)?.let { d.tree().textUnder(it) }.orEmpty()
+        d.key(KeyEvent.VK_2, '2')
+        val want2 = Regex(""":(\d+)""").find(row2)?.groupValues?.get(1)
+        val digit = d.waitFor(10_000) { want2 != null && port() == want2 && !menuOpen() }
+        c.expect("servers-cmd-shift-s", "⌘⇧S 打开下拉", keyOpened, shots = listOf(keyShot))
+        c.expect("servers-digit", "下拉开着按 2 = 切到第二行那台", digit, values = mapOf("第二行" to row2, "现在" to port()), shots = listOf(d.shot("srv-08-digit", "按 2 以后")))
+        Thread.sleep(1_200)
+
+        // ---- ⑤ 菜单栏「片库 › 换服务器」
+        val sub = d.nestedMenuItems("片库", "换服务器")
+        val subOk = sub.count { it.first != "添加服务器…" && it.first.isNotBlank() } >= 3 && sub.any { it.third } && sub.any { it.first == "添加服务器…" } && sub.any { "连不上" in it.first }
+        c.expect("servers-menubar-list", "菜单栏「片库 › 换服务器」列出三台、当前那台打勾、停掉的写「连不上」、最后是「添加服务器…」", subOk, values = mapOf("子菜单" to sub.joinToString(" | ") { "${it.first}${if (it.third) "✓" else ""}" }))
+        val cur = port()
+        val target = sw.entries.value.firstOrNull { !it.isCurrent && it.ping is com.gugaart.ui.servers.PingState.Online }
+        val targetLabel = target?.let { e -> com.gugaart.desktop.mac.MacMenuModel.serverItems(sw.entries.value).firstOrNull { it.action == com.gugaart.desktop.mac.MacMenuModel.SERVER_ACTION + e.key }?.label }
+        val clicked = targetLabel != null && d.clickNestedMenuItem("片库", "换服务器", targetLabel)
+        val viaMenu = clicked && d.waitFor(10_000) { port() != cur && port() == target?.address?.substringAfterLast(':')?.takeWhile { it.isDigit() } }
+        c.expect("servers-menubar-switch", "点菜单里的另一台：切过去，下拉不打开", viaMenu && !menuOpen(), values = mapOf("点的" to targetLabel, "之前" to cur, "之后" to port()), shots = listOf(d.shot("srv-09-menubar-switch", "菜单栏切换以后")))
+        Thread.sleep(1_200)
+        val offLabel = sub.firstOrNull { "连不上" in it.first }?.first
+        val before = port()
+        val clickedOff = offLabel != null && d.clickNestedMenuItem("片库", "换服务器", offLabel)
+        val offViaMenu = clickedOff && d.waitFor(8_000) { menuOpen() && d.tree().textUnder("server-note")?.contains(com.gugaart.ui.servers.ServerSwitchCopy.OFFLINE) == true }
+        c.expect("servers-menubar-offline", "菜单里点停掉的那台：不切，顶栏的下拉打开、那一行下面写原因", offViaMenu && port() == before, values = mapOf("现在" to port()), shots = listOf(d.shot("srv-10-menubar-offline", "菜单栏点离线的那台")))
+        d.key(KeyEvent.VK_ESCAPE)
+        c.reset()
+    }
+
+    /**
+     * 「添加服务器」那一屏：地址（回车 = 连接；找到了再回车 = 下一步）→ 用户名 / 密码（Mock 的夹具账号，密码框里回车 = 登录）。只给 127.0.0.1 的 Mock 用。
+     * 界面那条路没走通（找不到框、没连上）就退回上游同一个登录接口 `SessionManager.signIn`（登录页最后调的就是它），记下走的是哪条路和卡在哪一步。
+     */
+    private fun addMockServer(c: Ctx, url: String): Pair<Boolean, String> {
+        val d = c.d
+        val g = c.graph
+        require(Regex("""^http://(127\.0\.0\.1|localhost):\d+$""").matches(url)) { "只往本机的 Mock 里输夹具账号" }
+        val p = url.substringAfterLast(':')
+        fun signedIn() = g.session.session.value?.serverUrl?.contains(":$p") == true
+        var stuck = ""
+        // 界面那条路最多走两遍（刚登录完的几秒里称号纸片可能正好弹出来，吃掉一次点击）
+        for (attempt in 1..2) {
+            if (signedIn()) break
+            if (attempt > 1) { c.nav(Route.Home, 600); Thread.sleep(1_500) }
+            uiAdd(c, url) { stuck = "第 $attempt 遍：$it" }
+            if (d.waitFor(1_000) { signedIn() }) break
+        }
+        if (signedIn()) return true to "界面"
+        runCatching { runBlocking { g.session.signIn(com.gugugaga.app.session.SignInInput(server = url, username = "demo", password = "demo")) } }
+        return d.waitFor(10_000) { signedIn() } to "接口（界面卡在：$stuck）"
+    }
+
+    /** [addMockServer] 的界面那一遍；卡住就把卡在哪一步交给 [stuck]。 */
+    private fun uiAdd(c: Ctx, url: String, stuck: (String) -> Unit) {
+        val d = c.d
+        val g = c.graph
+        val p = url.substringAfterLast(':')
+        fun signedIn() = g.session.session.value?.serverUrl?.contains(":$p") == true
+        fun focusAndType(tag: String, text: String): Boolean {
+            // 称号纸片（新账号登录后几秒异步弹出）会盖在登录页上、吃掉点击：每一步之前先收掉
+            closeSlips(c)
+            val n = c.waitTag(tag, 8_000) ?: return false
+            d.click(n)
+            Thread.sleep(250)
+            if (d.tree().focused()?.tag != tag) d.requestFocusBySemantics(tag)
+            Thread.sleep(250)
+            // 框里原来的字先清掉（⌘A 再删）
+            d.key(KeyEvent.VK_A, cmd = true)
+            d.key(KeyEvent.VK_BACK_SPACE)
+            d.type(text)
+            return true
+        }
+        run ui@{
+            closeSlips(c)
+            c.nav(Route.Servers, 900)
+            // 已登录时这一屏先是已保存的列表：点「添加服务器」进地址那一步
+            c.waitTag("desktop-login-add", 5_000)?.let { d.click(it) }
+            if (!focusAndType("desktop-login-address", url)) { stuck("找不到地址框"); return@ui }
+            d.key(KeyEvent.VK_ENTER)
+            if (!d.waitFor(15_000) { d.tree().has("desktop-login-user") || d.tree().has("desktop-login-found") }) {
+                stuck("地址那一步没往下走：" + (d.tree().textUnder("desktop-login-add-note") ?: ""))
+                return@ui
+            }
+            if (!d.tree().has("desktop-login-user")) {
+                closeSlips(c)
+                c.waitTag("desktop-login-connect", 3_000)?.let { d.click(it) }
+                if (!d.waitFor(8_000) { d.tree().has("desktop-login-user") }) { stuck("找到了服务器，但没进登录那一步"); return@ui }
+            }
+            if (!focusAndType("desktop-login-user", "demo")) { stuck("找不到用户名框"); return@ui }
+            if (!focusAndType("desktop-login-password", "demo")) { stuck("找不到密码框"); return@ui }
+            d.key(KeyEvent.VK_ENTER)
+            if (!d.waitFor(15_000) { signedIn() }) stuck("登录没成：" + (d.tree().textUnder("desktop-login-fail") ?: ""))
+        }
+    }
+
+    /** 这台 Mock 还连得上吗（公开端点，1.5 秒超时）。 */
+    private fun reachable(url: String): Boolean = runCatching {
+        val conn = java.net.URI("$url/System/Info/Public").toURL().openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 1_500
+        conn.readTimeout = 1_500
+        try { conn.responseCode in 200..299 } finally { conn.disconnect() }
+    }.getOrDefault(false)
+
+    private fun closeSlips(c: Ctx) {
+        repeat(3) {
+            c.d.ui {
+                com.gugaart.ui.screens.me.RankBoard.news = null
+                com.gugaart.ui.screens.me.RankBoard.special = null
+            }
+            Thread.sleep(300)
+        }
+    }
 
     private fun findMovie(c: Ctx, name: String): BaseItemDto? = runCatching {
         val hits = runBlocking { c.client().searchItems(name).items }.filter { it.type == "Movie" }
@@ -1684,6 +1922,434 @@ internal object AcceptScenarios {
         )
         c.back(1_500)
     }
+    // ================================================================== 1.4.1（Mac Pi 验收：自写搜索 / 字幕样式）
+
+    /** 1.4.1 自写片库搜索（docs/search.md）：缩写 / 人名后两字 / 剧名 + 集号直达 / 原名命中 / 排序。 */
+    private fun search141(c: Ctx) {
+        val d = c.d
+        c.reset()
+        c.graph.updater.dismiss()
+        closeSlips(c)
+        val client = c.client()
+        val snap = runCatching { runBlocking { com.gugaart.ui.search.SearchIndexStore.get(client) } }.getOrNull()
+        if (snap == null) { c.skip("search-index", "本地片库索引", "取不到本地索引"); return }
+        val titles = snap.titles.filter { it.kind == com.gugaart.ui.data.Kind.Movie || it.kind == com.gugaart.ui.data.Kind.Series }
+        val index = com.gugaart.ui.screens.search.SearchIndex(titles, titles.size, snap.engine)
+        c.expect("search-index", "本地片库索引建好（片 / 单集 / 人物）", true, values = mapOf("片" to snap.titles.size, "单集" to snap.episodes.size, "人物" to snap.people.size))
+        for ((q, tag) in listOf("复联" to "fulian", "云熙" to "yunxi", "颜心记 5" to "yanxinji5", "iron man" to "ironman")) {
+            c.nav(Route.Search(q), 2_500)
+            closeSlips(c)
+            val sh = d.shot("search-$tag", "搜索「$q」：结果 / 排序 / 原名命中 / 直达签")
+            val hits = com.gugaart.ui.screens.search.searchTitles(index, q)
+            val people = com.gugaart.ui.screens.search.searchPeopleLocal(snap.people, q)
+            fun line(h: com.gugaart.ui.screens.search.TitleHit): String = h.title.name +
+                (com.gugaart.ui.screens.search.directTag(h)?.let { "[$it]" } ?: "") +
+                (h.original?.let { "{原名命中:$it}" } ?: "")
+            val top = hits.take(6).joinToString(" / ") { line(it) }
+            val ok = when (tag) {
+                "fulian" -> hits.firstOrNull()?.title?.name == "复仇者联盟"
+                "yunxi" -> people.isNotEmpty()
+                "yanxinji5" -> hits.firstOrNull()?.let { com.gugaart.ui.screens.search.directTag(it) } == "第 5 集"
+                else -> hits.firstOrNull()?.let { it.original != null && it.range == null } == true
+            }
+            c.expect("search-$tag", "搜索「$q」", ok, values = mapOf("前几条" to top, "人物" to people.take(3).joinToString { it.person.name }), shots = listOf(sh))
+            c.back(700)
+        }
+    }
+
+    /** 1.4.1 字幕样式（docs/subtitle-style.md）：150% + 粗体 + 文楷 + 粗描边 + 抬高；也改 ASS 开 / 关；站酷快乐体第一次下载。只在 Mock 上跑。 */
+    /** 1.4.1 重画的 10 张特别称号章（ui/icons-1.4.1 a29b273）：「我的」页那一栏的小章。 */
+    private fun specials141(c: Ctx) {
+        val d = c.d
+        c.reset()
+        c.graph.updater.dismiss()
+        closeSlips(c)
+        c.nav(Route.History(), 2_500)
+        closeSlips(c)
+        val sh = d.shot("specials-me", "「我的」页：特别称号一栏（重画的 10 张在小尺寸下）")
+        val grid = d.tree().nodes.firstOrNull { it.tag == "me-specials" || it.desc.any { s -> s.contains("特别称号") } }
+        c.human("specials-grid", "特别称号章（重画版）", "看 specials-me：压箱底 / 奇幻迷 / 综艺咖 / 合家欢 / 冷门猎人 / 历史迷 / 电影节 / 铁血 / 求知者 / 老古董", shots = listOf(sh), values = mapOf("找到一栏" to (grid != null), "页" to c.path))
+        c.back(800)
+    }
+
+    private fun subStyle141(c: Ctx) {
+        val d = c.d
+        c.reset()
+        val base = runCatching { c.client().address.baseUrl }.getOrNull().orEmpty()
+        if (!(base.startsWith("http://127.0.0.1:") || base.startsWith("http://localhost:"))) {
+            c.skip("sub-style-apply", "字幕样式下发到 mpv（1.4.1）", "不是 Mock：加 --mock 再跑")
+            return
+        }
+        c.graph.updater.dismiss()
+        val store = c.settingsStoreOf() ?: com.gugaart.ui.data.GugaSettingsStore(c.graph.deps.local)
+        val orig = store.prefs.value
+        store.update {
+            it.copy(subStyle = com.gugaart.ui.data.SubStylePrefs(
+                scale = 1.5, bold = true, font = "lxgwWenKai",
+                outline = com.gugaart.ui.data.SubOutline.Thick, shadow = false,
+                position = com.gugaart.ui.data.SubPosition.Raised, overrideAss = false,
+            ))
+        }
+        c.nav(Route.Settings("subtitles"), 2_000)
+        val shSet = d.shot("style-settings", "设置 › 字幕与音轨 › 字幕样式：150% / 粗体 / 霞鹜文楷 / 粗描边 / 抬高")
+        c.human("style-settings", "设置里的字幕样式组", "看 style-settings（预览条 / 字号 / 字体 / 描边 / 位置）", shots = listOf(shSet))
+        c.back(800)
+        val pick = runCatching {
+            val cl = c.client()
+            val list = runBlocking { cl.getItems(LibraryQuery(includeItemTypes = listOf("Movie"), recursive = true, limit = 80)).items }
+            list.take(60).firstOrNull { m ->
+                val st = runCatching { runBlocking { cl.getItem(m.id).mediaSources.firstOrNull()?.mediaStreams.orEmpty() } }.getOrNull().orEmpty()
+                st.any { it.type == "Subtitle" && it.isExternal == true && (it.codec == "ass" || it.codec == "ssa") } && st.firstOrNull { it.type == "Video" }?.codec == "h264"
+            }
+        }.getOrNull()
+        if (pick == null) {
+            c.skip("sub-style-apply", "字幕样式下发到 mpv", "Mock 里没有「h264 + 外挂 ASS」的条目")
+            store.update { it.copy(subStyle = orig.subStyle) }
+            return
+        }
+        val assIdx = runBlocking { c.client().getItem(pick.id).mediaSources.first().mediaStreams }
+            .first { it.type == "Subtitle" && it.isExternal == true && (it.codec == "ass" || it.codec == "ssa") }.index
+        c.nav(Route.Play(pick.id), 1_500)
+        c.awaitFirstFrame(System.currentTimeMillis())
+        c.controller?.selectSubtitle(assIdx)
+        Thread.sleep(1_800)
+        fun props(): String = listOf("sub-scale", "sub-bold", "sub-font", "sub-border-size", "sub-shadow-offset", "sub-margin-y", "sub-ass-override", "sub-fonts-dir", "sid")
+            .joinToString(" ") { "$it=${c.mpv(it)}" }
+        fun still(name: String, label: String): String? {
+            c.controller?.seekTo(13_500.0)
+            Thread.sleep(1_200)
+            c.controller?.pause()
+            Thread.sleep(3_600)
+            val sh = d.shot(name, label)
+            c.controller?.play()
+            Thread.sleep(600)
+            return sh
+        }
+        val shKeep = still("style-ass-keep", "「也改 ASS」关：ASS 原样（顶部黄字），只跟着字号缩放")
+        val keep = props()
+        c.check(
+            "sub-style-tracks", "内核这一条字幕轨到底是什么（外挂 ASS 还是 SRT）", Verdict.NeedsHuman,
+            detail = "sid=${c.mpv("sid")} sub-text=${c.mpv("sub-text")}",
+            values = mapOf("track-list" to c.mpv("track-list"), "控制器选中" to c.controller?.snapshot?.value?.subtitles?.firstOrNull { it.selected }?.label),
+        )
+        val scaleOk = c.mpv("sub-scale")?.toDoubleOrNull()?.let { kotlin.math.abs(it - 1.5) < 0.02 } == true
+        val boldOk = c.mpv("sub-bold") == "yes"
+        val fontOk = c.mpv("sub-font")?.contains("LXGW") == true
+        val marginOk = c.mpv("sub-margin-y")?.toDoubleOrNull()?.let { kotlin.math.abs(it - 57.6) < 2.0 } == true
+        val borderOk = (c.mpv("sub-border-size")?.toDoubleOrNull() ?: 0.0) > 2.0
+        c.expect(
+            "sub-style-apply", "字号 150% + 粗体 + 霞鹜文楷 + 粗描边 + 抬高都下发到 mpv",
+            scaleOk && boldOk && fontOk && marginOk && borderOk && c.mpv("sub-ass-override") != "force",
+            values = mapOf("片" to pick.name, "外挂ASS轨" to assIdx, "属性" to keep), shots = listOf(shKeep),
+        )
+        store.update { it.copy(subStyle = it.subStyle.copy(overrideAss = true)) }
+        Thread.sleep(1_500)
+        val shForce = still("style-ass-force", "「也改 ASS」开：字体 / 描边 / 位置也改 ASS")
+        c.expect("sub-style-ass", "「也改 ASS」开：sub-ass-override=force", c.mpv("sub-ass-override") == "force", values = mapOf("属性" to props()), shots = listOf(shForce))
+        store.update { it.copy(subStyle = it.subStyle.copy(font = "zcoolKuaiLe")) }
+        val got = d.waitFor(120_000, 500) { c.mpv("sub-font") == "ZCOOL KuaiLe" }
+        val shZ = still("style-zcool", "站酷快乐体（第一次用要下载 1.4 MB）")
+        c.expect("sub-style-zcool", "站酷快乐体下载好后内核换成 ZCOOL KuaiLe", got, values = mapOf("sub-font" to c.mpv("sub-font"), "sub-fonts-dir" to c.mpv("sub-fonts-dir")), shots = listOf(shZ))
+        c.back(1_500)
+        store.update { it.copy(subStyle = orig.subStyle) }
+    }
+
+    // ================================================================== 1.5.0 AUD：详情「源」/ 切回 / 设置开关 / 播放器换台（要 --mock-servers 预存三台）
+
+    /** 三台预存 Mock 的基地址（scheme://host:port，按服务器列表顺序，当前那台在前）。不足三台 = null。 */
+    private fun threeMocks(c: Ctx): List<String>? {
+        val es = com.gugaart.ui.servers.sharedServerSwitcher(c.graph).entries.value
+        val urls = es.mapNotNull { Regex("^https?://[^/]+").find(it.address)?.value }
+            .filter { it.startsWith("http://127.0.0.1:") }.distinct()
+        return urls.takeIf { it.size >= 3 }
+    }
+
+    private fun portOf(url: String): String = url.substringAfterLast(':').takeWhile { it.isDigit() }
+
+    /** 给一台本机 Mock 用夹具账号 demo / demo 换个令牌（只对本机 Mock；从不发给别的服务器）。 */
+    private fun mockToken(url: String): String? = runCatching {
+        val conn = java.net.URI("$url/Users/AuthenticateByName").toURL().openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"; conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.connectTimeout = 3_000; conn.readTimeout = 3_000
+        conn.outputStream.use { it.write("""{"Username":"demo","Pw":"demo"}""".toByteArray()) }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        conn.disconnect()
+        ((kotlinx.serialization.json.Json.parseToJsonElement(body) as? JsonObject)?.get("AccessToken") as? kotlinx.serialization.json.JsonPrimitive)?.content
+    }.getOrNull()
+
+    /** 一台 Mock 此刻在播的条目 id（/Sessions 的 NowPlayingItem.Id）。 */
+    private fun mockSessions(url: String, token: String?): List<String> = runCatching {
+        val conn = java.net.URI("$url/Sessions").toURL().openConnection() as java.net.HttpURLConnection
+        conn.setRequestProperty("X-Emby-Token", token ?: "")
+        conn.connectTimeout = 3_000; conn.readTimeout = 3_000
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        conn.disconnect()
+        (kotlinx.serialization.json.Json.parseToJsonElement(body) as? kotlinx.serialization.json.JsonArray)?.mapNotNull { el ->
+            ((el as? JsonObject)?.get("NowPlayingItem") as? JsonObject)?.get("Id")?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+        }.orEmpty()
+    }.getOrDefault(emptyList())
+
+    /** 详情 / 播放器里「源」选择器的一行（d-slip-row）。 */
+    private fun slipRows(d: AcceptDriver): List<AcceptDriver.Node> =
+        d.tree().nodes.filter { it.tag == "d-slip-row" || it.tag == "d-slip-row-on" }
+
+    private fun openSourcePick(c: Ctx): Boolean {
+        val d = c.d
+        closeSlips(c)
+        d.waitFor(20_000) { d.tree().has("d-pick-源") || d.tree().has("d-pick-版本") }
+        (d.tree().tag("d-pick-源") ?: d.tree().tag("d-pick-版本"))?.let { d.click(it) }
+        return d.waitFor(6_000) { d.tree().has("d-pick-list") }
+    }
+
+    // ---- 项 5：详情页 990201 的「源」；选 1080p 放 990202、选别台放那台（查 Mock sessions）
+    private fun sources150(c: Ctx) {
+        val d = c.d
+        val g = c.graph
+        val mocks = threeMocks(c)
+        if (mocks == null) { c.skip("sources-list", "详情页「源」本台 + 别台", "要 --mock-servers 预存三台 Mock"); return }
+        fun port(): String? = g.session.session.value?.serverUrl?.substringAfterLast(':')?.takeWhile { it.isDigit() }
+        val first = port() ?: return
+        val homeUrl = mocks.first { ":$first" in it }
+        val tokens = mocks.associateWith { mockToken(it) }
+        c.reset(); closeSlips(c)
+        c.nav(Route.Item("990201"), 2_500)
+        Thread.sleep(1_200); closeSlips(c)
+        val listOpen = openSourcePick(c)
+        d.waitFor(25_000, 300) { slipRows(d).any { " ms" in d.tree().textUnder(it) } }
+        Thread.sleep(600)
+        val texts = slipRows(d).map { d.tree().textUnder(it) }
+        val sh = d.shot("src-01-list", "详情「源」：本台 4K（推荐）+ 1080p（另一份文件）+ 别台行（名 + 延迟）")
+        val rec4k = texts.firstOrNull()?.let { "4K" in it && "推荐" in it } == true
+        val dup1080 = texts.any { "1080" in it && "另一份文件" in it }
+        val others = texts.filter { " ms" in it }
+        c.expect(
+            "sources-list", "「源」先列本台 4K（推荐）+ 1080p（另一份文件），再接别台行（服务器名 + 延迟）",
+            listOpen && rec4k && dup1080 && others.isNotEmpty(),
+            values = mapOf("行" to texts.joinToString(" | "), "别台行数" to others.size), shots = listOf(sh),
+        )
+        // ---- 选别台的行 → 播放 → 那台 sessions 应有 990201（先测：此时还没有别的播放，控制器干净）
+        // 别台行排在纸片下方、可能滚出可见区：先滚进来再点（语义树给不裁剪位置，直接点会落空）
+        val list = d.tree().tag("d-pick-list")
+        val winH = d.ui { d.window.height.toDouble() }
+        var otherRow = slipRows(d).firstOrNull { " ms" in d.tree().textUnder(it) }
+        var tries = 0
+        while (otherRow != null && list != null && tries < 8 && otherRow.bounds.cy > winH - 30) {
+            d.wheel(list.bounds.cx, kotlin.math.min(list.bounds.y + 60.0, winH - 60), 3)
+            Thread.sleep(250)
+            otherRow = slipRows(d).firstOrNull { " ms" in d.tree().textUnder(it) }
+            tries++
+        }
+        val otherText = otherRow?.let { d.tree().textUnder(it) }.orEmpty()
+        otherRow?.let { d.click(it) }
+        Thread.sleep(600)
+        c.waitTag("d-cta", 5_000)?.let { d.click(it) }
+        d.waitFor(8_000) { c.path.startsWith("/play") }
+        val ff2 = c.awaitFirstFrame(System.currentTimeMillis())
+        val otherUrls = mocks.filter { ":$first" !in it }
+        d.waitFor(25_000, 300) { otherUrls.any { mockSessions(it, tokens[it]).contains("990201") } }
+        val playingOn = otherUrls.filter { mockSessions(it, tokens[it]).contains("990201") }
+        val snapItem2 = c.controller?.snapshot?.value?.itemId
+        val sh3 = d.shot("src-03-play-other", "选别台的行后播放（应在那台）")
+        c.expect(
+            "sources-play-other", "选别台的行：播放落在别台（那台 sessions 有 990201）", ff2 != null && playingOn.isNotEmpty(),
+            values = mapOf("首帧ms" to ff2, "点的行" to otherText, "控制器条目" to snapItem2, "在播的别台" to playingOn, "本台sessions" to mockSessions(homeUrl, tokens[homeUrl])), shots = listOf(sh3),
+        )
+        c.reset(); closeSlips(c)
+        // ---- 选 1080p（另一份文件 = 990202）→ 播放 → 本台 sessions 应是 990202
+        c.nav(Route.Item("990201"), 2_000)
+        Thread.sleep(800); closeSlips(c)
+        openSourcePick(c)
+        d.waitFor(20_000, 300) { slipRows(d).any { "1080" in d.tree().textUnder(it) } }
+        slipRows(d).firstOrNull { "1080" in d.tree().textUnder(it) && "另一份文件" in d.tree().textUnder(it) }?.let { d.click(it) }
+        Thread.sleep(600)
+        c.waitTag("d-cta", 5_000)?.let { d.click(it) }
+        val ff = c.awaitFirstFrame(System.currentTimeMillis())
+        d.waitFor(12_000, 300) { mockSessions(homeUrl, tokens[homeUrl]).contains("990202") }
+        val snapItem = c.controller?.snapshot?.value?.itemId
+        val sess1 = mockSessions(homeUrl, tokens[homeUrl])
+        val sh2 = d.shot("src-02-play-1080", "选 1080p 后播放（应为 990202）")
+        c.expect(
+            "sources-play-1080", "选 1080p（另一份文件）播放的是 990202", ff != null && snapItem == "990202" && sess1.contains("990202"),
+            values = mapOf("首帧ms" to ff, "控制器条目" to snapItem, "本台sessions" to sess1), shots = listOf(sh2),
+        )
+        c.back(1_500)
+    }
+
+    // ---- 项 3：切走再切回，首页第一帧就是上次的内容，记切回用时
+    private fun switchback150(c: Ctx) {
+        val d = c.d
+        val g = c.graph
+        val sw = com.gugaart.ui.servers.sharedServerSwitcher(g)
+        if (threeMocks(c) == null) { c.skip("switchback-content", "切走再切回首页第一帧", "要 --mock-servers 预存三台"); return }
+        fun port(): String? = g.session.session.value?.serverUrl?.substringAfterLast(':')?.takeWhile { it.isDigit() }
+        val first = port() ?: return
+        val e2 = sw.entries.value.firstOrNull { !it.isCurrent } ?: return
+        val second = portOf(e2.address)
+        c.reset(); closeSlips(c)
+        d.waitFor(15_000) { d.tree().has("desktop-home") }
+        d.waitFor(15_000) { d.tree().has("fold-title") || d.tree().has("desktop-poster-row") }
+        Thread.sleep(1_000)
+        fun homeSig(): String = d.tree().let { t ->
+            (t.tag("fold-title")?.let { t.textUnder(it) } ?: "") + " | " + (t.tag("desktop-poster-row")?.let { t.textUnder(it) }?.take(80) ?: "")
+        }
+        val before = homeSig()
+        val shBefore = d.shot("sw-01-before", "切走前：首页（第一台）")
+        runBlocking { sw.switchTo(e2.serverId, e2.userId) }
+        d.waitFor(10_000) { port() == second }
+        d.waitFor(15_000) { d.tree().has("fold-title") || d.tree().has("desktop-poster-row") }
+        Thread.sleep(800)
+        // 切回第一台：计时 + 第一帧有没有内容 / 先出骨架
+        val e1 = sw.entries.value.firstOrNull { ":$first" in it.address } ?: return
+        val t0 = System.currentTimeMillis()
+        runBlocking { sw.switchTo(e1.serverId, e1.userId) }
+        d.waitFor(10_000) { port() == first }
+        var skeletonSeen = false
+        val ready = d.waitFor(8_000, 40) {
+            if (d.tree().has("desktop-home-loading")) skeletonSeen = true
+            d.tree().has("fold-title") || d.tree().has("desktop-poster-row")
+        }
+        val elapsed = System.currentTimeMillis() - t0
+        val after = homeSig()
+        val shAfter = d.shot("sw-02-back", "切回第一台：首页第一帧")
+        c.expect(
+            "switchback-content", "切回第一台：首页立刻有上次的内容（不先出空骨架）", ready && !skeletonSeen && after.isNotBlank(),
+            values = mapOf("切回用时ms" to elapsed, "出骨架" to skeletonSeen, "切走前" to before.take(60), "切回后" to after.take(60)),
+            shots = listOf(shBefore, shAfter),
+        )
+        c.human("switchback-look", "切回第一帧观感", "看 sw-01-before / sw-02-back：切回第一帧就是上次的内容（三台片子一样，看的是不空、不闪骨架）", shots = listOf(shBefore, shAfter))
+    }
+
+    // ---- 项 7：设置 › 播放 › 多台服务器，关掉开关后详情只剩本台的源
+    private fun serverSettings150(c: Ctx) {
+        val d = c.d
+        if (threeMocks(c) == null) { c.skip("settings-toggle", "设置多台服务器开关", "要 --mock-servers 预存三台"); return }
+        fun otherServersRow(): AcceptDriver.Node? = d.tree().tag("set-otherServers")
+        fun onOffCell(want: String): AcceptDriver.Node? = otherServersRow()?.let { r ->
+            d.tree().descendants(r).firstOrNull { it.tag == "onoff-on" || it.tag == "onoff-off" }?.let { oo ->
+                d.tree().descendants(oo).firstOrNull { it.texts.contains(want) }
+            }
+        }
+        fun scrollToRow() {
+            repeat(10) {
+                val r = otherServersRow() ?: return
+                if (r.visible) return
+                d.wheel(d.ui { d.window.width / 2.0 }, d.ui { d.window.height / 2.0 }, 4)
+                Thread.sleep(250)
+            }
+        }
+        c.reset(); closeSlips(c)
+        c.nav(Route.Settings("playback"), 1_500)
+        d.waitFor(8_000) { d.tree().has("set-otherServers") }
+        // 滚到「多台服务器」这一组（在播放分区靠下）
+        scrollToRow()
+        Thread.sleep(600)
+        val shOn = d.shot("set-01-on", "设置 › 播放 › 多台服务器（开）")
+        onOffCell("关")?.let { d.click(it) }
+        val turnedOff = d.waitFor(5_000) { otherServersRow()?.let { r -> d.tree().descendants(r).any { it.tag == "onoff-off" } } == true }
+        val shOff = d.shot("set-02-off", "「从其它服务器找片源」关掉")
+        c.expect("settings-toggle", "「从其它服务器找片源」开关能关掉", turnedOff, shots = listOf(shOn, shOff))
+        // 关掉后详情只剩本台的源
+        c.nav(Route.Item("990201"), 2_500)
+        openSourcePick(c)
+        Thread.sleep(2_500)
+        val texts = slipRows(d).map { d.tree().textUnder(it) }
+        val noOther = texts.none { " ms" in it }
+        val shDetail = d.shot("set-03-detail", "关掉后详情「版本」：只剩本台")
+        c.expect(
+            "settings-off-detail", "关掉后详情页只剩本台的源（没有别台行）", noOther && texts.isNotEmpty(),
+            values = mapOf("行" to texts.joinToString(" | ")), shots = listOf(shDetail),
+        )
+        // 还原开关（开），不影响后面的场景
+        c.nav(Route.Settings("playback"), 1_200)
+        d.waitFor(6_000) { d.tree().has("set-otherServers") }
+        scrollToRow()
+        onOffCell("开")?.let { d.click(it) }
+        d.waitFor(5_000) { otherServersRow()?.let { r -> d.tree().descendants(r).any { it.tag == "onoff-on" } } == true }
+        c.back(800)
+    }
+
+    // ---- 项 6：播放器画质面板「版本」换到别台接着放；停掉那台再换 → 失败提示 4 秒
+    private fun remote150(c: Ctx) {
+        val d = c.d
+        val g = c.graph
+        val mocks = threeMocks(c)
+        if (mocks == null) { c.skip("remote-switch", "播放器换台", "要 --mock-servers 预存三台"); return }
+        fun port(): String? = g.session.session.value?.serverUrl?.substringAfterLast(':')?.takeWhile { it.isDigit() }
+        val first = port() ?: return
+        val others = com.gugaart.ui.servers.sharedServerSwitcher(g).entries.value.filter { !it.isCurrent }
+        if (others.size < 2) { c.skip("remote-switch", "播放器换台", "要三台（两台别台）"); return }
+        val url2 = Regex("^https?://[^/]+").find(others[0].address)?.value ?: return
+        val url3 = Regex("^https?://[^/]+").find(others[1].address)?.value ?: return
+        val tokens = mocks.associateWith { mockToken(it) }
+        fun openQuality(): Boolean {
+            c.wakeControls()
+            if (!d.tree().has("panel-quality")) {
+                d.tree().nodes.firstOrNull { (it.tag == "word" || it.tag == "word-on") && it.desc.any { s -> s.contains("画质") } }?.let { d.click(it) }
+            }
+            return d.waitFor(5_000) { d.tree().has("panel-quality") }
+        }
+        fun sourceOpts() = d.tree().nodes.filter { (it.tag == "panel-option" || it.tag == "panel-option-on") && " ms" in d.tree().textUnder(it) }
+        fun clickSourceRow(p: String): Boolean {
+            val panel = d.tree().tag("panel-quality") ?: return false
+            fun find() = sourceOpts().firstOrNull { p in d.tree().textUnder(it) }
+            var n = find() ?: return false
+            var tries = 0
+            while (tries < 8 && (n.bounds.cy > panel.bounds.y + panel.bounds.h - 24 || n.bounds.cy < panel.bounds.y + 24)) {
+                d.wheel(panel.bounds.cx, panel.bounds.cy, if (n.bounds.cy > panel.bounds.y + panel.bounds.h - 24) 3 else -3)
+                Thread.sleep(300)
+                n = find() ?: return false
+                tries++
+            }
+            d.click(n)
+            return true
+        }
+        c.reset(); closeSlips(c)
+        c.nav(Route.Play("990201"), 1_500)
+        Thread.sleep(800); closeSlips(c)
+        val ff = c.awaitFirstFrame(System.currentTimeMillis())
+        if (ff == null) { c.expect("remote-switch", "开播 990201 出首帧", false); c.back(1_500); return }
+        val panelOpen = openQuality()
+        d.waitFor(25_000, 300) { sourceOpts().size >= 2 }
+        val shPanel = d.shot("rem-01-panel", "画质面板「版本 / 源」：本台 + 别台行")
+        val posBefore = c.mpv("time-pos")?.toDoubleOrNull() ?: 0.0
+        // 点第二台的行（名字里带它的端口）
+        val clicked2 = clickSourceRow(portOf(url2))
+        val switched = d.waitFor(20_000, 300) { mockSessions(url2, tokens[url2]).contains("990201") }
+        // 换台完成后再量：开场 seek 落定、位置接着换前（不倒回 0）
+        val resumed = d.waitFor(15_000, 200) {
+            c.mpv("seeking") == "no" && (c.mpv("time-pos")?.toDoubleOrNull() ?: -1.0) >= posBefore - 1.5 && c.controller?.snapshot?.value?.phase == PlayPhase.Ready
+        }
+        val posAfter = c.mpv("time-pos")?.toDoubleOrNull()
+        val shSwitch = d.shot("rem-02-switched", "换到第二台：从当前位置接着放")
+        c.expect(
+            "remote-switch", "画质面板换到别台：从当前位置接着放（那台 sessions 有 990201）",
+            panelOpen && clicked2 && switched && resumed && mockSessions(url2, tokens[url2]).contains("990201"),
+            values = mapOf("换前pos" to posBefore, "换后pos" to posAfter, "第二台sessions" to mockSessions(url2, tokens[url2])),
+            shots = listOf(shPanel, shSwitch),
+        )
+        // ---- 停掉第三台，再点它的行 → 失败提示
+        openQuality()
+        d.waitFor(15_000, 300) { sourceOpts().any { portOf(url3) in d.tree().textUnder(it) } }
+        System.getenv("GUGAART_ACCEPT_STOP")?.let { java.io.File(it).writeText("stop ${portOf(url3)}\n") }
+        val down = d.waitFor(60_000, 500) { !reachable(url3) }
+        c.expect("remote-offline-ready", "第三台 Mock 停掉（当成连不上）", down)
+        openQuality()
+        val clicked3 = clickSourceRow(portOf(url3))
+        val flashShown = d.waitFor(8_000, 100) { d.tree().has("player-notice-flash") }
+        val flashText = d.tree().textUnder("player-notice-flash").orEmpty()
+        val shFlash = d.shot("rem-03-flash", "换到停掉的台：「换到「X」没成功，继续播放当前的」")
+        val tFlash = System.currentTimeMillis()
+        val gone = d.waitFor(8_000, 200) { !d.tree().has("player-notice-flash") }
+        val flashMs = System.currentTimeMillis() - tFlash
+        c.expect(
+            "remote-fail-toast", "停掉那台再换：出「换到「X」没成功，继续播放当前的」，约 4 秒后消失",
+            flashShown && "没成功，继续播放当前的" in flashText && gone,
+            values = mapOf("提示" to flashText, "亮ms" to flashMs, "点到行" to clicked3), shots = listOf(shFlash),
+        )
+        c.back(1_500)
+    }
+
 }
 
 internal data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

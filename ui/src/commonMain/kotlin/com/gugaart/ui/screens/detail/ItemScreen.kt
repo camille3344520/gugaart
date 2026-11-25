@@ -315,7 +315,10 @@ fun MoviePhone(movie: Title, day: Int) {
     // 手机详情页顶部 = 竖版海报（没海报退横版剧照，高度回到 MOVIE_BLEED）
     val heroH = phoneHeroHeight(movie.art, MOVIE_BLEED)
     val solidAt = with(LocalDensity.current) { (heroH - dimens.statusBar - 50.dp - 70.dp).toPx() }
-    val source = movie.sources.firstOrNull()
+    // 版本 = 「源」（本台的版本 + 没被合并的重复片）：选中的那个决定徽章、播放按钮右端的规格、音轨 / 字幕和开播
+    val sources = rememberSourcesState(movie)
+    val source = sources.selected?.mediaSource ?: movie.sources.firstOrNull()
+    var versionSheet by remember(movie.id) { mutableStateOf(preset.state == "ver") }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("movie-phone")) {
@@ -350,7 +353,7 @@ fun MoviePhone(movie: Title, day: Int) {
                 FormatBadgeRow(formatBadges(source, null, null), 1.15f, Modifier.padding(top = 16.dp), notes = false)
                 PrimaryButton(
                     if (movie.progress > 0f) "续看" else "播放",
-                    { graph.play(movie.id, movie.positionSec?.times(1000)) },
+                    { graph.playback.play(sources.playRoute(movie.positionSec?.times(1000))) },
                     Modifier.padding(top = 18.dp).fillMaxWidth(),
                     progress = movie.progress,
                     trailing = if (movie.progress > 0f) Rules.progressLabel(movie.progress, movie.runtimeSec, true) else specLine(source),
@@ -374,10 +377,8 @@ fun MoviePhone(movie: Title, day: Int) {
                 Rules.studios(movie.studios)?.let {
                     BasicText("出品  $it", Modifier.padding(top = 14.dp), style = Guga.song(type.caption, color = colors.dim), maxLines = 2)
                 }
-                // 版本：真实数据里通常只有一个，只有一个时不出现入口
-                if (movie.sources.size > 1) {
-                    StreamList("版本", "VERSIONS", movie.sources.map { s -> StreamRow(s.name?.takeIf { it.isNotBlank() } ?: "未命名", listOfNotNull(specLine(s), s.container?.uppercase()).joinToString(" · ")) }, Modifier.padding(top = 26.dp))
-                }
+                // 版本：真实数据里通常只有一个，只有一个时不出现入口；多于一个 = 一行「版本 · 选中的 ›」，点开是贴底的纸片
+                if (sources.sources.size > 1) VersionRow(sources, { versionSheet = true }, Modifier.padding(top = 26.dp))
                 StreamList("音轨", "AUDIO", streamsOf(source, "Audio"), Modifier.padding(top = 26.dp))
                 StreamList("字幕", "SUBTITLES", streamsOf(source, "Subtitle"), Modifier.padding(top = 26.dp))
             }
@@ -387,5 +388,6 @@ fun MoviePhone(movie: Title, day: Int) {
         }
         BackRow(movie.name, solid = scroll.value > solidAt, onBack = { graph.nav.backOrHome() }, favorite = fav, onFavorite = { graph.toggleFavorite(chrome, movie.id, fav) })
         openStill?.let { StillsViewer(stills, it) { openStill = null } }
+        if (versionSheet && sources.sources.size > 1) VersionSheet(sources) { versionSheet = false }
     }
 }

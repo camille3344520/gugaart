@@ -7,6 +7,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,10 +63,37 @@ class PlaySession internal constructor(
     val prefs: PlayerPrefsStore,
     /** 退出播放器：回上一页；没有上一页（深链进来的）→ 这一条的详情页。 */
     val exit: () -> Unit,
+    /** 本台（当前会话）的播放客户端：从别台切回来用（1.5.0 B3）。 */
+    val homeClient: PlayerClient = controller.currentClient,
+    /** 路由里的条目（本台的）：放着别台的源时，详情 / 返回 / 「版本」面板认的还是它。 */
+    val homeItemId: String = controller.currentItemId,
 ) {
+    /** 各个别台客户端是哪台（[RemotePlay.choose] / 开播交接登记）。 */
+    private val remotes = HashMap<PlayerClient, RemoteSource>()
+
+    internal fun register(client: PlayerClient, source: RemoteSource) {
+        remotes[client] = source
+    }
+
+    /**
+     * 现在正放着别台的哪个源（放的是本台的 = null）。跟着控制器实际用的客户端走：换台失败上游会把客户端放回去，这里也就跟着回去。
+     * 组合里读它要配合读一次 `controller.snapshot`（换台一定会改 snapshot 的 itemId / sourceId）。
+     */
+    val remote: RemoteSource? get() = remotes[controller.currentClient]
+
     /** 上游的通知（引擎回退、换线路…）：画报播放器把最近的一条排成缓冲态下面的一行小字，不弹窗（docs/player.md §4）。 */
     var notice: Notice? by mutableStateOf(null)
         internal set
+
+    /** 第几条通知（同样的通知连来两次也算两次：播放器的提示条按它重新亮，[PlayerNoticeFlash]）。 */
+    var noticeSeq: Int by mutableIntStateOf(0)
+        private set
+
+    /** 来了一条通知（上游的 notify、画报自己的「换台失败」都走这里）。 */
+    fun post(n: Notice) {
+        notice = n
+        noticeSeq++
+    }
 
     /** 现在这条字幕是怎么选来的：「自动」「上次」「设置」「手动」；还没选过 / 路由自己带着字幕 = null。顶部信息行用（[subtitleBadge]）。 */
     var subtitleWhy: String? by mutableStateOf(null)
@@ -119,17 +147,23 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
     val play = remember(s.client, restartTick) {
         var holder: PlaySession? = null
         val restart = if (restartTick > 0) PlayerRestart.take() else null
+        // 字幕搜索的「仅本次播放」：这一集有本机字幕时加进协商结果（subtitle/LocalSubtitles.kt；没有就原样转发）
+        val home = com.gugaart.ui.subtitle.SubtitleAwareClient(clientOverride?.invoke(s) ?: EmbyPlayerClient(s.client))
+        // 1.5.0 B3：详情页选了别台的源（或在别台的源上换了内核）→ 一开始就用那台的客户端（池里找片源时建好的）
+        val handoff = RemotePlay.take(route.id)
+        val remoteClient = handoff?.let { com.gugaart.ui.data.OtherServers.poolFor(g).clientNow(it.serverId) }
+        val remote = if (handoff != null && remoteClient != null) RemoteSource(handoff.serverId, handoff.serverName, handoff.itemId, route.id, remoteClient) else null
+        val remotePlayer = remote?.let { RemotePlay.playerClientOf(it.client) }
         val controller = PlayController(
             PlayerDeps(
-                // 字幕搜索的「仅本次播放」：这一集有本机字幕时加进协商结果（subtitle/LocalSubtitles.kt；没有就原样转发）
-                client = com.gugaart.ui.subtitle.SubtitleAwareClient(clientOverride?.invoke(s) ?: EmbyPlayerClient(s.client)),
+                client = remotePlayer ?: home,
                 platform = platform,
                 playback = { PlaybackSettings.of(g.settings.value) },
                 strm = { StrmSettings.of(g.settings.value) },
                 prefs = prefs,
                 scope = scope,
                 appScope = g.scope,
-                notify = { n -> holder?.notice = n },
+                notify = { n -> holder?.post(n) },
                 // strm / CDN 链接由引擎自己打开，线路跟「设置 › 播放 › strm 直链 › 线路」走
                 systemProxy = { withContext(Dispatchers.Default) { detectSystemProxy() } },
                 resolveRedirect = { u, h, p -> g.strmRedirects.resolve(u, h, p) },
@@ -149,13 +183,19 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
                 log = { level, message -> g.log.add(level, message) },
                 scrubDwellMs = { g.scrubDwellMs },
             ),
-            restart ?: PlayRequest(route.id, route.mediaSourceId, route.startMs, route.audio, route.subtitle),
+            restart ?: (if (remote != null && handoff != null) PlayRequest(remote.itemId, handoff.mediaSourceId, handoff.startMs) else null)
+                ?: PlayRequest(route.id, route.mediaSourceId, route.startMs, route.audio, route.subtitle),
         )
+        var session: PlaySession? = null
         PlaySession(controller, platform, prefs, exit = {
-            // 屏幕上的返回键 / 停止 / 出错页的「退出」：和返回键同一个去处——下面不是详情页就先到这部剧的详情页
-            val t = playerBackTarget(g.nav.routes(), controller.value.item, controller.currentItemId)
-            if (t != null) g.nav.replace(t) else if (!g.nav.pop()) g.nav.replace(Route.Item(controller.currentItemId))
-        }).also {
+            // 屏幕上的返回键 / 停止 / 出错页的「退出」：和返回键同一个去处——下面不是详情页就先到这部剧的详情页。
+            // 放着别台的源时，条目 / 条目 id 是那台的，本台认不得：按路由里本台的条目走
+            val onRemote = session?.remote != null
+            val t = playerBackTarget(g.nav.routes(), if (onRemote) null else controller.value.item, if (onRemote) route.id else controller.currentItemId)
+            if (t != null) g.nav.replace(t) else if (!g.nav.pop()) g.nav.replace(Route.Item(if (onRemote) route.id else controller.currentItemId))
+        }, homeClient = home, homeItemId = route.id).also {
+            session = it
+            if (remote != null && remotePlayer != null) it.register(remotePlayer, remote)
             holder = it
             controller.start()
         }
@@ -167,10 +207,11 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
             play.controller.dispose()
         }
     }
-    // Trakt：连着就记（开始 / 暂停 / 换集或退出 = 停，带进度）；离屏测试的假客户端不记
+    // Trakt：连着就记（开始 / 暂停 / 换集或退出 = 停，带进度）；离屏测试的假客户端不记。
+    // 编号从正在播的那台取：放着别台的源 = 别台的客户端（条目 id 只在那一台有意义，1.5.0）
     if (clientOverride == null) LaunchedEffect(play) {
         com.gugaart.ui.trakt.TraktService.bind(g)
-        com.gugaart.ui.trakt.TraktService.follow(play.controller, s.client)
+        com.gugaart.ui.trakt.TraktService.follow(play.controller) { play.remote?.client ?: s.client }
     }
     // 字幕自动选择（设置 › 字幕与音轨 ›「字幕默认」）：每换一条片源选一次；路由自己带着字幕（详情页里挑好的）就不插手
     val gugaPrefs = rememberUpdatedState(com.gugaart.ui.mascot.LocalGugaPrefs.current)
@@ -215,9 +256,16 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
             if (snap.subtitleIndex != pick.index) play.controller.selectSubtitle(pick.index)
         }
     }
+    // 字幕智能匹配（1.4.1 U2，subtitle/BestMatchUi.kt）：开播后这一集没有中文字幕 → 搜一次，指纹精确的自动加载（开关开着）或者提示一句；
+    // 离屏测试的假客户端不搜（截图里的提示由测试直接摆状态）
+    if (clientOverride == null) com.gugaart.ui.subtitle.RememberAutoBest(play, explicit = route.subtitle != null)
     val sink = LocalPlaySessionSink.current
     SideEffect { sink?.invoke(play) }
-    LaunchedEffect(play, route) { play.controller.changeItem(PlayRequest(route.id, route.mediaSourceId, route.startMs, route.audio, route.subtitle)) }
+    LaunchedEffect(play, route) {
+        // 放着别台的源、路由还是本台那一条：不是「换了条目」，别把本台的条目 id 交给别台的客户端
+        if (play.remote?.homeItemId == route.id) return@LaunchedEffect
+        play.controller.changeItem(PlayRequest(route.id, route.mediaSourceId, route.startMs, route.audio, route.subtitle))
+    }
     // 不是队列交过来的条目（从详情页、记录里点开的）：队列到此为止
     LaunchedEffect(route.id) { if (g.queue.current != null && g.queue.playingId != route.id) g.queue.clear() }
     return play
@@ -246,7 +294,8 @@ fun rememberGugaDanmaku(play: PlaySession): PlayerDanmaku {
         PlayerDanmaku(
             scope, g.settings, play.prefs, g.danmaku,
             matchInput = { id ->
-                val client = g.session.session.value?.client ?: error("没有会话")
+                // 放着别台的源：弹幕匹配要问那一台（条目 id 是那台的）
+                val client = play.remote?.client ?: g.session.session.value?.client ?: error("没有会话")
                 val input = client.getDanmakuMatchInput(id)
                 // 这一季在 Emby 的首播年 / 集数 / 最大季号（只读，一部剧取一次）：季守卫认定「第 N 季」用
                 DanmakuSeasonGuard.record(id, input, runCatching { DanmakuSeasonFacts.of(client, input) }.getOrNull())

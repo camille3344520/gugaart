@@ -102,6 +102,19 @@ data class GugaPrefs(
      * 只有用户点「搜索字幕…」才会发请求。
      */
     val subtitleOnline: Boolean = true,
+    /**
+     * 字幕智能匹配的「自动加载」（1.4.1 P2，docs/subtitle-search.md §2.4）：开播时这一集没有中文字幕、
+     * 而且「最合适」那条是**指纹精确**，就自动加载它（服务器源 = 进 Emby，迅雷 / 射手 = 仅本次）。
+     * **默认关**：开了才会在开播时自己搜一次（只发文件名和指纹，和手动搜一样）。
+     */
+    val subtitleAutoBest: Boolean = false,
+    /** 字幕样式（1.4.1：字号、粗体、字体、描边、阴影、位置、是否改 ASS 自带样式；[SubStylePrefs]）。 */
+    val subStyle: SubStylePrefs = SubStylePrefs(),
+    /**
+     * 弹幕用上游 `:danmaku` 没有的那几款（[StyleFont] 里 `danmaku == null` 的：思源宋体、站酷快乐体）时记在这里（它的 id）；
+     * null = 用上游的键 `danmaku.render.font`。导入的字体另有自己的键（[ImportedFontStore]），选中导入的时这里清空。
+     */
+    val danmakuFont: String? = null,
 ) {
     /** 她的格子出不出现。 */
     val showMascot: Boolean get() = mascot != MascotPref.Off
@@ -126,6 +139,9 @@ data class GugaPrefs(
                 tocHintSeen = bool("tocHintSeen", false),
                 wall = (o["wall"] as? JsonObject)?.mapValues { (_, v) -> WallPref.parse(v as? JsonObject) }.orEmpty(),
                 subtitleOnline = bool("subtitleOnline", true),
+                subtitleAutoBest = bool("subtitleAutoBest", false),
+                subStyle = SubStylePrefs.parse(o["subStyle"] as? JsonObject),
+                danmakuFont = (o["danmakuFont"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { id -> StyleFont.of(id)?.let { it.danmaku == null } == true },
             )
         }
 
@@ -138,7 +154,8 @@ data class GugaPrefs(
 
     /** 写回：在 [previous]（存着的原文）上只改自己认识的键。 */
     fun encode(previous: String? = null): String = buildJsonObject {
-        parseObject(previous)?.forEach { (k, v) -> put(k, v) }
+        // 认识的键下面都会重写；danmakuFont 为 null 时要真的拿掉（不能留着旧值）
+        parseObject(previous)?.forEach { (k, v) -> if (k != "danmakuFont") put(k, v) }
         put("spotColorFollowsCover", spotColorFollowsCover)
         put("paperTexture", paperTexture)
         put("mascot", mascot.id)
@@ -151,6 +168,9 @@ data class GugaPrefs(
         put("tocHintSeen", tocHintSeen)
         put("wall", buildJsonObject { wall.forEach { (k, v) -> put(k, v.encode()) } })
         put("subtitleOnline", subtitleOnline)
+        put("subtitleAutoBest", subtitleAutoBest)
+        put("subStyle", subStyle.encode())
+        danmakuFont?.let { put("danmakuFont", it) }
     }.toString()
 }
 

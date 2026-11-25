@@ -4,14 +4,12 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -22,12 +20,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.theme.Guga
+import com.gugaart.ui.theme.GugaColors
 import com.gugugaga.app.player.PlayPhase
 import com.gugugaga.app.player.PlayerSnapshot
 import com.gugugaga.core.MediaSourceInfo
@@ -35,20 +37,6 @@ import com.gugugaga.core.MediaStream
 import com.gugugaga.core.audioCodecLabel
 import com.gugugaga.core.defaultVideoStream
 import com.gugugaga.core.hdrLabel
-import com.gugugaga.ds.icons.GuguIcon
-import com.gugugaga.ds.icons.Icon
-import com.gugaart.ui.res.Res
-import com.gugaart.ui.res.av_4k
-import com.gugaart.ui.res.av_atmos
-import com.gugaart.ui.res.av_dolby_vision
-import com.gugaart.ui.res.av_dtshdma
-import com.gugaart.ui.res.av_dtsx
-import com.gugaart.ui.res.av_hdr10
-import com.gugaart.ui.res.av_hdr10plus
-import com.gugaart.ui.res.av_hlg
-import com.gugaart.ui.res.av_truehd
-import org.jetbrains.compose.resources.DrawableResource
-import org.jetbrains.compose.resources.painterResource
 import kotlinx.coroutines.delay
 
 /*
@@ -59,9 +47,10 @@ import kotlinx.coroutines.delay
  * 壳在启动时报上这台设备的屏幕能显示什么（[DeviceAv]，安卓读 Display 的 HDR 能力和有没有杜比视界解码器；Mac 读窗口所在屏幕有没有 EDR 余量；Windows 上不知道 = 不写备注）：
  * 徽章哪里都照常亮（不变灰）；这台设备激活不了的，只在播放器里开播那几秒、徽章下面写一行实际会怎么放（「这台设备按 HDR10 显示」）；
  * 全景声 / DTS:X 应用查不到有没有接音箱，写「由音箱 / 功放解码」。
- * 4K / 杜比视界 / HDR10+ / HDR10 / HLG / 杜比全景声 / DTS:X / DTS-HD MA / TrueHD 是九枚复古电影质感的徽章图（用户 2026-11-16：「加点电影和或者画报质感」；
- * Gemini 生成，scripts/art/av_badges.py 抠成透明 PNG）：图上是名字的文字，不是杜比 / DTS 的官方 Logo 图案（那是注册商标）。
- * 说不清是哪种的「HDR」没有图，用文字小签。详情页也挂同一排（不看设备能力、不写备注，用户 2026-11-16：「影片详情页也可以打上对应的图标」）。
+ * 每种效果一枚矢量徽记（1.4.1 U3，换掉 1.2 的九张 Gemini 复古徽章 PNG）：印刷品的字标签——墨底、直角、外粗内细两道米白框线，
+ * 上面一行是这个格式叫得出的名字（HDR10、DTS:X；杜比视界、杜比全景声用中文），下面一行小字是另一种叫法。只有字，不画杜比 / DTS 的官方图形（注册商标）。
+ * 路径由 scripts/art/AvMarks.java 从仓库里的 Noto Serif SC 子集生成（`AvMarkArt.kt`），颜色从主题取；说不清是哪种的「HDR」也有一枚。
+ * 详情页也挂同一排（不看设备能力、不写备注，用户 2026-11-16：「影片详情页也可以打上对应的图标」）。
  */
 
 /**
@@ -168,26 +157,22 @@ fun formatBadges(source: MediaSourceInfo?, audioIndex: Int?, caps: AvCaps?): Lis
     return out
 }
 
-/** 有现成徽章图的效果（复古电影质感，中英文名都在图上）。 */
-private fun imageOf(kind: AvKind): DrawableResource? = when (kind) {
-    AvKind.Uhd4k -> Res.drawable.av_4k
-    AvKind.DolbyVision -> Res.drawable.av_dolby_vision
-    AvKind.Hdr10Plus -> Res.drawable.av_hdr10plus
-    AvKind.Hdr10 -> Res.drawable.av_hdr10
-    AvKind.Hlg -> Res.drawable.av_hlg
-    AvKind.Atmos -> Res.drawable.av_atmos
-    AvKind.DtsX -> Res.drawable.av_dtsx
-    AvKind.DtsHdMa -> Res.drawable.av_dtshdma
-    AvKind.TrueHd -> Res.drawable.av_truehd
-    AvKind.Hdr -> null
-}
-
-/** 文字小签上的小图标。 */
-private fun iconOf(kind: AvKind): GuguIcon = when (kind) {
-    AvKind.Uhd4k -> GuguIcon.Monitor
-    AvKind.DolbyVision -> GuguIcon.Eye
-    AvKind.Hdr10Plus, AvKind.Hdr10, AvKind.Hdr, AvKind.Hlg -> GuguIcon.Sun
-    AvKind.Atmos, AvKind.DtsX, AvKind.DtsHdMa, AvKind.TrueHd -> GuguIcon.AudioLines
+/**
+ * 一枚格式徽记的矢量图：[AvMarkArt] 的路径 + 主题的颜色（墨底 [GugaColors.badgePlate]、框线和大字米白、内框细线和小字 [GugaColors.dim]）。
+ * 视口高 [AV_MARK_HEIGHT]，宽按字长；画的时候只给高，宽跟着比例走。
+ */
+internal fun avMarkVector(art: AvMarkArt, colors: GugaColors): ImageVector {
+    val b = ImageVector.Builder("av-mark", art.width.dp, AV_MARK_HEIGHT.dp, art.width, AV_MARK_HEIGHT)
+    fun fill(d: String, color: Color, type: PathFillType = PathFillType.NonZero) {
+        b.addPath(PathParser().parsePathString(d).toNodes(), pathFillType = type, fill = SolidColor(color))
+    }
+    fill(art.plate, colors.badgePlate)
+    fill(art.frame, colors.ink, PathFillType.EvenOdd)
+    fill(art.hairline, colors.dim, PathFillType.EvenOdd)
+    fill(art.word, colors.ink)
+    fill(art.flank, colors.dim)
+    fill(art.caption, colors.dim)
+    return b.build()
 }
 
 /**
@@ -245,22 +230,12 @@ fun FormatBadgeRow(badges: List<FormatBadge>, scale: Float, modifier: Modifier =
     Column(modifier.testTag("format-badges")) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp * scale), verticalAlignment = Alignment.CenterVertically) {
             for (b in badges) {
-                val image = imageOf(b.kind)
-                Box(Modifier.testTag("format-${b.kind.name.lowercase()}")) {
-                    if (image != null) {
-                        // 徽章图：高 44dp（× 端的倍数），宽按图
-                        androidx.compose.foundation.Image(painterResource(image), listOfNotNull(b.zh, b.en).joinToString(" "), Modifier.height(44.dp * scale))
-                    } else Row(
-                        Modifier.background(colors.inkWell.copy(alpha = 0.78f)).border(1.dp, colors.ink.copy(alpha = 0.7f))
-                            .padding(horizontal = 9.dp * scale, vertical = 5.dp * scale),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp * scale),
-                    ) {
-                        Icon(iconOf(b.kind), colors.ink, 15.dp * scale)
-                        BasicText(b.zh, style = Guga.song(13.sp * scale, FontWeight.Bold, colors.ink, letterSpacing = 0.06.em), maxLines = 1)
-                        if (b.en != null) BasicText(b.en, style = Guga.numeral(10.sp * scale, colors.dim, letterSpacing = 0.16.em), maxLines = 1)
-                    }
-                }
+                // 每种效果都有一枚（AvMarkArtTest 守着）；万一将来加了种类没出图，宁可不画也不画错
+                val art = AV_MARK_ART[b.kind] ?: continue
+                val mark = remember(art, colors) { avMarkVector(art, colors) }
+                // 徽记：高 44dp、宽 art.width dp，两边都 × 端的倍数。只给高不行：宽落回矢量的固有宽度（没乘倍数），
+                // ContentScale.Fit 被宽卡住、放大倍数 = 1，多出来的高变成空白（Windows Pi 量到电视详情页节点 66 px、墨底只有 44 px）
+                Image(mark, listOfNotNull(b.zh, b.en).joinToString(" "), Modifier.size(art.width.dp * scale, AV_MARK_HEIGHT.dp * scale).testTag("format-${b.kind.name.lowercase()}"))
             }
         }
         if (noteLine != null) {

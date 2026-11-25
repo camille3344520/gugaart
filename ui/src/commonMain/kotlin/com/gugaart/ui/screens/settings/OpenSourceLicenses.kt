@@ -179,9 +179,14 @@ object OpenSourceLicenses {
             ),
             // 字幕搜索（1.4.0）：迅雷 / 射手的指纹算法和接口用法移植自 MeiamSubtitles（docs/subtitle-search.md §8；原文 third_party/meiamsub/LICENSE）
             LicenseEntry("MeiamSubtitles（字幕搜索）", "Apache-2.0", "迅雷 / 射手的指纹算法与接口用法，移植并改动 · Copyright Meiam · github.com/91270/MeiamSubtitles"),
+            // 片库搜索（1.4.1，docs/search.md）：繁 → 简单字表、全拼表（生成物 ui/…/search/SearchTables.kt；原文 third_party/opencc、third_party/unicode）
+            LicenseEntry("OpenCC 繁简字表（片库搜索）", "Apache-2.0", "TSCharacters 的单字，改写成 Kotlin 常量 · github.com/BYVoid/OpenCC"),
+            LicenseEntry("Unicode CLDR 拼音数据（片库搜索）", "Unicode-3.0", "ICU Han-Latin 转写的每字读音，去掉声调 · © Unicode, Inc. · unicode.org/license.txt"),
             LicenseEntry("Lucide 图标", "ISC", "矢量路径 · lucide.dev"),
             LicenseEntry("思源宋体子集 Noto Serif SC", "SIL Open Font License 1.1", "界面字体"),
             LicenseEntry("思源黑体子集 Noto Sans SC", "SIL Open Font License 1.1", "iOS 内嵌字幕字体（Regular）"),
+            // 1.4.1 字幕 / 弹幕字体：不随包，选了才从 Google Fonts 的官方仓库下载（docs/subtitle-style.md §3）
+            LicenseEntry("站酷快乐体 ZCOOL KuaiLe", "SIL Open Font License 1.1", "字幕 / 弹幕字体，选用时下载 · Copyright 2018 The ZCOOL KuaiLe Project Authors"),
         )
     }
 }

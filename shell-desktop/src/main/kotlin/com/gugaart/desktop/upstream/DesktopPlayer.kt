@@ -11,6 +11,8 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.gugugaga.app.player.ExternalPlayerInfo
 import com.gugugaga.app.player.ExternalPlayers
 import com.gugugaga.app.player.FrameSnapshot
+import com.gugugaga.app.player.MPV_SUB_DEFAULT_QUERIES
+import com.gugugaga.app.player.MpvSubBase
 import com.gugugaga.app.player.NativeCommand
 import com.gugugaga.app.player.NativeCommandException
 import com.gugugaga.app.player.NativeEngine
@@ -25,9 +27,13 @@ import com.gugugaga.app.player.PlayerTime
 import com.gugugaga.app.player.PlayerTrack
 import com.gugugaga.app.player.PlayerTracks
 import com.gugugaga.app.player.VideoSize
+import com.gugugaga.app.player.mpvSubBase
+import com.gugugaga.app.player.mpvSubtitleProperties
+import com.gugugaga.app.player.vlcSubtitleOptions
 import com.gugugaga.core.EngineId
 import com.gugugaga.desktop.mpv.DefaultMpvLocateEnv
 import com.gugugaga.desktop.mpv.ExternalSubtitle
+import com.gugugaga.desktop.mpv.MPV_DEFAULT_SUB_FONT
 import com.gugugaga.desktop.mpv.MpvEngineConfig
 import com.gugugaga.desktop.mpv.MpvEvent
 import com.gugugaga.desktop.mpv.MpvException
@@ -171,6 +177,8 @@ class VlcBackend(private val host: VlcHost) : NativePlayerBackend {
             is NativeCommand.Subtitle -> e.selectSubtitle(cmd.id)
             is NativeCommand.SubDelay -> e.setSubtitleDelay(cmd.ms.toLong())
             is NativeCommand.Shaders -> Unit // VLC has no GLSL shader chain (NativeEngine never offers one for it)
+            // freetype options: libVLC reads them when an instance is created = from the next load on
+            is NativeCommand.SubStyle -> e.subtitleOptions = vlcSubtitleOptions(cmd.style)
             is NativeCommand.Aspect -> e.setAspect(cmd.mode.id)
             is NativeCommand.Viewport -> e.setViewport(cmd.rect?.let { Viewport.Rect(it.x, it.y, it.w, it.h) } ?: Viewport.Fullscreen)
             NativeCommand.Snapshot, is NativeCommand.FrameSample -> null
@@ -193,6 +201,19 @@ class MpvBackend(private val host: MpvHost) : NativePlayerBackend {
 
     /** 网速 (T06): mpv's own `cache-speed`, polled once a second by the engine; null while mpv cannot answer. */
     override suspend fun sampleThroughput(): Double? = host.engine.cacheSpeed()
+
+    /** What this mpv starts with ([MPV_DEFAULT_SUB_FONT], its own defaults of the numeric sub options): read once. */
+    private var subBase: MpvSubBase? = null
+
+    /** The style sent last (a different font makes libass rescan the fonts directory: `mpvSubtitleProperties`). */
+    private var lastSubStyle: com.gugugaga.app.player.SubtitleStyle? = null
+
+    private suspend fun subBase(e: MpvWindowsEngine): MpvSubBase = subBase ?: run {
+        val answers = MPV_SUB_DEFAULT_QUERIES.associateWith { q ->
+            runCatching { (e.getProperty(q) as? kotlinx.serialization.json.JsonPrimitive)?.content }.getOrNull()
+        }
+        mpvSubBase(MPV_DEFAULT_SUB_FONT, null, answers).also { if (answers.values.any { it != null }) subBase = it }
+    }
 
     override suspend fun invoke(cmd: NativeCommand): Any? = try {
         val e = host.engine
@@ -220,6 +241,10 @@ class MpvBackend(private val host: MpvHost) : NativePlayerBackend {
             is NativeCommand.Subtitle -> e.command(MpvTransportCommand.Subtitle(cmd.id))
             is NativeCommand.SubDelay -> e.command(MpvTransportCommand.SubDelay(cmd.ms))
             is NativeCommand.Shaders -> e.command(MpvTransportCommand.Shaders(cmd.paths))
+            is NativeCommand.SubStyle -> {
+                e.command(MpvTransportCommand.SubStyle(mpvSubtitleProperties(cmd.style, subBase(e), lastSubStyle)))
+                lastSubStyle = cmd.style
+            }
             is NativeCommand.Aspect -> e.command(MpvTransportCommand.Aspect(cmd.mode.id))
             is NativeCommand.Viewport -> e.setViewport(cmd.rect?.let { Viewport.Rect(it.x, it.y, it.w, it.h) } ?: Viewport.Fullscreen)
             NativeCommand.Snapshot -> {

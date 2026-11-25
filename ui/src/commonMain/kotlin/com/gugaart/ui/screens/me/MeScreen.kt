@@ -60,6 +60,8 @@ import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.ReportScroll
 import com.gugaart.ui.screens.StatusBand
 import com.gugaart.ui.screens.open
+import com.gugaart.ui.servers.ServerSheet
+import com.gugaart.ui.servers.currentServerTitle
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.session.AppSession
@@ -150,7 +152,9 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
     val current = servers.firstOrNull { it.id == s.serverId || it.serverId == s.serverId || apiBaseOf(it.address) == s.serverUrl }
     val accounts = current?.accounts.orEmpty()
     val startPanel = LocalMePanel.current
-    var open by remember { mutableStateOf(startPanel) }
+    // 截图预置 "server"：服务器那一行现在打开的是纸片（不在页里推开）
+    var open by remember { mutableStateOf(startPanel?.takeIf { it != "server" }) }
+    LaunchedEffect(startPanel) { if (startPanel == "server") ServerSheet.show() }
     var problem by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var leaving by remember { mutableStateOf(false) }
@@ -203,34 +207,8 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
             SpecialGrid(RankBoard.owned, Modifier.padding(top = 16.dp).testTag("me-specials"), columns = 6, badge = 46.dp, nameSize = 11.sp, rows = 2) { id -> RankBoard.special = SpecialNews(listOf(id), browse = true) }
             Rule(Modifier.padding(top = 18.dp))
 
-            // ---- 服务器
-            SwitchRow("服务器", s.serverName.ifBlank { "Emby 服务器" }, othersLabel(servers.size.coerceAtLeast(1), "台"), open == "server", tag = "me-server-row") { open = if (open == "server") null else "server" }
-            AnimatedVisibility(open == "server", enter = expandVertically(), exit = shrinkVertically()) {
-                SwitchPanel("me-server-panel") {
-                    for (server in servers) {
-                        val isCurrent = server.id == current?.id
-                        val target = server.accounts.maxByOrNull { it.lastLoginAt }
-                        PanelOption(
-                            title = server.remark?.takeIf { it.isNotBlank() } ?: server.name,
-                            sub = when {
-                                isCurrent -> "正在使用"
-                                busy?.startsWith(server.id + "|") == true -> "正在切换……"
-                                target == null -> "还没有登录过"
-                                else -> server.accounts.joinToString(" · ") { it.userName }
-                            },
-                            selected = isCurrent,
-                        ) {
-                            when {
-                                isCurrent -> open = null
-                                target == null -> graph.nav.navigate(Route.Login(switch = true, server = apiBaseOf(server.address)))
-                                else -> switchTo(server, target)
-                            }
-                        }
-                        Rule()
-                    }
-                    PanelAction("添加服务器") { graph.nav.navigate(Route.Servers) }
-                }
-            }
+            // ---- 服务器：点这一行 = 和首页报头下那一行同一张「换一台服务器」纸片（1.5.0，[ServerSheet]）
+            SwitchRow("服务器", currentServerTitle() ?: s.serverName.ifBlank { "Emby 服务器" }, othersLabel(servers.size.coerceAtLeast(1), "台"), false, tag = "me-server-row") { ServerSheet.show() }
             Rule()
 
             // ---- 账号

@@ -164,6 +164,15 @@ private data class TvPreview(
  */
 @Composable
 fun TvHomeScreen(today: Today) {
+    // 首页的菜单键 = 这一页的选项：换服务器（1.5.0；docs/platforms.md §3「菜单键 = 这一页的选项」）。
+    // 页边开着时不接（交给焦点项：页边里那一行的「改备注 / 删除」）；长按确定照旧是焦点卡片的菜单
+    val g = LocalGraph.current
+    TvMenuKey {
+        if (TvServerPanel.open || TvLongPressMenu.target != null) false else {
+            TvServerPanel.show(g.focus.lastFocusedPress)
+            true
+        }
+    }
     val load: Load<HomeData> = rememberLoad("home") { loadHome(it) }
     com.gugaart.ui.screens.home.RefreshOnReturn(load)
     val data = load.value

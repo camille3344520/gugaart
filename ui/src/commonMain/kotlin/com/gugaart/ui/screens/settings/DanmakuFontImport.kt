@@ -29,19 +29,20 @@ import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.ui.LocalGraph
 import kotlinx.coroutines.launch
 
-/** 这一屏用的导入字体仓（列表 + 选中，存在上游的 `LocalStore` 里；平台那一半由壳经 [LocalFontImport] 给）。 */
+/**
+ * 导入字体仓（列表 + 选中，存在上游的 `LocalStore` 里；平台那一半由壳经 [LocalFontImport] 给）。全进程一个（[ImportedFontStore.of]）：
+ * 设置页、播放器面板、弹幕画面看的是同一份选中状态，面板里一换，画面立刻跟着换。
+ */
 @Composable
 fun rememberImportedFonts(): ImportedFontStore {
     val local = LocalGraph.current.deps.local
     val host = LocalFontImport.current
-    return remember(local, host) { ImportedFontStore(local, host) }
+    return remember(local, host) { ImportedFontStore.of(local, host) }
 }
 
 /** 电视 / 没有文件选择器的平台上那一句说明。 */
 const val FONT_IMPORT_UNAVAILABLE = "这台设备上没有文件选择器，导入不了；在手机或电脑上导入的字体存在各自的设备里，不会同步过来。"
 
-/** 画面还用不上导入字体时的那一句（上游开缝之前，见 ADR 0003）。 */
-const val FONT_IMPORT_PENDING = "已导入的字体现在只用于预览；弹幕画面要等播放内核开放自定义字体后才会用它，在那之前仍按下面「样式 · 字体」选的那一款画。"
 
 /**
  * 设置 › 弹幕 **最上面**的一组：导入字体（用户 2026-11-14）。
@@ -101,6 +102,6 @@ fun DanmakuFontImportGroup() {
     }
     if (state.fonts.isNotEmpty()) {
         SettingRow("用内置字体", note = "回到下面「样式 · 字体」选的那一款", tag = "set-dm-font-builtin", onClick = { store.select(null) }) { RadioMark(state.selected == null) }
-        if (!ImportedFontStore.rendererReady) BasicText(FONT_IMPORT_PENDING, Modifier.padding(start = 20.dp, top = 4.dp, bottom = 8.dp).testTag("set-dm-font-pending"), style = Guga.note(Guga.type.caption * 1.02f, colors.faint), maxLines = 4)
+        // 导入的字体字幕也能用（设置 › 字幕与音轨 › 字幕样式 · 字体）
     }
 }

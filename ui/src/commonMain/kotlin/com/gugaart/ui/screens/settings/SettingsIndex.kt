@@ -149,3 +149,9 @@ fun withMascot(p: GugaPrefs, on: Boolean): GugaPrefs = p.copy(mascot = if (!on) 
  * 读写的是同一个键。
  */
 val LocalGugaSettings = staticCompositionLocalOf<GugaSettingsStore?> { null }
+
+/**
+ * 验收缝（照 `LocalPlaySessionSink` 的先例）：进程内运行器（iOS / macOS 的 `--accept`）造不出真触摸，
+ * 要改设置就得拿根界面的**这一个** store（自己 new 一个只写盘，界面那份 StateFlow 收不到）。界面不提供给它的 sinks 时什么都不做。
+ */
+val LocalGugaSettingsSink = staticCompositionLocalOf<((GugaSettingsStore) -> Unit)?> { null }

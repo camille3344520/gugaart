@@ -1,5 +1,6 @@
 package com.gugaart.ui.tv.system
 
+import com.gugugaga.app.settings.danmakuPrefs
 import com.gugaart.ui.update.updater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -66,6 +67,9 @@ import com.gugugaga.ds.icons.Icon
 private const val ROWS_VISIBLE = 8
 private const val PICKS_VISIBLE = 8
 
+/** 选择器上面排了字幕预览条时，一屏排得下的项数。 */
+private const val PICKS_VISIBLE_WITH_PREVIEW = 5
+
 /**
  * 列表窗口从第几个开始，才能让第 [focus] 个留在 [visible] 行的窗口里。焦点下面留两行；[next] = 下一个能接焦点的行（中间可能隔着小标题、
  * 只读的行）：它必须已经排出来，否则遥控器往下走不到它。纯函数，有单测（`Tv1LogicTest.settingsWindow`）。
@@ -127,13 +131,43 @@ fun TvSettings(section: String?, today: Today) {
         calendar = traktCalendar.second,
         openSeries = { id -> g.nav.navigate(com.gugugaga.app.nav.Route.Item(id)) },
     )
-    val rows = remember(current, settings, prefs, status, secrets, dmServers, backup.webdav, backup.pending, backup.message, backup.busy, traktState, traktPrefs, traktSync, traktMessage, traktCalendar.second) {
+    // 字幕 / 弹幕的字体单子（1.4.1：和字幕共用；要下载的那款选了就开始下）
+    val styleFonts = com.gugaart.ui.player.rememberStyleFonts()
+    val fontStates by styleFonts.states.collectAsState()
+    val importedStore = com.gugaart.ui.screens.settings.rememberImportedFonts()
+    val imported by importedStore.state.collectAsState()
+    val fontScope = androidx.compose.runtime.rememberCoroutineScope()
+    val fonts = remember(prefs, settings, fontStates, imported) {
+        val prefetch: (com.gugaart.ui.data.StyleFont) -> Unit = { f -> fontScope.launch { styleFonts.ensure(f) } }
+        com.gugaart.ui.tv.system.TvFontChoices(
+            subtitle = com.gugaart.ui.data.subtitleFontChoices(prefs.subStyle.font, imported, fontStates, { id -> store.update { it.copy(subStyle = it.subStyle.copy(font = id)) } }, prefetch),
+            danmaku = com.gugaart.ui.data.danmakuFontChoices(
+                settings.danmakuPrefs.render.font, prefs.danmakuFont, imported, fontStates,
+                setUpstream = { f ->
+                    val cur = ((g.settings.value["danmaku"] as? kotlinx.serialization.json.JsonObject)?.get("render") as? kotlinx.serialization.json.JsonObject) ?: kotlinx.serialization.json.JsonObject(emptyMap())
+                    g.settings.patch("danmaku", "render" to kotlinx.serialization.json.JsonObject(LinkedHashMap(cur).also { it["font"] = kotlinx.serialization.json.JsonPrimitive(f.id) }))
+                },
+                setExtra = { id -> store.update { it.copy(danmakuFont = id) } },
+                selectImported = importedStore::select,
+                prefetch = prefetch,
+            ),
+            subtitleStatus = com.gugaart.ui.screens.settings.subtitleFontStatus(prefs.subStyle.styleFont, prefs.subStyle.styleFont?.let { fontStates[it] }, styleFonts.available),
+        )
+    }
+    // 1.5.0：播放分区的「多台服务器」（数据层的服务器列表 + 偏好存储）
+    val serverSwitcher = com.gugaart.ui.servers.currentServerSwitcher()
+    val otherStore = com.gugaart.ui.servers.currentOtherServersPrefs(serverSwitcher)
+    val otherPrefs by otherStore.prefs.collectAsState()
+    val savedServers by serverSwitcher.entries.collectAsState()
+    val rows = remember(current, settings, prefs, status, secrets, dmServers, backup.webdav, backup.pending, backup.message, backup.busy, traktState, traktPrefs, traktSync, traktMessage, traktCalendar.second, fonts, otherPrefs, savedServers) {
         tvSettingRows(
             current, settings, prefs, g, store, secrets,
             saveSecret = { tmdb, dm -> g.scope.launch { g.secrets.save(tmdbToken = tmdb, danmakuApiUrl = dm) } },
             danmakuServers = dmServers?.map { it.url },
             backup = backup,
             trakt = trakt,
+            fonts = fonts,
+            otherServers = TvOtherServers(savedServers, otherPrefs, otherStore::setEnabled, otherStore::setIncluded),
             saveDanmakuServers = { urls ->
                 g.scope.launch {
                     com.gugaart.ui.danmaku.DanmakuServers.save(urls)
@@ -334,12 +368,23 @@ fun TvSettings(section: String?, today: Today) {
             ) {
                 TvSecHead(picked.label, picked.english)
                 val keys = picked.options.indices.map { "pick-$it" }
-                TvGroup("picker", keys, horizontal = false, default = "pick-${picked.selected.minOrNull() ?: 0}")
-                val at = keys.indexOf(groups.lastOf("picker") ?: "pick-${picked.selected.minOrNull() ?: 0}").coerceAtLeast(0)
-                val first = windowStart(at, keys.size, PICKS_VISIBLE)
-                for (i in first until minOf(keys.size, first + PICKS_VISIBLE)) key(keys[i]) {
+                // 焦点先落在选中的那一项；锁着的（「本台」）跳过
+                val firstPick = picked.selected.filter { !picked.options[it].locked }.minOrNull() ?: picked.options.indices.firstOrNull { !picked.options[it].locked } ?: 0
+                TvGroup("picker", keys, horizontal = false, default = "pick-$firstPick")
+                val at = keys.indexOf(groups.lastOf("picker") ?: "pick-$firstPick").coerceAtLeast(0)
+                // 字幕样式的几行：焦点停在哪一项，预览条就按那一项排（「示例字幕 Sample」）；有预览时少排几项
+                val preview = picked.preview?.invoke(at)
+                if (preview != null) {
+                    com.gugaart.ui.screens.settings.SubtitlePreview(
+                        preview, com.gugaart.ui.player.rememberChoiceFamily(preview.font), Modifier.padding(top = 8.dp, bottom = 18.dp),
+                        height = com.gugaart.ui.theme.SubtitlePreviewSpec.TV_HEIGHT, text = com.gugaart.ui.theme.SubtitlePreviewSpec.TV_TEXT,
+                    )
+                }
+                val visible = if (preview != null) PICKS_VISIBLE_WITH_PREVIEW else PICKS_VISIBLE
+                val first = windowStart(at, keys.size, visible)
+                for (i in first until minOf(keys.size, first + visible)) key(keys[i]) {
                     val o = picked.options[i]
-                    TvOption(keys[i], o.label, o.note.orEmpty(), i in picked.selected) {
+                    TvOption(keys[i], o.label, o.note.orEmpty(), i in picked.selected, dim = o.locked, tags = o.tag?.let { t -> { focused -> com.gugaart.ui.components.OutlineTag(t, 18.sp, 2.dp, if (focused) colors.onInk else colors.dim, Modifier.padding(start = 12.dp)) } }) {
                         picked.pick(i)
                         if (!picked.multi) closePicker()
                     }

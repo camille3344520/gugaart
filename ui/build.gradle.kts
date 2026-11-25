@@ -104,6 +104,9 @@ tasks.withType<Test>().configureEach {
     providers.gradleProperty("gugaart.shots").orNull?.let { systemProperty("gugaart.shots", it) }
     // 带 Mock 的集成测试：不给就 SKIPPED（和上游同一个约定）
     providers.gradleProperty("gugu.mock.url").orNull?.let { systemProperty("gugu.mock.url", it) }
+    // 三台 Mock 的服务器切换验收（任务 A1）：不给就 SKIPPED
+    providers.gradleProperty("gugaart.mockServers").orNull?.let { systemProperty("gugaart.mockServers", it) }
+    providers.gradleProperty("gugaart.mockOffline").orNull?.let { systemProperty("gugaart.mockOffline", it) }
     // 用户真实服务器的离屏实拍（只读；运行时读仓库根的 .env）：默认不跑，-Pgugaart.realEmby=true 才跑
     providers.gradleProperty("gugaart.realEmby").orNull?.let { systemProperty("gugaart.realEmby", it) }
     // 只读复现探针（SearchReproTest）在 worktree 里向上找不到主检出的 .env：-Pgugaart.envFile=<文件> 指给它（测试自己读，值不打印）

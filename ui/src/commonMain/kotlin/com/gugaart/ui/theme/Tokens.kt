@@ -33,6 +33,10 @@ data class GugaColors(
     val seal: Color = Color(0xFFD8432A),
     /** 压在图上的按钮墨底：纸色 52 %。 */
     val inkWell: Color = Color(0xFF100E0B).copy(alpha = 0.52f),
+    /** 片源格式徽记的墨底：纸色 86 %（开播时压在画面上，小字也要读得清；`player.md` §8）。 */
+    val badgePlate: Color = Color(0xFF100E0B).copy(alpha = 0.86f),
+    /** 服务器在线的小圆点（1.5.0 换服务器）：压低饱和的铜绿，墨黑纸上看得出、不抢字。只画点，不当字色 / 底色。 */
+    val online: Color = Color(0xFF7DB07A),
 ) {
     companion object {
         /** 灰海报 / 取不到色时的专色。 */

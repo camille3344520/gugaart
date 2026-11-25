@@ -66,6 +66,9 @@ enum class TvRailItem(val key: String, val label: String, val icon: GuguIcon) {
     Colls("colls", "合集", GuguIcon.Layers),
     History("history", "记录", GuguIcon.History),
     Favs("favs", "收藏", GuguIcon.Heart),
+
+    /** 1.5.0：换服务器（不是一页：确定 = 右边页边出服务器列表，[TvServerPanel]）。 */
+    Servers("servers", "服务器", GuguIcon.Server),
     Settings("settings", "设置", GuguIcon.SlidersHorizontal),
 }
 
@@ -265,7 +268,7 @@ fun TvExitToast(modifier: Modifier = Modifier) {
     }
 }
 
-/** 侧栏的一行按确定：导航页在 Home 路由上换页；搜索 / 收藏 / 设置走上游的路由。 */
+/** 侧栏的一行按确定：导航页在 Home 路由上换页；搜索 / 收藏 / 设置走上游的路由；服务器 = 页边的列表（不换页）。 */
 fun tvRailGo(item: TvRailItem, nav: NavController, wide: WideNav) {
     fun tab(t: WideTab) {
         wide.tab = t
@@ -279,6 +282,8 @@ fun tvRailGo(item: TvRailItem, nav: NavController, wide: WideNav) {
         TvRailItem.Colls -> tab(WideTab.Colls)
         TvRailItem.History -> tab(WideTab.Me)
         TvRailItem.Favs -> if ((nav.route as? Route.History)?.tab != "favorites") nav.navigate(Route.History("favorites"))
+        // 不换页：页边出服务器列表，收起时焦点还给展开侧栏之前的那一项
+        TvRailItem.Servers -> TvServerPanel.show(wide.tv.railReturn)
         TvRailItem.Settings -> if (nav.route !is Route.Settings) nav.navigate(Route.Settings())
     }
 }

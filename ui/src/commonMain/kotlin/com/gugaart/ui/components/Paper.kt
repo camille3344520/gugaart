@@ -216,6 +216,21 @@ fun RadioMark(selected: Boolean, modifier: Modifier = Modifier, size: Dp = 9.dp)
     Box(modifier.size(size).then(if (selected) Modifier.background(colors.spot) else Modifier.border(1.dp, colors.dim)))
 }
 
+/**
+ * 细框小签（「完全对得上」「推荐」「另一份文件」）：[color] 的细框 + 同色字，不垫底色（专色不当底色）。
+ * [size]：字号（手机 11、电视 20……，跟着所在那一行）；[line]：框线粗细（电视 2）。
+ */
+@Composable
+fun OutlineTag(text: String, size: androidx.compose.ui.unit.TextUnit, line: Dp, color: Color, modifier: Modifier = Modifier) {
+    BasicText(
+        text,
+        modifier.border(line, color).padding(horizontal = 6.dp * (size.value / 11f), vertical = 1.dp * (size.value / 11f)),
+        style = Guga.song(size, FontWeight.Bold, color, letterSpacing = 0.08.em),
+        maxLines = 1,
+        softWrap = false,
+    )
+}
+
 /** 压在整幅图上的一层：顶部暗角 + 自定内容。 */
 @Composable
 fun Stack(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) = Box(modifier.fillMaxSize(), content = content)

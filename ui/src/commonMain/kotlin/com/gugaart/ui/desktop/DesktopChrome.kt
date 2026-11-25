@@ -82,7 +82,7 @@ object DeskNavSpec {
 
 /**
  * 电脑的固定导航（玻璃，`docs/glass.md`）：报头下 1.2 rem 的一排，高 4.4 rem——
- * 左：返回圆钮（有上一页才出现）+ 导航胶囊（首页 / 发现 / 片库 / 合集 / 我的）；右：搜索胶囊（带 `Ctrl K`）+ 账号圆钮。**正中留空**（剧照的主体在中间）。
+ * 左：返回圆钮（有上一页才出现）+ 导航胶囊（首页 / 发现 / 片库 / 合集 / 我的）；右：搜索胶囊（带 `Ctrl K`）+ 服务器胶囊（1.5.0，[DesktopServerMenu]）+ 账号圆钮。**正中留空**（剧照的主体在中间）。
  * 胶囊 = 上游 `Bar` 材质，圆钮 = `Clear`；每个可点的圆钮自己一块玻璃，之间 ≥ 12 dp。
  * 选中 = 加粗 + 专色小圆点（decisions Q11）；选中的那一格是一块透镜（上游 `GlassModel.restingLens` + `SlidingIndicator`，做法同手机的 `chrome/PhoneTabBar.kt`）：
  * 按住左右拖，透镜跟手，松手落到哪格就去哪格。
@@ -235,6 +235,9 @@ fun DesktopChrome(route: Route, today: Today, modifier: Modifier = Modifier) {
                     BasicText(DesktopCommand.Search.hint(LocalDesktopHost.current.modifier) ?: "Ctrl K", style = Guga.numeral(rsp(1.15f), colors.ink.copy(alpha = 0.7f), letterSpacing = 0.04.em), maxLines = 1)
                 }
                 Spacer(Modifier.width(Guga.rem(DeskNavSpec.GAP)))
+                // 服务器胶囊（1.5.0）：当前服务器名 + 在线小点；点一下垂下换服务器的纸片
+                DesktopServerMenu.Pill()
+                Spacer(Modifier.width(Guga.rem(DeskNavSpec.GAP)))
                 // 账号圆钮：用户名的头一个字。菜单从圆钮里长出来（上游 GlassMorph）
                 GlassCircle("账号", "desktop-account", onClick = { DesktopAccountMenu.toggle() }, modifier = Modifier.sceneAnchor(DesktopAccountMenu.anchor)) {
                     BasicText(Rules.monogram(session?.userName ?: "客", person = true), style = Guga.song(rsp(1.7f), FontWeight.Black), maxLines = 1)
@@ -242,6 +245,7 @@ fun DesktopChrome(route: Route, today: Today, modifier: Modifier = Modifier) {
             }
         }
         DesktopAccountMenu.Host(today)
+        DesktopServerMenu.Host()
     }
 }
 

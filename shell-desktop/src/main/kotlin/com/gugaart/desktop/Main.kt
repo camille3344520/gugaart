@@ -127,6 +127,8 @@ fun main(args: Array<String>) {
     // 两个壳共用：Mac 的真窗口验收也要用 Mock 登录（不输入任何真实账号密码）。
     val mock = System.getProperty("gugaart.mockAccount")?.takeIf { dev && Regex("""^https?://[^\s"\\]+$""").matches(it) }
     val debug = if (mock != null) DebugOptions(mockAccount = parseMockAccount("""{"server":"$mock","username":"demo","password":"demo"}""")) else DebugOptions.None
+    // 1.5.0 跨服务器验收：--mock-servers=<地址>+<地址>+… 把几台本地 Mock 预先存成几台服务器（同样只在开发运行时，夹具账号 demo / demo）
+    if (dev) com.gugaart.ui.data.DevMockServers.urls = com.gugaart.ui.data.DevMockServers.parseArg(opt["mock-servers"])
     // macOS：一扇 Compose Window（系统标题栏 + 红绿灯），不用 Win32 窗口栈（ADR 0004 §2.2）。Windows 路径一行不动。
     if (System.getProperty("os.name").startsWith("Mac")) {
         // M1-6：深色外观 + 应用名，要在任何 AWT / Compose 调用之前设（X06 / X08）
@@ -215,6 +217,8 @@ internal fun desktopDeps(
         appExe = { com.gugugaga.app.update.DesktopUpdateHost.launcherExe() },
         onQuit = onQuit,
     )
+    // 片库搜索的本地索引（1.4.1，docs/search.md §1）：按「服务器 + 用户」一份，文件名是键的 SHA-256，里面没有令牌
+    com.gugaart.ui.search.SearchIndexStore.disk = FileBlobCache(File(dataDir, "cache/search-index"), maxEntries = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_ENTRIES, maxBytes = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_BYTES)
     return PlatformDeps(
         uiMode = uiMode,
         identity = ClientInfo(device = if (computer != null) "Windows · $computer" else "Windows PC", deviceId = deviceId, version = BuildInfo.APP_VERSION),

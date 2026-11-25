@@ -35,7 +35,7 @@ internal class Scenario(val id: String, val title: String, val rows: List<String
  * 一个场景跑的时候手边的东西：驱动（看 / 动 / 截图）、上游的 AppGraph（跳路由、取只读数据）、播放器页的控制器、记结论。
  * 记结论只经 [check] / [pass] / [fail] / [skip] / [human]；场景里抛出来的异常由运行器记成场景的 error。
  */
-internal class Ctx(val host: AcceptHost, val d: AcceptDriver, private val scenario: Scenario, val controllerOf: () -> PlayController?) {
+internal class Ctx(val host: AcceptHost, val d: AcceptDriver, private val scenario: Scenario, val controllerOf: () -> PlayController?, val settingsStoreOf: () -> com.gugaart.ui.data.GugaSettingsStore? = { null }) {
     val checks = ArrayList<Check>()
     val graph: AppGraph get() = host.graph
 
@@ -195,6 +195,13 @@ internal class AcceptRunner(
         controller = c
     }
 
+    /** 根界面的那一个画报设置 store（:ui 的验收缝 LocalGugaSettingsSink）：自己 new 一个只写盘，界面那份 StateFlow 收不到。 */
+    @Volatile private var settingsStore: com.gugaart.ui.data.GugaSettingsStore? = null
+
+    fun onSettingsStore(s: com.gugaart.ui.data.GugaSettingsStore) {
+        settingsStore = s
+    }
+
     fun start(host: AcceptHost) {
         Thread({ runAll(host) }, "gugu-accept").apply { isDaemon = false }.start()
     }
@@ -221,7 +228,7 @@ internal class AcceptRunner(
                         results += ScenarioResult(name, "（不认识的场景）", emptyList(), emptyList(), error = "没有这个场景：$name；有 ${all.joinToString(" ") { it.id }}")
                         continue
                     }
-                    results += runOne(sc, Ctx(host, d, sc) { controller }, d)
+                    results += runOne(sc, Ctx(host, d, sc, { controller }, { settingsStore }), d)
                     writeReport(started, results, d) // 每个场景跑完都落一次盘：中途崩了也有报告
                 }
             }

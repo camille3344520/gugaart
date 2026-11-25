@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -113,7 +116,6 @@ import com.gugugaga.app.player.PlayerKeys
 import com.gugugaga.app.player.PlayerSlots
 import com.gugugaga.app.player.PlayerSnapshot
 import com.gugugaga.app.player.VeilLayer
-import com.gugugaga.app.player.VideoSurface
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.core.PlaybackMode
 import com.gugugaga.ds.components.PageBackdrops
@@ -182,6 +184,11 @@ val LocalTvPlayerFocus = staticCompositionLocalOf<String?> { null }
 /** 页边面板的六行。 */
 private val ROWS = listOf(PlayerPanel.Eps, PlayerPanel.Sub, PlayerPanel.Audio, PlayerPanel.Speed, PlayerPanel.Quality, PlayerPanel.Core, PlayerPanel.Dm)
 
+/**
+ * 页边一行功能下面的子行（着色器增强、字幕的字号 / 字体、弹幕的字体 / 粗细）：上下走到它、左右直接改值（不用按确定），改完引擎 / 弹幕立即跟着变。
+ */
+private class ExtraRow(val key: String, val word: String, val english: String, val values: List<String>, val index: Int, val detail: String?, val apply: (Int) -> Unit)
+
 /** 一行的值：有哪些、现在是第几个、选第 i 个时做什么。[deferred] = 左右只是挑，按确定才换（选集、画质：一换就要重新起播）。 */
 private class RowModel(val values: List<String>, val index: Int, val detail: (Int) -> String?, val deferred: Boolean, val apply: (Int) -> Unit)
 
@@ -215,6 +222,10 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     val shaderIndex = ShaderPreset.entries.indexOf(shaderPrefs.shader).coerceAtLeast(0)
     val settings by danmaku.settingsState.collectAsState()
     val render = remember(settings) { danmaku.prefsNow().render }
+    // 字幕样式的两行快调（字号 / 字体）和弹幕的字体 / 粗细（1.4.1）：和手机 / 电脑、设置页同一批键
+    val subStyle = shaderPrefs.subStyle
+    val subFonts = com.gugaart.ui.player.rememberSubtitleFontChoices()
+    val dmFonts = com.gugaart.ui.player.rememberDanmakuFontChoices(danmaku, render.font)
     val controls = remember { ControlsVisibility(scope, TvPlayerSpec.HIDE_MS) }
     val groups = remember { TvGroups() }
     val back = LocalBackDispatcher.current
@@ -301,6 +312,8 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
     val coreOpts = remember(play) { com.gugaart.ui.player.coreOptionsFor(play, g) }
     val corePref = com.gugaart.ui.player.currentEnginePref(g)
     var pendingCore by remember(corePref) { mutableIntStateOf(coreOpts.indexOfFirst { it.pref == corePref }.coerceAtLeast(0)) }
+    // 字幕智能匹配（1.4.1 U2）：字幕一行的小字跟着提示走
+    val bestHint = com.gugaart.ui.subtitle.AutoBestBoard.hintFor(snap.itemId)
     fun rowOf(p: PlayerPanel): RowModel = when (p) {
         PlayerPanel.Eps -> if (eps != null) RowModel(
             listOf(listOfNotNull(eps.season?.let { com.gugaart.ui.player.seasonWord(it) }, snap.item?.indexNumber?.let { "第 $it 集" }).joinToString(" · ").ifEmpty { "选集" }),
@@ -315,7 +328,7 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
         }
         PlayerPanel.Sub -> {
             val subs = com.gugaart.ui.player.orderedSubtitles(snap)
-            RowModel(listOf("关") + subs.map { listOfNotNull(it.label, it.badge).joinToString(" · ") }, if (snap.subtitleIndex == null) 0 else subs.indexOfFirst { it.index == snap.subtitleIndex } + 1, { "确定 = 搜索字幕" }, deferred = false) { i ->
+            RowModel(listOf("关") + subs.map { listOfNotNull(it.label, it.badge).joinToString(" · ") }, if (snap.subtitleIndex == null) 0 else subs.indexOfFirst { it.index == snap.subtitleIndex } + 1, { com.gugaart.ui.subtitle.tvSubRowDetail(bestHint) }, deferred = false) { i ->
                 play.chooseSubtitle(if (i == 0) null else subs.getOrNull(i - 1)?.index)
             }
         }
@@ -335,6 +348,25 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
         else -> RowModel(listOf("关", "开"), if (render.enabled) 1 else 0, { listOfNotNull(com.gugaart.ui.player.DanmakuSeasonGuard.status(snap.itemId) ?: slots.danmakuStatus?.invoke(), "确定 = 换弹幕 / 手动搜").joinToString(" · ") }, deferred = false) { i -> danmaku.updateRender("enabled" to JsonPrimitive(i == 1)) }
     }
     val rows = ROWS.filter { it != PlayerPanel.Eps || eps != null || snap.episodes.isNotEmpty() }
+    /** 每行功能下面的子行。 */
+    fun extrasOf(p: PlayerPanel): List<ExtraRow> = when (p) {
+        PlayerPanel.Quality -> if (shaderVisible) listOf(
+            ExtraRow("pr-shader", "着色器增强", "SHADER", ShaderPreset.entries.map { it.label }, shaderIndex, shaderPrefs.shader.note) { i -> shaderStore.update { it.copy(shader = ShaderPreset.entries[i]) } },
+        ) else emptyList()
+        PlayerPanel.Sub -> listOf(
+            ExtraRow("pr-sub-scale", "字幕字号", "SIZE", com.gugaart.ui.data.SUB_SCALES.map { com.gugaart.ui.data.subScaleText(it) }, nearestScale(subStyle.scale), "设置 › 字幕与音轨 里还有粗体、描边、位置") { i ->
+                shaderStore.update { it.copy(subStyle = it.subStyle.copy(scale = com.gugaart.ui.data.SUB_SCALES[i])) }
+            },
+            ExtraRow("pr-sub-font", "字幕字体", "FONT", subFonts.map { it.label }, subFonts.indexOfFirst { it.selected }.coerceAtLeast(0), subFonts.firstOrNull { it.selected }?.note) { i -> subFonts.getOrNull(i)?.pick?.invoke() },
+        )
+        PlayerPanel.Dm -> listOf(
+            ExtraRow("pr-dm-font", "弹幕字体", "FONT", dmFonts.map { it.label }, dmFonts.indexOfFirst { it.selected }.coerceAtLeast(0), dmFonts.firstOrNull { it.selected }?.note) { i -> dmFonts.getOrNull(i)?.pick?.invoke() },
+            ExtraRow("pr-dm-weight", "弹幕粗细", "WEIGHT", com.gugugaga.danmaku.settings.DanmakuWeight.entries.map { it.label }, com.gugugaga.danmaku.settings.DanmakuWeight.entries.indexOf(render.weight).coerceAtLeast(0), null) { i ->
+                danmaku.updateRender("weight" to JsonPrimitive(com.gugugaga.danmaku.settings.DanmakuWeight.entries[i].id))
+            },
+        )
+        else -> emptyList()
+    }
 
     // ---- 这一页的方向键路径 ----
     groups.edge = { from, dir ->
@@ -505,10 +537,11 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                     TvDir.Up, TvDir.Down -> groups.move(dir, g.focus) || true
                     TvDir.Left, TvDir.Right -> {
                         val cur = groups.current
-                        if (cur == "pr-shader") {
-                            // 着色器行：左右直接改值（非 deferred），改完 RememberShaderApply 立即下发
-                            val next = stepIndex(shaderIndex, ShaderPreset.entries.size, if (dir == TvDir.Right) 1 else -1)
-                            if (next != shaderIndex) shaderStore.update { it.copy(shader = ShaderPreset.entries[next]) }
+                        val extra = rows.flatMap(::extrasOf).firstOrNull { it.key == cur }
+                        if (extra != null) {
+                            // 子行（着色器、字幕字号 / 字体、弹幕字体 / 粗细）：左右直接改值，改完立即生效
+                            val next = stepIndex(extra.index, extra.values.size, if (dir == TvDir.Right) 1 else -1)
+                            if (next != extra.index) extra.apply(next)
                         } else if (p != null) {
                             val row = rowOf(p)
                             val next = stepIndex(row.index, row.values.size, if (dir == TvDir.Right) 1 else -1)
@@ -637,8 +670,10 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                         BasicText("播放设置 · SETTINGS", Modifier.padding(top = 16.dp), style = Guga.note(20.sp, colors.spot, letterSpacing = 0.2.em), maxLines = 1)
                         BasicText("上下换功能　左右改值", Modifier.padding(top = 6.dp, bottom = 18.dp), style = Guga.song(20.sp, color = colors.faint), maxLines = 1)
                         Box(Modifier.fillMaxWidth().height(1.dp).background(colors.line))
-                        val panelKeys = rows.flatMap { p -> if (p == PlayerPanel.Quality && shaderVisible) listOf("pr-quality", "pr-shader") else listOf("pr-${p.id}") }
+                        val panelKeys = rows.flatMap { p -> listOf("pr-${p.id}") + extrasOf(p).map { it.key } }
                         TvGroup("panel", panelKeys, horizontal = false, default = "pr-${panel!!.id}")
+                        // 行多了（子行）一屏排不下：这一栏可以滚，焦点行自己滚进来（TvPanelRow）
+                        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                         for (p in rows) {
                             val row = rowOf(p)
                             TvPanelRow(p, row.values, row.index, row.detail(row.index), deferred = row.deferred && row.index != (if (p == PlayerPanel.Core) coreOpts.indexOfFirst { it.pref == corePref } else currentIndexOf(p, snap)), onOk = {
@@ -651,14 +686,11 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                                     row.deferred -> row.apply(row.index)
                                 }
                             })
-                            // 着色器增强：画质行下面第二行（关 / Anime4K A / B / C / FSR）；上下走到它、左右改值、确定确认
-                            if (p == PlayerPanel.Quality && shaderVisible) {
-                                TvPanelRow(
-                                    PlayerPanel.Quality, ShaderPreset.entries.map { it.label }, shaderIndex, shaderPrefs.shader.note,
-                                    deferred = false, onOk = { shaderStore.update { it.copy(shader = ShaderPreset.entries[shaderIndex]) } },
-                                    rowKey = "pr-shader", word = "着色器增强", english = "SHADER",
-                                )
+                            // 子行：着色器增强（画质下面）、字幕字号 / 字体（字幕下面）、弹幕字体 / 粗细（弹幕下面）；上下走到它、左右改值
+                            for (x in extrasOf(p)) {
+                                TvPanelRow(p, x.values, x.index, x.detail, deferred = false, onOk = { x.apply(x.index) }, rowKey = x.key, word = x.word, english = x.english, sub = true)
                             }
+                        }
                         }
                         BasicText("返回键收起，回到全幅。", Modifier.padding(top = 18.dp), style = Guga.song(20.sp, color = colors.faint), maxLines = 1)
                     }
@@ -672,6 +704,12 @@ fun TvPlayerScreen(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots
                     }
                     Picture(play, snap, danmaku, slots, Modifier.fillMaxSize(), dim, danmakuTop = if (showOsd) 170.dp else 0.dp, duration = duration)
                     if (showBuffer && !seekShown) TvBuffer(play, snap)
+                    // 字幕智能匹配的那句提示（左上、「片源效果」徽章那一行下面；遥控器点不到它，写怎么走）
+                    // 下面一格：「换到别台的源没成功」那一句（亮 4 秒，player/NoticeFlash.kt）；两样同时在时上下排开，不叠
+                    if (!seekShown) Column(Modifier.align(Alignment.TopStart).padding(start = 96.dp, top = 272.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        com.gugaart.ui.subtitle.AutoBestFlash(play, controls = showOsd, scale = 1.9f, tv = true, maxWidth = 1100.dp)
+                        com.gugaart.ui.player.PlayerNoticeFlash(play, 1.9f, maxWidth = 1100.dp)
+                    }
                     if (showOsd) {
                         TvPlayerTop(snap, art, position, duration, clock.rate, com.gugaart.ui.player.subtitleBadgeOf(play, snap), speed)
                         // 底部暗角 + 进度条 + 两排键
@@ -741,7 +779,7 @@ private fun Picture(play: PlaySession, snap: PlayerSnapshot, danmaku: PlayerDanm
     val paper = TvPlayerSpec.DARK
     Box(modifier.testTag(if (snap.paused) "tv-player-picture-paused" else "tv-player-picture")) {
         LocalPlayerStill.current?.let { still -> Canvas(Modifier.matchParentSize()) { drawCover(still, Framing(0.5f, 0.12f)) } }
-        VideoSurface(engine, Modifier.matchParentSize()) { VeilLayer(controller.veil) }
+        com.gugaart.ui.player.GugaVideoSurface(engine, Modifier.matchParentSize()) { VeilLayer(controller.veil) }
         // 换片时新片子第一帧到之前，盖住引擎留着的上一部的最后一帧（和手机同一个做法）
         val tvClient = LocalGraph.current.session.session.collectAsState().value?.client
         val coverArt = remember(snap.item, tvClient) { snap.item?.let { tvClient?.artOf(it) } ?: Art() }
@@ -921,15 +959,20 @@ private fun TvOsdKey(key: String, icon: GuguIcon, label: String, big: Boolean = 
  * 页边面板的一行（设计稿 `.pr`）：功能名 + 英文小标 + 现在的值；焦点行 = 米白实底，两侧出 ‹ ›（到头的那一侧变淡），下面一排小方格（第几个）和「2 / 4」。
  * [deferred]：这一行挑的值还没生效（选集 / 画质），提示「确定 = 换过去」。
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun TvPanelRow(panel: PlayerPanel, values: List<String>, index: Int, detail: String?, deferred: Boolean, onOk: () -> Unit, rowKey: String = "pr-${panel.id}", word: String = panel.word, english: String = panel.english) {
+private fun TvPanelRow(panel: PlayerPanel, values: List<String>, index: Int, detail: String?, deferred: Boolean, onOk: () -> Unit, rowKey: String = "pr-${panel.id}", word: String = panel.word, english: String = panel.english, sub: Boolean = false) {
     val colors = Guga.colors
     val key = rowKey
-    TvBlockFocus(key, onOk, Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = word) { focused ->
+    // 页边能滚（子行多了一屏排不下）：焦点到了这一行，就把它滚进来
+    val into = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    val focusedNow = LocalTvGroups.current.current == key
+    LaunchedEffect(focusedNow) { if (focusedNow) into.bringIntoView() }
+    TvBlockFocus(key, onOk, Modifier.fillMaxWidth().bringIntoViewRequester(into).drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = word) { focused ->
         val ink = if (focused) colors.onInk else colors.ink
-        Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 15.dp, bottom = 16.dp).testTag(if (focused) "tv-panel-row-focused" else "tv-panel-row")) {
+        Column(Modifier.fillMaxWidth().padding(start = if (sub) 40.dp else 18.dp, end = 18.dp, top = if (sub) 10.dp else 15.dp, bottom = if (sub) 11.dp else 16.dp).testTag(if (focused) "tv-panel-row-focused" else "tv-panel-row")) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                BasicText(word, style = Guga.song(31.sp, FontWeight.Black, ink, letterSpacing = 0.1.em), maxLines = 1)
+                BasicText(word, style = Guga.song(if (sub) 26.sp else 31.sp, FontWeight.Black, ink, letterSpacing = 0.1.em), maxLines = 1)
                 Spacer(Modifier.weight(1f))
                 BasicText(english, style = Guga.numeral(16.sp, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot, letterSpacing = 0.2.em), maxLines = 1)
             }
@@ -1141,3 +1184,6 @@ private fun TvPlayerError(play: PlaySession, snap: PlayerSnapshot) {
         }
     }
 }
+
+/** 字号的那一列里，[scale] 落在第几档。 */
+private fun nearestScale(scale: Double): Int = com.gugaart.ui.data.SUB_SCALES.indices.minBy { kotlin.math.abs(com.gugaart.ui.data.SUB_SCALES[it] - scale) }

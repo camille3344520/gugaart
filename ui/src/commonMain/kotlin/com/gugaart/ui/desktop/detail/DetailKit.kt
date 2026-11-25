@@ -354,9 +354,12 @@ fun DSlip(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
 
 private val SLIP = Color(0xFF1B1814)
 
-/** 纸片里的一行：悬停 / 选中 = 反白。 */
+/**
+ * 纸片里的一行：悬停 / 选中 = 反白。[tags]：标题后面的小签（版本的「推荐」「另一份文件」；参数 = 这一行此刻是不是反白）；
+ * [lead]：标题前面的一样东西（「源」的服务器小圆点）。
+ */
 @Composable
-fun DSlipRow(text: String, sub: String?, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, note: String? = null) {
+fun DSlipRow(text: String, sub: String?, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, note: String? = null, tags: (@Composable (onInk: Boolean) -> Unit)? = null, lead: (@Composable (onInk: Boolean) -> Unit)? = null) {
     val colors = Guga.colors
     val press = rememberPressState()
     val hover = rememberHover()
@@ -367,7 +370,12 @@ fun DSlipRow(text: String, sub: String?, selected: Boolean, onClick: () -> Unit,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            BasicText(text, style = Guga.song(rsp(1.4f), FontWeight.SemiBold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (tags == null && lead == null) BasicText(text, style = Guga.song(rsp(1.4f), FontWeight.SemiBold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            else Row(verticalAlignment = Alignment.CenterVertically) {
+                lead?.invoke(on)
+                BasicText(text, Modifier.weight(1f, fill = false), style = Guga.song(rsp(1.4f), FontWeight.SemiBold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                tags?.invoke(on)
+            }
             if (!note.isNullOrEmpty()) BasicText(note, style = Guga.song(rsp(1.2f), color = ink.copy(alpha = 0.6f)), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (sub != null) BasicText(sub, Modifier.padding(start = Guga.rem(2f)), style = Guga.song(rsp(1.2f), color = ink.copy(alpha = 0.6f)), maxLines = 1)

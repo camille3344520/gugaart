@@ -122,6 +122,28 @@ fun traktHistoryBody(item: BaseItemDto, series: BaseItemDto?): JsonObject? {
     }
 }
 
+/**
+ * 正在播的条目 → scrobble 的主体（不含进度）；对不上 / 查不到 = null。[client] = 条目 [itemId] 所在的那台（正在播的那台）。
+ * [dto] 只有确实是这个条目（id 一样）且带着编号时才直接用；单集的剧也从同一台取。换台的一瞬间控制器的条目 id 已经是别台的，
+ * 条目对象可能还是上一台的——那时不用它（它的剧 id 是上一台的）。
+ */
+suspend fun resolveScrobbleTarget(client: EmbyClient, itemId: String, dto: BaseItemDto?): JsonObject? = try {
+    val o = ItemsRequestOptions(fields = listOf("ProviderIds"), enableImages = false, enableUserData = false)
+    val full = dto?.takeIf { it.id == itemId && it.providerIds.isNotEmpty() } ?: client.getItem(itemId, o)
+    val series = if (full.type == "Episode") full.seriesId?.let { client.getItem(it, o) } else null
+    scrobbleTarget(full, series)
+} catch (e: CancellationException) {
+    throw e
+} catch (_: Exception) {
+    null
+}
+
+/** 两个 scrobble 主体是不是同一部 / 同一集（不看 `_id` 和进度）：换台前后是同一部就接着算。纯函数，有单测。 */
+fun sameScrobbleTitle(a: JsonObject, b: JsonObject): Boolean {
+    fun core(o: JsonObject) = JsonObject(o.filterKeys { it != "_id" && it != "progress" })
+    return core(a) == core(b)
+}
+
 /** 主体 + 进度（0–100）。 */
 fun withProgress(target: JsonObject, progress: Double): JsonObject = JsonObject(LinkedHashMap(target).also { it["progress"] = JsonPrimitive((progress.coerceIn(0.0, 100.0) * 100).roundToInt() / 100.0) })
 
@@ -276,12 +298,21 @@ object TraktService {
 
     /* ------------------------------------------------------------ scrobble */
 
+    /** 只有一台服务器的旧写法：条目永远按 [client] 去认。 */
+    suspend fun follow(controller: PlayController, client: EmbyClient) = follow(controller) { client }
+
     /**
      * 跟着一个播放器记到 Trakt（播放页的组合里起一次，退出播放页时这个协程被取消 = 记 stop）。没连接 / 关了开关 = 什么都不做。
+     *
+     * 认片靠 TMDB / IMDb / TVDB 编号（[scrobbleTarget]），编号从**正在播的那台**取：[clientOf] 给出那台的客户端（1.5.0：放着别台的源时
+     * 是别台的；从详情页用别台的源开播、播放中换台、切回本台都跟着变）。条目 id 只在一台服务器里有意义——拿别台的 id 去本台查，
+     * 查不到就不记，碰巧撞上本台另一个条目就记错片。换台前后是同一部（编号一样）：不记 stop / start，接着算这一次。
      */
-    suspend fun follow(controller: PlayController, client: EmbyClient) {
+    suspend fun follow(controller: PlayController, clientOf: () -> EmbyClient) {
         if (!_prefs.value.scrobble || tokens == null && graph?.deps?.secure?.let { TraktTokens.load(it) } == null) return
         var target: JsonObject? = null
+        /** [target] 是按哪一个（条目 id，条目对象）认出来的。 */
+        var resolvedFor: Pair<String, BaseItemDto>? = null
         var started = false
         var lastProgress = 0.0
         suspend fun send(action: String, progress: Double) {
@@ -295,15 +326,22 @@ object TraktService {
             }
         }
         try {
-            val items = controller.snapshot.map { it.itemId to it.item }.distinctUntilChanged { a, b -> a.first == b.first && (a.second != null) == (b.second != null) }
+            // 条目对象换了也重新认（换台时控制器先换 id、后换成那台的条目对象）
+            val items = controller.snapshot.map { it.itemId to it.item }.distinctUntilChanged { a, b -> a.first == b.first && a.second === b.second }
             combine(items, controller.clock) { item, clock -> item to clock }.collectLatest { (item, clock) ->
                 val (id, dto) = item
                 if (dto == null || id.isEmpty()) return@collectLatest
-                if (target == null || target?.get("_id")?.let { (it as JsonPrimitive).content } != id) {
-                    // 换了一集：上一集记 stop
-                    if (started) send("stop", lastProgress)
-                    started = false
-                    target = resolveTarget(client, dto)?.let { JsonObject(LinkedHashMap(it).also { m -> m["_id"] = JsonPrimitive(id) }) }
+                val known = resolvedFor
+                if (target == null || known == null || known.first != id || known.second !== dto) {
+                    val next = resolveScrobbleTarget(clientOf(), id, dto)
+                    val prev = target
+                    if (prev == null || next == null || !sameScrobbleTitle(prev, next)) {
+                        // 换了一集：上一集记 stop（换台前后是同一部 = 不算换，接着记）
+                        if (started) send("stop", lastProgress)
+                        started = false
+                    }
+                    target = next
+                    resolvedFor = if (next != null) id to dto else null
                 }
                 if (clock.durationMs <= 0) return@collectLatest
                 lastProgress = clock.positionMs / clock.durationMs * 100
@@ -318,16 +356,6 @@ object TraktService {
         } finally {
             if (target != null) withContext(NonCancellable) { send("stop", lastProgress) }
         }
-    }
-
-    private suspend fun resolveTarget(client: EmbyClient, dto: BaseItemDto): JsonObject? = try {
-        val full = if (dto.providerIds.isEmpty()) client.getItem(dto.id, ItemsRequestOptions(fields = listOf("ProviderIds"), enableImages = false, enableUserData = false)) else dto
-        val series = if (full.type == "Episode") full.seriesId?.let { client.getItem(it, ItemsRequestOptions(fields = listOf("ProviderIds"), enableImages = false, enableUserData = false)) } else null
-        scrobbleTarget(full, series)
-    } catch (e: CancellationException) {
-        throw e
-    } catch (_: Exception) {
-        null
     }
 
     /* ------------------------------------------------------------ 手动标已看 → Trakt */
