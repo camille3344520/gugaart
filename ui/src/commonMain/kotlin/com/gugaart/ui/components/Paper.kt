@@ -85,7 +85,7 @@ fun SectionHeader(title: String, english: String, modifier: Modifier = Modifier,
     }
 }
 
-/** 进度线：2 dp 专色，画在宿主的下沿外侧。进度 0 **不画**（由调用方写「还没开始」）。 */
+/** 进度线：2 dp 专色，画在宿主的下沿外侧。进度 0 **不画**（由调用方写「未看」）。 */
 fun Modifier.progressLine(progress: Float, color: Color, track: Color? = null, thickness: Dp = 2.dp, outside: Boolean = true): Modifier = drawWithContent {
     drawContent()
     val t = thickness.toPx()
@@ -176,12 +176,44 @@ fun BoxButton(icon: GuguIcon, label: String, onClick: () -> Unit, modifier: Modi
     }
 }
 
-/** 细斜纹：斜纹空版的底。 */
+/**
+ * 细斜纹：斜纹空版的底。45° 的线（x + y = k × [gap]），每 [gap] 一条。
+ *
+ * 画法（1.5.1 电视性能，批次 tvflip）：先把一格 [gap] × [gap] 的「砖」（一条对角线）画成小图，再用重复的图像着色器铺满——一次贴图。
+ * 以前是一根一根画线：一张 736 × 1104 的海报空版要画 130 多根抗锯齿斜线；海报流里的空版还带着 3D 倾斜，Mali-G52 上这些线全走路径，
+ * 一帧 GPU 95 ms（真电视实测）。砖的边长取整到像素，线距和以前差不到半个像素。
+ */
 fun DrawScope.hatch(color: Color, gap: Float, stroke: Float) {
-    var x = -size.height
-    while (x < size.width) {
-        drawLine(color, Offset(x, size.height), Offset(x + size.height, 0f), stroke)
-        x += gap
+    drawRect(HatchTiles.brush(color, gap, stroke))
+}
+
+/** 斜纹砖的缓存（界面线程上画的时候才用）：颜色、边长、线宽一样就复用同一张小图和着色器。 */
+private object HatchTiles {
+    private val cache = HashMap<Triple<ULong, Int, Int>, androidx.compose.ui.graphics.ShaderBrush>()
+
+    fun brush(color: Color, gap: Float, stroke: Float): androidx.compose.ui.graphics.ShaderBrush {
+        val t = kotlin.math.max(2, kotlin.math.round(gap).toInt())
+        val key = Triple(color.value, t, kotlin.math.round(stroke * 100).toInt())
+        return cache.getOrPut(key) {
+            val tile = tile(color, t, stroke)
+            androidx.compose.ui.graphics.ShaderBrush(androidx.compose.ui.graphics.ImageShader(tile, androidx.compose.ui.graphics.TileMode.Repeated, androidx.compose.ui.graphics.TileMode.Repeated))
+        }
+    }
+
+    /** 一格砖：x + y = t 那条对角线，加上两个角上属于 x + y = 0 / 2t 的那一小截（铺开以后线是连着的）。 */
+    fun tile(color: Color, t: Int, stroke: Float): androidx.compose.ui.graphics.ImageBitmap {
+        val img = androidx.compose.ui.graphics.ImageBitmap(t, t)
+        val f = t.toFloat()
+        val e = stroke * 2
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(
+            androidx.compose.ui.unit.Density(1f), androidx.compose.ui.unit.LayoutDirection.Ltr,
+            androidx.compose.ui.graphics.Canvas(img), Size(f, f),
+        ) {
+            drawLine(color, Offset(-e, f + e), Offset(f + e, -e), stroke)
+            drawLine(color, Offset(-e, e), Offset(e, -e), stroke)
+            drawLine(color, Offset(f - e, f + e), Offset(f + e, f - e), stroke)
+        }
+        return img
     }
 }
 
@@ -217,7 +249,7 @@ fun RadioMark(selected: Boolean, modifier: Modifier = Modifier, size: Dp = 9.dp)
 }
 
 /**
- * 细框小签（「完全对得上」「推荐」「另一份文件」）：[color] 的细框 + 同色字，不垫底色（专色不当底色）。
+ * 细框小签（「精确匹配」「推荐」「另一份文件」）：[color] 的细框 + 同色字，不垫底色（专色不当底色）。
  * [size]：字号（手机 11、电视 20……，跟着所在那一行）；[line]：框线粗细（电视 2）。
  */
 @Composable

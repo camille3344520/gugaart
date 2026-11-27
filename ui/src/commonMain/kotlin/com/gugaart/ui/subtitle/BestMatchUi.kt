@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicText
@@ -54,7 +55,7 @@ import kotlinx.coroutines.launch
  */
 
 /**
- * 自动加载**关着**时也在开播后搜一次（只在这一集没有中文字幕时），最合适那条是指纹精确就提示「找到完全对得上的字幕 · 用上」。
+ * 自动加载**关着**时也在开播后搜一次（只在这一集没有中文字幕时），最合适那条是指纹精确就提示「找到精确匹配的字幕 · 用上」。
  * 主理人 2026-11-24 的决定（plan-1.4.1 §3 第 2 条）。改成 false = 关着就一次请求都不发（那句提示也就只在开着时出现）。
  * 这一次搜索尊重「在线字幕源」（`subtitleOnline`）：关着只问服务器，不向迅雷 / 射手发请求（协调者 2026-11-25 定）。
  */
@@ -67,7 +68,7 @@ const val AUTO_BEST_DELAY_MS = 6_000L
 data class BestCardText(
     /** 小标：「最合适」。 */
     val kicker: String,
-    /** 指纹精确：卡上多一个「完全对得上」。 */
+    /** 指纹精确：卡上多一个「精确匹配」。 */
     val exact: Boolean,
     val name: String,
     /** 一两条理由（`SmartScore.reasons` 的前两条），「 · 」隔开。 */
@@ -76,8 +77,11 @@ data class BestCardText(
     val meta: String,
 )
 
-/** 「最合适」卡的字（纯函数，有单测）。[inPlayer]：播放器外的去向写「播放并加载」。 */
-fun bestCardText(best: ScoredHit, inPlayer: Boolean): BestCardText {
+/**
+ * 「最合适」卡的字（纯函数，有单测）。[inPlayer]：播放器外的去向写「播放并加载」。
+ * [withDestination] = false：去向已经写在两个按钮上（「保存到服务器」「仅本次播放」），小字里不写。
+ */
+fun bestCardText(best: ScoredHit, inPlayer: Boolean, withDestination: Boolean = true): BestCardText {
     val h = best.hit
     val source = if (h.source == SubSource.Server) h.provider?.let { "服务器 · $it" } ?: h.source.label else h.source.label
     return BestCardText(
@@ -85,7 +89,7 @@ fun bestCardText(best: ScoredHit, inPlayer: Boolean): BestCardText {
         exact = best.score.isExactHash,
         name = h.name,
         reasons = best.score.reasons.take(2).joinToString(" · "),
-        meta = listOfNotNull(h.lang.short, h.format.uppercase().takeIf { it.isNotBlank() }, source, destinationOf(h, inPlayer)).joinToString(" · "),
+        meta = listOfNotNull(h.lang.short, h.format.uppercase().takeIf { it.isNotBlank() }, source, destinationOf(h, inPlayer).takeIf { withDestination }).joinToString(" · "),
     )
 }
 
@@ -116,7 +120,7 @@ fun autoBestHintOf(state: AutoBestState, stateItem: String?, playing: String, ap
     val hint = when (state) {
         is AutoBestState.Found -> {
             val exact = state.score.isExactHash
-            val head = if (exact) "找到完全对得上的字幕" else "找到对得上的字幕"
+            val head = if (exact) "找到精确匹配的字幕" else "找到匹配的字幕"
             val mine = when (apply) {
                 is ApplyState.Working -> apply.key == state.hit.key
                 is ApplyState.Done -> apply.key == state.hit.key
@@ -127,20 +131,19 @@ fun autoBestHintOf(state: AutoBestState, stateItem: String?, playing: String, ap
                 mine && apply is ApplyState.Working -> AutoBestHint("using:${state.hit.key}", "${apply.step}　${state.hit.name}", "${apply.step}　${state.hit.name}", "${apply.step}　${state.hit.name}", HintAction.None, null, exact, persistent = true)
                 // 用上了：字幕已经换上，顶栏的字幕那一段写「搜索」，这句不用再说
                 mine && apply is ApplyState.Done -> null
-                mine && apply is ApplyState.Failed -> AutoBestHint("failed:${state.hit.key}", "没用上：${apply.why}", "没用上：${apply.why}", "没用上：${apply.why}", HintAction.None, null, exact, persistent = false)
+                mine && apply is ApplyState.Failed -> AutoBestHint("failed:${state.hit.key}", apply.why, apply.why, apply.why, HintAction.None, null, exact, persistent = false)
                 else -> AutoBestHint(
-                    "found:${state.hit.key}", head, "$head · 下键打开设置，字幕一行按确定",
-                    // 服务器源：用上 = 让 Emby 下载存进去（写服务器），所以自动加载不碰它，这里说清楚点了会怎样
-                    // 「（用上会存进 Emby）」放在名字前面：长文件名折三行时也看得见
-                    head + (if (state.hit.toEmby) "（用上会存进 Emby）" else "") + "：${state.hit.name}", HintAction.Use, "用上", exact, persistent = true,
+                    "found:${state.hit.key}", head, "$head · 下键 › 字幕 › 确定",
+                    // 去向写在动作按钮上：服务器源 = 保存到服务器，本机源 = 用上（1.5.1 m151：不再另写说明）
+                    "$head：${state.hit.name}", HintAction.Use, if (state.hit.toEmby) "保存到服务器" else "用上", exact, persistent = true,
                 )
             }
         }
         is AutoBestState.Loaded -> if (state.index != null) AutoBestHint(
-            "loaded:${state.hit.key}", "已自动加载：${state.hit.name}", "已自动加载：${state.hit.name} · 字幕一行左右可换回",
+            "loaded:${state.hit.key}", "已自动加载：${state.hit.name}", "已自动加载：${state.hit.name}",
             state.note, HintAction.Undo, "撤销", state.score.isExactHash, persistent = false,
         ) else AutoBestHint(
-            "loaded:${state.hit.key}", "已存进 Emby，服务器还在处理", "已存进 Emby，服务器还在处理", state.note, HintAction.None, null, state.score.isExactHash, persistent = false,
+            "loaded:${state.hit.key}", "已存进 Emby，处理中", "已存进 Emby，处理中", state.note, HintAction.None, null, state.score.isExactHash, persistent = false,
         )
         else -> null
     } ?: return null
@@ -239,9 +242,12 @@ fun RememberAutoBest(play: PlaySession, explicit: Boolean) {
                         target, client, SubtitleSearchBoard.net(),
                         online = prefs.subtitleOnline,
                         enabled = prefs.subtitleAutoBest,
-                        langs = g.settings.state.value.playbackPrefs.subtitleLangs.ifEmpty { SmartMatch.DEFAULT_LANGS },
+                        langs = com.gugaart.ui.data.effectiveSubtitleLangs(
+                            g.settings.state.value.playbackPrefs.subtitleLangs,
+                            prefs.subLangsSeeded,
+                        ).ifEmpty { SmartMatch.DEFAULT_LANGS },
                         hasChinese = hasChineseSubtitle(resolved.mediaSource.mediaStreams, LocalSubtitles.of(item.id)),
-                        select = { idx -> AutoBestBoard.select(play, item.id, idx) },
+                        select = { idx -> if (!play.hasUserChosenSubtitle(item.id, resolved.mediaSource.id)) AutoBestBoard.select(play, item.id, idx) },
                         offerWhenOff = AUTO_BEST_HINT_WHEN_OFF,
                     )
                 }
@@ -256,7 +262,7 @@ fun RememberAutoBest(play: PlaySession, explicit: Boolean) {
 /**
  * 播放器里那句提示的贴边小条（docs/player.md §1 第 2 种：角上、一小块墨底，不进画面中央和字幕带）。放在左上「片源效果」徽章那一行**下面**
  * （徽章 5 秒就淡出、搜索开播 6 秒后才开始，平常不会同时在；开播缓冲久了徽章会晚亮，所以不共用一格）。
- * - 「找到完全对得上的字幕 · 用上」：出现时亮 [FLASH_MS]，之后**控件出来时**才在（[controls]）；字幕面板顶上一直有。
+ * - 「找到精确匹配的字幕 · 用上」：出现时亮 [FLASH_MS]，之后**控件出来时**才在（[controls]）；字幕面板顶上一直有。
  * - 「已自动加载：… · 撤销」：亮几秒就淡出；之后只在字幕面板顶上。
  * 电视（[tv]）：遥控器点不到小条，写怎么走（「下键打开设置，字幕一行按确定」）。
  */
@@ -326,11 +332,11 @@ fun AutoBestPanelLine(play: PlaySession) {
     val snap by play.controller.snapshot.collectAsState()
     val h = AutoBestBoard.hintFor(snap.itemId) ?: return
     Column(Modifier.fillMaxWidth().padding(bottom = 4.dp * t.k).testTag("sub-best-panel")) {
-        BasicText(if (h.exact) "智能匹配 · 完全对得上" else "智能匹配", style = Guga.song(t.section, color = colors.spot, letterSpacing = 0.3.em), maxLines = 1)
+        BasicText(if (h.exact) "智能匹配 · 精确" else "智能匹配", style = Guga.song(t.section, color = colors.spot, letterSpacing = 0.3.em), maxLines = 1)
         BasicText(h.detail, Modifier.padding(top = 2.dp * t.k, bottom = 2.dp * t.k), style = Guga.song(t.note, color = colors.ink, lineHeight = t.note * 1.5f), maxLines = 3, overflow = TextOverflow.Ellipsis)
         when (h.action) {
-            HintAction.Use -> PanelLink("用上这条") { AutoBestBoard.use(play, g, scope) }
-            HintAction.Undo -> PanelLink("撤销，换回原来的") { AutoBestBoard.undo(play) }
+            HintAction.Use -> PanelLink(h.actionLabel ?: "用上") { AutoBestBoard.use(play, g, scope) }
+            HintAction.Undo -> PanelLink("撤销") { AutoBestBoard.undo(play) }
             HintAction.None -> Spacer(Modifier.padding(top = 2.dp))
         }
     }
@@ -338,9 +344,10 @@ fun AutoBestPanelLine(play: PlaySession) {
 
 /** 搜索栏里「最合适」卡（手机 / 电脑）：小标、字幕名、一两条理由、语言 · 格式 · 来源 · 去向，一个主按钮「用上」。 */
 @Composable
-fun BestCard(best: ScoredHit, apply: ApplyState?, inPlayer: Boolean, onUse: () -> Unit) {
+fun BestCard(best: ScoredHit, apply: ApplyState?, inPlayer: Boolean, actions: List<HitAction>, onUse: (HitAction) -> Unit) {
     val colors = Guga.colors
-    val c = bestCardText(best, inPlayer)
+    // 两个去向（「保存到服务器」「仅本次播放」，§4.4）时去向写在两个按钮上，小字里不再写
+    val c = bestCardText(best, inPlayer, withDestination = actions.size < 2)
     val mine = applyLineOf(best.hit, apply)
     Column(Modifier.padding(top = 12.dp).fillMaxWidth().border(1.dp, colors.ink).padding(horizontal = 14.dp, vertical = 12.dp).testTag("sub-best")) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -353,23 +360,44 @@ fun BestCard(best: ScoredHit, apply: ApplyState?, inPlayer: Boolean, onUse: () -
         if (c.reasons.isNotEmpty()) BasicText(c.reasons, Modifier.padding(top = 4.dp), style = Guga.song(12.5.sp, color = colors.ink, lineHeight = 18.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
         BasicText(c.meta, Modifier.padding(top = 2.dp), style = Guga.song(12.sp, color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (mine != null) BasicText(mine.first, Modifier.padding(top = 6.dp).testTag("sub-best-apply"), style = Guga.song(12.sp, color = if (mine.second) colors.seal else colors.spot), maxLines = 2)
-        PrimaryButton(
-            // 去向（进 Emby / 仅本次 / 播放并加载）写在上面那行小字里；按钮只说「用上」
-            "用上",
-            onUse,
+        val single = actions.singleOrNull()
+        if (single != null) PrimaryButton(
+            // 去向写在按钮上（1.5.1 m151）：服务器源 = 保存到服务器，本机源 = 用上
+            if (best.hit.toEmby) "保存到服务器" else "用上",
+            { onUse(single) },
             Modifier.padding(top = 10.dp).fillMaxWidth().testTag("sub-best-use"),
             icon = null,
             enabled = apply !is ApplyState.Working,
-        )
+        ) else Row(Modifier.padding(top = 10.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 「保存到服务器」（或失败后的「重试」）在前、实底；「仅本次播放」在后、细框
+            actions.forEachIndexed { i, a ->
+                if (i == 0) PrimaryButton(a.label, { onUse(a) }, Modifier.weight(1f).testTag("sub-best-${a.name.lowercase()}"), icon = null, enabled = apply !is ApplyState.Working)
+                else SecondaryAction(a.label, apply !is ApplyState.Working, Modifier.weight(1f).testTag("sub-best-${a.name.lowercase()}")) { onUse(a) }
+            }
+        }
     }
 }
 
-/** 「完全对得上」小签：专色细框 + 专色字（不当底色）。 */
+/** 卡上的第二个按钮：米白细框、米白字（和主按钮一样高）。按下放大。 */
+@Composable
+private fun SecondaryAction(text: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = Guga.colors
+    val press = rememberPressState()
+    androidx.compose.foundation.layout.Box(
+        modifier.pressGraphics(press).heightIn(min = 46.dp).border(1.dp, colors.line)
+            .pressable(press, enabled = enabled, label = text, onClick = onClick).padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(text, style = Guga.song(Guga.type.lead, FontWeight.Bold, if (enabled) colors.ink else colors.faint, letterSpacing = 0.06.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** 「精确匹配」小签：专色细框 + 专色字（不当底色）。 */
 @Composable
 fun ExactTag(size: androidx.compose.ui.unit.TextUnit, line: Dp, onInk: Boolean = false) {
     val colors = Guga.colors
     val ink = if (onInk) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot
-    com.gugaart.ui.components.OutlineTag("完全对得上", size, line, ink, Modifier.testTag("sub-best-exact"))
+    com.gugaart.ui.components.OutlineTag("精确匹配", size, line, ink, Modifier.testTag("sub-best-exact"))
 }
 
 /** 选中这一条以后那一行写什么（进度 / 结果 / 失败），不是这一条 = null。second = 是不是失败（朱红）。 */
@@ -389,10 +417,9 @@ object AutoBestSpec {
     const val LOADED_MS = 6_000L
 }
 
-/** 电视页边面板「字幕」一行的小字：有提示就先说提示（纯函数，有单测）。 */
-fun tvSubRowDetail(hint: AutoBestHint?): String = when (hint?.action) {
-    // 页边面板一行只放得下十五六个字：「完全对得上的字幕 · 确定去用上」
-    HintAction.Use -> "${hint.text.removePrefix("找到")} · 确定去用上"
-    HintAction.Undo -> "已自动加载 · 左右可换回原来的"
-    else -> "确定 = 搜索字幕"
+/** 电视页边面板「字幕」一行的小字：有提示就说提示，没有就不写（电视不显示按键提示；纯函数，有单测）。 */
+fun tvSubRowDetail(hint: AutoBestHint?): String? = when (hint?.action) {
+    HintAction.Use -> hint.text.removePrefix("找到")
+    HintAction.Undo -> "已自动加载"
+    else -> null
 }

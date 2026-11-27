@@ -55,10 +55,10 @@ val LocalFontImport = staticCompositionLocalOf<FontImportHost?> { null }
 
 /** 导入失败的原因（给人看的话，不带路径）。 */
 enum class FontImportError(val text: String) {
-    NotAFont("这不是字体文件（要 ttf / otf）"),
-    TooLarge("字体文件太大了（上限 40 MB）"),
-    Duplicate("这款已经导入过了"),
-    WriteFailed("没能存进应用的存储"),
+    NotAFont("不是 ttf / otf 字体"),
+    TooLarge("字体超过 40 MB"),
+    Duplicate("已导入过"),
+    WriteFailed("保存失败"),
 }
 
 class ImportedFontState(val fonts: List<ImportedFont> = emptyList(), val selected: String? = null) {

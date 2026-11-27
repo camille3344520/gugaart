@@ -148,7 +148,8 @@ fun DesktopMasthead(today: Today, modifier: Modifier = Modifier) {
     val controls = LocalGraph.current.deps.windowControls
     val host = LocalDesktopHost.current
     val systemLeft = host.windowKeys == WindowKeysStyle.SystemLeft
-    val solid = !nav.bleed || nav.scrollPx > 2f
+    // 派生状态（1.5.1 性能）：报头只在「实心 / 透明」翻转时重组，不跟着每一帧的滚动
+    val solid = androidx.compose.runtime.remember(nav) { androidx.compose.runtime.derivedStateOf { !nav.bleed || nav.scrollPx > 2f } }.value
     val band: @Composable () -> Unit = {
         Box(
             Modifier
@@ -255,7 +256,8 @@ fun DesktopPage(
         nav.bleed = bleed
         onDispose { nav.bleed = false }
     }
-    LaunchedEffect(scroll.value) { nav.scrollPx = scroll.value.toFloat() }
+    // 滚动位置在协程里跟（1.5.1 性能）：以前当 LaunchedEffect 的键，每滚一帧这一页重组一次、拆一个协程再起一个
+    LaunchedEffect(scroll, nav) { androidx.compose.runtime.snapshotFlow { scroll.value }.collect { nav.scrollPx = it.toFloat() } }
     DisposableEffect(Unit) { onDispose { nav.scrollPx = 0f } }
     Column(modifier.fillMaxSize().verticalScroll(scroll).testTag("desktop-page")) {
         if (!bleed) Spacer(Modifier.height(Guga.rem(DesktopSpec.CONTENT_TOP)))

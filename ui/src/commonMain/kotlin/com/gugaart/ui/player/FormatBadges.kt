@@ -180,14 +180,17 @@ internal fun avMarkVector(art: AvMarkArt, colors: GugaColors): ImageVector {
  * [scale]：手机 1、电脑 1.15、电视 1.6。没有效果的片子什么都不画。
  */
 @Composable
-fun FormatFlash(snap: PlayerSnapshot, scale: Float, modifier: Modifier = Modifier, showMs: Long = FORMAT_FLASH_MS) {
+fun FormatFlash(snap: PlayerSnapshot, scale: Float, modifier: Modifier = Modifier, showMs: Long = FORMAT_FLASH_MS, notes: Boolean = true) {
     val badges = remember(snap.resolved?.mediaSource, snap.audioIndex) { formatBadges(snap.resolved?.mediaSource, snap.audioIndex, DeviceAv.caps) }
-    FormatFlash(badges, started = snap.phase == PlayPhase.Ready && !snap.buffering, key = snap.itemId + "|" + snap.sourceId, scale = scale, modifier = modifier, showMs = showMs)
+    FormatFlash(badges, started = snap.phase == PlayPhase.Ready && !snap.buffering, key = snap.itemId + "|" + snap.sourceId, scale = scale, modifier = modifier, showMs = showMs, notes = notes)
 }
 
-/** 同上，徽章和「开始放了没有」由调用方给（[key] 换了 = 换了一集 / 换了版本，再来一次）。离屏测试直接用这个。 */
+/**
+ * 同上，徽章和「开始放了没有」由调用方给（[key] 换了 = 换了一集 / 换了版本，再来一次）。离屏测试直接用这个。
+ * [notes] = false：徽章下面那行说明先收起（电视上「换台失败」的提示亮着时，P2-5）。
+ */
 @Composable
-fun FormatFlash(badges: List<FormatBadge>, started: Boolean, key: String, scale: Float, modifier: Modifier = Modifier, showMs: Long = FORMAT_FLASH_MS) {
+fun FormatFlash(badges: List<FormatBadge>, started: Boolean, key: String, scale: Float, modifier: Modifier = Modifier, showMs: Long = FORMAT_FLASH_MS, notes: Boolean = true) {
     if (badges.isEmpty()) return
     var visible by remember(key) { mutableStateOf(false) }
     var shown by remember(key) { mutableStateOf(false) }
@@ -205,7 +208,7 @@ fun FormatFlash(badges: List<FormatBadge>, started: Boolean, key: String, scale:
         }
     }
     AnimatedVisibility(visible, modifier, enter = fadeIn(tween(260)), exit = fadeOut(tween(600))) {
-        FormatBadgeRow(badges, scale)
+        FormatBadgeRow(badges, scale, notes = notes)
     }
 }
 

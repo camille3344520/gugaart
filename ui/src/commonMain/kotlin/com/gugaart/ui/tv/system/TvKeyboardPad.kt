@@ -86,7 +86,7 @@ object TvKeyboard {
  * [upper] = 大写锁着；[bottomLabel] 给最下一行每个键的字（「下一项」在不同的步骤叫法不同）；[onKey] 拿到按下的字符或功能键的名字。
  */
 @Composable
-fun TvKeyboardPad(upper: Boolean, bottomLabel: (String) -> String, onKey: (String) -> Unit, modifier: Modifier = Modifier, rows: List<String> = TvKeyboard.ROWS, hint: String? = "用遥控器的方向键走，确定输入。不会弹出系统输入法。") {
+fun TvKeyboardPad(upper: Boolean, bottomLabel: (String) -> String, onKey: (String) -> Unit, modifier: Modifier = Modifier, rows: List<String> = TvKeyboard.ROWS, hint: String? = null) { // 电视不显示按键提示：默认不写「方向键选字」
     val colors = Guga.colors
     Column(modifier.testTag("tv-keyboard"), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         rows.forEachIndexed { r, chars ->

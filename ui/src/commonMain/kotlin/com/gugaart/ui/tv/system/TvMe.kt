@@ -69,10 +69,7 @@ fun meShelves(favorites: Boolean, items: List<Title>): List<Triple<String, Strin
         Triple("片子", "TITLES", items.filter { it.kind == Kind.Movie || it.kind == Kind.Series || it.kind == Kind.BoxSet }),
         Triple("单集", "EPISODES", items.filter { it.kind == Kind.Episode }),
         Triple("人物", "PEOPLE", items.filter { it.kind == Kind.Person }),
-    ) else listOf(
-        Triple("看到一半", "IN PROGRESS", items.filter { it.progress > 0f }),
-        Triple("看完的", "FINISHED", items.filter { it.progress <= 0f }),
-    )
+    ) else listOf(Triple("记录", "HISTORY", items))
     ).filter { it.third.isNotEmpty() }
 
 /** 记录 / 收藏的方向键路径：右边几栏上下换；最左再按左 = 读者证下面的「记录 / 收藏」两行；再按左交给外壳（进导航）。纯函数，有单测。 */
@@ -96,12 +93,14 @@ fun meEdge(from: String, dir: TvDir, shelves: Int, has: (String) -> Boolean): St
 /**
  * 记录 / 收藏 + 读者证（电视，设计稿 `p=me`）：左栏读者证（署名照 120 + 账号 + 服务器）和「记录 / 收藏」两行，右边按栏排的横排。
  * 默认焦点在右边第一张卡。数据和手机同一批（`loadHistory` / `loadFavs`，只读）。
- * 设计稿把记录按「今天 / 昨天 / 更早」分栏——那是编的（服务器给的继续观看没有日期），这里按「看到一半 / 看完的」分；收藏按 片子 / 单集 / 人物 分。
+ * 设计稿把记录按「今天 / 昨天 / 更早」分栏——那是编的（服务器给的继续观看没有日期），记录不分栏（观看状态只有未看 / 已看，D-watch：不按看没看完分组）；收藏按 片子 / 单集 / 人物 分。
  * 收藏为空：她捧白纸（G10）。长按确定 = 这一张的菜单（外壳画）。
  */
 @Composable
 fun TvMe(today: Today, tab: String?) {
     val g = LocalGraph.current
+    // P2-13：进了「记录」（读者证在这一页）侧栏上的小点清掉
+    androidx.compose.runtime.LaunchedEffect(Unit) { com.gugaart.ui.screens.me.RankBoard.seen() }
     val chrome = LocalChrome.current
     val colors = Guga.colors
     val groups = remember { TvGroups() }
@@ -138,7 +137,7 @@ fun TvMe(today: Today, tab: String?) {
                         }
                     }
                     Spacer(Modifier.height(30.dp))
-                    val rank = watched.value?.let { n -> listOf("称号" to (Ranks.of(Ranks.levelOf(n))?.let { "第 ${it.level} 级 · ${it.title}" } ?: "还没有"), "看过" to "$n 部", "特别称号" to "${RankBoard.owned.size} / ${Specials.COUNT}") }.orEmpty()
+                    val rank = watched.value?.let { n -> listOf("称号" to (Ranks.of(Ranks.levelOf(n))?.let { "第 ${it.level} 级 · ${it.title}" } ?: "还没有"), "已看" to "$n 部", "特别称号" to "${RankBoard.owned.size} / ${Specials.COUNT}") }.orEmpty()
                     for ((k, v) in listOfNotNull(session?.serverName?.let { "服务器" to it }) + rank + listOfNotNull(history.value?.let { "记录" to "${it.size} 条" }, favs.value?.let { "收藏" to "${it.size} 条" })) {
                         Row(Modifier.fillMaxWidth().height(52.dp).drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, verticalAlignment = Alignment.CenterVertically) {
                             BasicText(k, Modifier.weight(1f), style = Guga.song(25.sp, color = colors.dim), maxLines = 1)
@@ -168,8 +167,7 @@ fun TvMe(today: Today, tab: String?) {
                         shelves.isEmpty() -> Row(Modifier.padding(top = 180.dp, end = TvSpec.RIGHT).testTag("tv-me-empty"), verticalAlignment = Alignment.CenterVertically) {
                             if (LocalGugaPrefs.current.showMascot) MascotPose("G10", 150.dp, label = "捧白纸")
                             Column(Modifier.padding(start = 26.dp)) {
-                                BasicText(if (favorites) "还没有收藏" else "还没有看过的", style = Guga.song(38.sp, FontWeight.Black), maxLines = 1)
-                                BasicText(if (favorites) "在详情页的「收藏」上按确定，片子就放进这里。" else "看过的片子都在这里。", Modifier.padding(top = 8.dp), style = Guga.song(28.sp, color = colors.dim), maxLines = 1)
+                                BasicText(if (favorites) "还没有收藏" else "还没有观看记录", style = Guga.song(38.sp, FontWeight.Black), maxLines = 1)
                             }
                         }
                         else -> shelves.forEachIndexed { i, (name, english, list) ->

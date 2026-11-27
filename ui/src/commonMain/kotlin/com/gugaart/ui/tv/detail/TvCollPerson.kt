@@ -89,7 +89,8 @@ fun TvCollection(set: Title, today: Today) {
     val data = load.value ?: SetData(set, emptyList())
     val members = data.members
     val firstPoster = rememberImage(members.firstOrNull()?.art?.poster ?: set.art.poster, keepPrevious = true)
-    LaunchedEffect(firstPoster) { chrome.spot = firstPoster?.spot(tv = true) }
+    val tvSpot = com.gugaart.ui.components.rememberSpotColor(firstPoster, tv = true)
+    LaunchedEffect(tvSpot) { chrome.spot = tvSpot }
     val fav = chrome.isFavorite(set)
     val borrowed = data.borrowed
     val art = if (borrowed != null) set.art.copy(backdrop = borrowed.art.backdrop) else set.art

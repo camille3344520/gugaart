@@ -7,6 +7,7 @@ import com.gugaart.ui.components.StateView
 import com.gugaart.ui.data.Kind
 import com.gugaart.ui.data.rememberLoad
 import com.gugaart.ui.data.titleOf
+import com.gugaart.ui.data.getItemShared
 import com.gugaart.ui.desktop.detail.DesktopMovie
 import com.gugaart.ui.desktop.detail.DesktopPerson
 import com.gugaart.ui.desktop.detail.DesktopSeries
@@ -18,7 +19,7 @@ import com.gugaart.ui.desktop.detail.DesktopSet
  */
 @Composable
 fun DesktopItemScreen(id: String, today: Today) {
-    val item = rememberLoad("item", id) { c -> c.titleOf(c.getItem(id)) }
+    val item = rememberLoad("item", id) { c -> c.titleOf(c.getItemShared(id)) }
     val t = item.value
     when {
         t == null && item.error != null -> DesktopErrorPage(item.error!!, item::retry)

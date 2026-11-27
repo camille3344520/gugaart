@@ -240,10 +240,10 @@ fun TvLoginForm(model: LoginModel, form: TvFormState) {
             )
             // 框下面一行：认出来的地址 / 探测结果 / 出错原因
             val (line, tone) = when {
-                model.probing -> "正在找这台服务器…" to 1
+                model.probing -> "连接中…" to 1
                 model.addError != null -> model.addError.orEmpty() to 3
-                model.found != null -> "找到了：${model.found?.name}　${model.foundInfo.orEmpty()}" to 2
-                plan == null -> "可以直接粘贴完整地址，例如 https://emby.example.com:8920，会自动拆出协议、主机和端口" to 0
+                model.found != null -> "已找到：${model.found?.name}　${model.foundInfo.orEmpty()}" to 2
+                plan == null -> "支持完整地址，如 https://emby.example.com:8920" to 0
                 plan.error != null -> addressPreview(plan) to 3
                 else -> addressPreview(plan) to 1
             }
@@ -260,7 +260,7 @@ fun TvLoginForm(model: LoginModel, form: TvFormState) {
                 BasicText("服务器", style = Guga.song(22.sp, color = colors.spot, letterSpacing = 0.2.em), maxLines = 1)
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     BasicText(model.target?.name.orEmpty(), Modifier.weight(1f, fill = false), style = Guga.song(44.sp, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    BasicText("已保存 · 换一台按返回", Modifier.padding(start = 20.dp), style = Guga.song(22.sp, color = colors.faint), maxLines = 1)
+                    BasicText("已保存", Modifier.padding(start = 20.dp), style = Guga.song(22.sp, color = colors.faint), maxLines = 1)
                 }
             }
         }
@@ -273,7 +273,7 @@ fun TvLoginForm(model: LoginModel, form: TvFormState) {
         Spacer(Modifier.height(12.dp))
         TvInputField(
             TvFormKeys.PASS, "密码", model.password, { model.password = it }, form,
-            placeholder = "没有密码就空着",
+            placeholder = "没有密码就留空",
             keyboardType = KeyboardType.Password, ime = ImeAction.Done, mask = !form.show,
             error = model.badPassword,
             onIme = { imeNext(TvFormKeys.PASS) }, onLeave = { leave(TvFormKeys.PASS, it) },
@@ -327,25 +327,12 @@ fun TvLoginForm(model: LoginModel, form: TvFormState) {
     LaunchedEffect(form.kbd) { if (form.kbd) groups.enterWhenReady("kb-1", g.focus) }
 }
 
-/** 右栏：键盘收着时是吉祥物递钥匙 + 三句用法；密码不对换成歪头那张。 */
+/** 右栏：键盘收着时是吉祥物递钥匙；密码不对换成歪头那张。不写常驻的操作提示（审计 P2-4）。 */
 @Composable
 fun TvLoginHelp(model: LoginModel) {
     val colors = Guga.colors
     Column(Modifier.fillMaxWidth().padding(top = 10.dp).testTag("tv-login-help")) {
         if (LocalGugaPrefs.current.showMascot) MascotPose(if (model.badPassword) "G15b" else "G15", 240.dp, label = if (model.badPassword) "密码不对" else "递钥匙")
-        TvSecHead("怎么填", "HOW TO", Modifier.padding(top = 18.dp), small = true)
-        val tips = listOf(
-            "在框上按确定开始输入，电视会弹出输入法。",
-            "输入法里的「下一项」跳到下一格；密码那一格按「完成」就登录。",
-            "地址可以整段粘贴（浏览器里 Emby 网页的地址也行），协议、主机、端口会自己拆出来。",
-            "电视没有输入法、或者不好用：按「遥控器键盘」。",
-        )
-        for (t in tips) {
-            Row(Modifier.padding(top = 14.dp)) {
-                BasicText("·", Modifier.width(26.dp), style = Guga.song(25.sp, FontWeight.Black, colors.seal), maxLines = 1)
-                BasicText(t, style = Guga.song(24.sp, color = colors.dim, lineHeight = 36.sp), maxLines = 3)
-            }
-        }
     }
 }
 
@@ -388,12 +375,7 @@ private fun TvInputField(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 BasicText(label, style = Guga.song(22.sp, color = if (focused) colors.onInk.copy(alpha = 0.75f) else colors.spot, letterSpacing = 0.2.em), maxLines = 1)
                 Spacer(Modifier.weight(1f))
-                val hint = when {
-                    editing -> "输入法里按「下一项」· 返回 = 收起"
-                    focused -> "确定 = 输入"
-                    else -> null
-                }
-                if (hint != null) BasicText(hint, style = Guga.song(20.sp, color = if (focused) colors.onInk.copy(alpha = 0.7f) else colors.faint), maxLines = 1)
+                // 电视不显示按键提示（不再写「确定 = 输入」「返回 = 收起」）
             }
             Box(Modifier.padding(top = 8.dp).fillMaxWidth().height(62.dp), contentAlignment = Alignment.CenterStart) {
                 if (editing) {

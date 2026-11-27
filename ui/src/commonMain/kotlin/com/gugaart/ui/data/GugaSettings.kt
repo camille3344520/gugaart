@@ -15,17 +15,32 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
-/** 「字幕默认」的四档（设置 › 字幕与音轨；键 `subtitleDefault`）。 */
-enum class SubtitleDefault(val id: String, val label: String, val note: String) {
-    Follow("follow", "跟随上次", "同一部剧 / 电影记住你上次的选择（包括关）；新片子按「智能」"),
-    Smart("smart", "智能", "对白是中文的不开字幕；别的自动选中文字幕（简体优先），没有就关"),
-    Off("off", "总是关闭", "不加载字幕"),
-    Chinese("chinese", "总是中文", "有中文字幕就开（简体优先）");
+/** 「开播字幕」的三档（设置 › 字幕与音轨；键 `subtitleDefault`）。 */
+enum class SubtitleDefault(val id: String, val label: String) {
+    Auto("auto", "自动"),
+    Follow("follow", "跟随上次"),
+    Off("off", "关闭");
 
     companion object {
-        fun of(id: String?): SubtitleDefault = entries.firstOrNull { it.id == id } ?: Follow
+        fun of(id: String?): SubtitleDefault = when (id) {
+            "auto", "smart", "chinese" -> Auto
+            "follow" -> Follow
+            "off" -> Off
+            else -> Follow
+        }
     }
 }
+
+val UPSTREAM_DEFAULT_SUBTITLE_LANGS = listOf("zh-Hans", "zh", "chi", "zho", "zh-Hant")
+val DEFAULT_GUGA_SUBTITLE_LANGS = listOf("zh-Hans", "zh", "chi", "zho", "zh-Hant", "en", "eng")
+
+val GUGA_SUBTITLE_LANGS: List<com.gugugaga.app.settings.LangOption> by lazy {
+    // 语言名和轨道名同一个写法（TrackNames.languageName：「中文（简体）」「英语」）；它不认识的照用上游的名字
+    com.gugugaga.app.settings.SUBTITLE_LANGS.map { o -> o.copy(label = languageName(o.key) ?: o.label) }
+}
+
+fun effectiveSubtitleLangs(langs: List<String>, seeded: Boolean): List<String> =
+    if (!seeded && langs == UPSTREAM_DEFAULT_SUBTITLE_LANGS) DEFAULT_GUGA_SUBTITLE_LANGS else langs
 
 /** 「咕咕嘎嘎出现在版面上」的三档。 */
 enum class MascotPref(val id: String) {
@@ -77,22 +92,23 @@ data class WallPref(
 data class GugaPrefs(
     /** 专色跟随封面；关 = 一直用兜底朱红。 */
     val spotColorFollowsCover: Boolean = true,
-    /** 纸纹（素材没出之前只存不画）。 */
-    val paperTexture: Boolean = true,
     /** 她：on = 全量；subtle = 只留署名照、不说话；off = 所有她的格子收起。 */
     val mascot: MascotPref = MascotPref.On,
     /** 主编手记这一格。 */
     val editorNotes: Boolean = true,
-    /** 「字幕默认」：跟随上次（默认）/ 智能 / 总是关闭 / 总是中文（[SubtitleDefault]）。 */
+    /** 「开播字幕」：自动 / 跟随上次 / 关闭（[SubtitleDefault]）。 */
     val subtitleDefault: SubtitleDefault = SubtitleDefault.Follow,
-    /** 画质面板的「着色器增强」：关（默认）/ Anime4K 模式 A/B/C / FSR（[ShaderPreset]）。只在 mpv 系内核出现，下次开播沿用。 */
-    val shader: ShaderPreset = ShaderPreset.Off,
-    /** 闲置回首页（电脑、电视）：不在首页也不在播放时 10 分钟没有输入，翻回封面。 */
-    val idleHome: Boolean = true,
-    /** 首页封面自动翻页。 */
+    /** 设置 › 播放「默认着色器」：关（默认）/ Anime4K 模式 A/B/C / FSR（[ShaderPreset]）。 */
+    val defaultShader: ShaderPreset = ShaderPreset.Off,
+    /** 按部记住的着色器（键 = seriesId ?: itemId，[shaderItemKey]）：不全局沿用到别的片子。 */
+    val itemShaders: Map<String, ShaderPreset> = emptyMap(),
+    /** 闲置回首页（电脑、电视）：null = 按端默认（电脑 / Mac 关，电视开）；非 null = 用户存下的选择。 */
+    val idleHome: Boolean? = null,
     val coverAutoFlip: Boolean = true,
     /** 弹幕的画报默认值（区域 10 %、字号 150 %）已经写过一次了（之后用户怎么改都不再动）。 */
     val danmakuSeeded: Boolean = false,
+    /** 首选字幕语言默认（中文简体 → 中文繁体 → 英语）已经写过一次了。 */
+    val subLangsSeeded: Boolean = false,
     /** 第一次进首页时「目录在下面」的提示已经看过了。 */
     val tocHintSeen: Boolean = false,
     /** 每个片库上次的筛选 / 排序（键 = 片库 id；1.3.1）。 */
@@ -115,12 +131,27 @@ data class GugaPrefs(
      * null = 用上游的键 `danmaku.render.font`。导入的字体另有自己的键（[ImportedFontStore]），选中导入的时这里清空。
      */
     val danmakuFont: String? = null,
+    /** 片尾自动播下一集（审计 P1-3）：进了片尾标记倒数 10 秒接下一集。没有片尾标记的片子不受它管（播完照旧接，跟「自动播放下一集」）。 */
+    val creditsAutoNext: Boolean = true,
 ) {
     /** 她的格子出不出现。 */
     val showMascot: Boolean get() = mascot != MascotPref.Off
-
     /** 她说不说话（手记 / 按语那一行字）。 */
     val mascotSpeaks: Boolean get() = mascot == MascotPref.On && editorNotes
+
+    /** 这一端实际的「闲置回首页」开关：存过按存下的，没存过电脑 / Mac 默认关、电视保持开（P2-16）。 */
+    fun idleHomeFor(mode: com.gugugaga.ds.theme.UiMode): Boolean = idleHome ?: (mode == com.gugugaga.ds.theme.UiMode.Tv)
+
+    /** 这部片实际的着色器预设：记过按这部片自己的，没记过用设置里的默认着色器（P2-20）。 */
+    fun shaderFor(itemKey: String?): ShaderPreset = itemKey?.let { itemShaders[it] } ?: defaultShader
+
+    /** 更新这一部片的着色器（不动默认着色器也不影响别的片子）。 */
+    fun withItemShader(itemKey: String, preset: ShaderPreset): GugaPrefs = copy(
+        itemShaders = LinkedHashMap(itemShaders).apply {
+            remove(itemKey)
+            put(itemKey, preset)
+        },
+    )
 
     companion object {
         fun parse(raw: String?): GugaPrefs {
@@ -128,19 +159,25 @@ data class GugaPrefs(
             fun bool(k: String, d: Boolean) = (o[k] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull ?: d
             return GugaPrefs(
                 spotColorFollowsCover = bool("spotColorFollowsCover", true),
-                paperTexture = bool("paperTexture", true),
                 mascot = MascotPref.of((o["mascot"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
                 editorNotes = bool("editorNotes", true),
                 subtitleDefault = SubtitleDefault.of((o["subtitleDefault"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
-                shader = ShaderPreset.of((o["shader"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
-                idleHome = bool("idleHome", true),
+                defaultShader = ShaderPreset.of((o["defaultShader"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
+                itemShaders = (o["itemShaders"] as? JsonObject)?.mapNotNull { (k, v) ->
+                    val id = (v as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return@mapNotNull null
+                    val preset = ShaderPreset.entries.firstOrNull { it.id == id } ?: return@mapNotNull null
+                    k to preset
+                }?.toMap().orEmpty(),
+                idleHome = (o["idleHome"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull,
                 coverAutoFlip = bool("coverAutoFlip", true),
                 danmakuSeeded = bool("danmakuSeeded", false),
+                subLangsSeeded = bool("subLangsSeeded", false),
                 tocHintSeen = bool("tocHintSeen", false),
                 wall = (o["wall"] as? JsonObject)?.mapValues { (_, v) -> WallPref.parse(v as? JsonObject) }.orEmpty(),
                 subtitleOnline = bool("subtitleOnline", true),
                 subtitleAutoBest = bool("subtitleAutoBest", false),
                 subStyle = SubStylePrefs.parse(o["subStyle"] as? JsonObject),
+                creditsAutoNext = bool("creditsAutoNext", true),
                 danmakuFont = (o["danmakuFont"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { id -> StyleFont.of(id)?.let { it.danmaku == null } == true },
             )
         }
@@ -154,26 +191,32 @@ data class GugaPrefs(
 
     /** 写回：在 [previous]（存着的原文）上只改自己认识的键。 */
     fun encode(previous: String? = null): String = buildJsonObject {
-        // 认识的键下面都会重写；danmakuFont 为 null 时要真的拿掉（不能留着旧值）
-        parseObject(previous)?.forEach { (k, v) -> if (k != "danmakuFont") put(k, v) }
+        // 认识的键下面都会重写；nullable / 空映射拿掉，不能留着旧值
+        parseObject(previous)?.forEach { (k, v) -> if (k != "danmakuFont" && k != "itemShaders" && k != "idleHome") put(k, v) }
         put("spotColorFollowsCover", spotColorFollowsCover)
-        put("paperTexture", paperTexture)
         put("mascot", mascot.id)
         put("editorNotes", editorNotes)
         put("subtitleDefault", subtitleDefault.id)
-        put("shader", shader.id)
-        put("idleHome", idleHome)
+        put("defaultShader", defaultShader.id)
+        if (itemShaders.isNotEmpty()) put("itemShaders", buildJsonObject { itemShaders.forEach { (k, v) -> put(k, v.id) } })
+        idleHome?.let { put("idleHome", it) }
         put("coverAutoFlip", coverAutoFlip)
         put("danmakuSeeded", danmakuSeeded)
+        put("subLangsSeeded", subLangsSeeded)
         put("tocHintSeen", tocHintSeen)
         put("wall", buildJsonObject { wall.forEach { (k, v) -> put(k, v.encode()) } })
         put("subtitleOnline", subtitleOnline)
         put("subtitleAutoBest", subtitleAutoBest)
         put("subStyle", subStyle.encode())
+        put("creditsAutoNext", creditsAutoNext)
         danmakuFont?.let { put("danmakuFont", it) }
     }.toString()
 }
 
+
+/** 按「这一部」记住着色器时的键：剧集按整部（seriesId），电影按条目（itemId）。 */
+fun shaderItemKey(seriesId: String?, itemId: String): String =
+    seriesId?.takeIf { it.isNotBlank() } ?: itemId
 /** 期号（报头的 `VOL.`）：本地计数，每天第一次打开 +1（docs/fabricated-content.md；decisions Q4「期号存本地」）。 */
 data class Issue(val volume: Int, val day: String) {
     companion object {

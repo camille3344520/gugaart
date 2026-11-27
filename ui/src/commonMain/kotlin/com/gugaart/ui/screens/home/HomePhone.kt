@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,6 +104,9 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
     val k = coverScale(com.gugugaga.ds.theme.LocalWindowDp.current.height.value - dimens.statusBar.value)
     val covers = data.covers
     val flow = rememberCoverFlowState(covers.size, initialIssue)
+    // 同一份封面不每次重组都造新的列表（新列表 = 海报流的参数变了，跟着重组）
+    val coverPosters = remember(covers) { covers.map { it.art.poster } }
+    val coverNames = remember(covers) { covers.map { it.displayName } }
     // 触感（M4-3）：翻期号 = 选择（翻到新的一期才响，进首页时不响）
     val phoneHost = com.gugaart.ui.theme.LocalPhoneHost.current
     val lastIssue = remember { intArrayOf(flow.settled) }
@@ -119,7 +123,10 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
     // 目录的入口（期号指示右边的「目录 ↓」）和第一次的提示；翻到目录就算看过了
     val tocHint = rememberTocHint(UiMode.Phone, voice)
     val tocScope = rememberCoroutineScope()
-    var tocY by remember { mutableIntStateOf(0) }
+    // 目录区在哪（点「目录 ↓」时才算要滚到多少）。以前每次布局都把位置写进一个状态：滚动 / 惯性的每一帧位置和滚动量差一帧，
+    // 这个数跟着抖，首页整页每帧重组一遍（1.5.1 性能）。现在只记下目录区的布局坐标，点的那一下再算。
+    val tocAt = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+    fun tocY(): Int = tocAt[0]?.takeIf { it.isAttached }?.let { (it.positionInRoot().y + scroll.value).toInt().coerceAtLeast(0) } ?: 0
     LaunchedEffect(tocHint.show) {
         if (tocHint.show) {
             snapshotFlow { scroll.value > 300 }.first { it }
@@ -149,11 +156,15 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                         PhoneMasthead(volume, date)
                         CoverFlow(
                             flow,
-                            covers.map { it.art.poster },
+                            coverPosters,
                             Modifier.padding(top = 18.dp * k),
                             cardWidth = 220.dp * k,
-                            names = covers.map { it.displayName },
+                            names = coverNames,
                             onClick = { i -> covers.getOrNull(i)?.let { graph.open(it.seriesId ?: it.id) } },
+                            // 报头下那一行「服务器名 ⌄」落在报头下线往下 0–22 dp，海报流从 18 dp（矮屏 ×k）开始：叠着的那一截让给那一行
+                            // （1.5.0 验收：点那一行的下半截，纸片不出来、封面反而往回翻了一期）
+                            // P1-5：那一行的热区又往下透明扩了 [SERVER_LINE_TOUCH_EXTRA]，这一截也让给它
+                            touchInsetTop = (SERVER_LINE_DROP + com.gugaart.ui.servers.SERVER_LINE_TOUCH_EXTRA - 18.dp * k).coerceAtLeast(0.dp),
                         )
                         // 片名搭在海报下沿十几 dp；手指在海报上时 logo 反向走（视差）
                         val shift = with(LocalDensity.current) { CoverFlowSpec.PARALLAX_LOGO_DP.dp.toPx() }
@@ -176,7 +187,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                                     tocHint.show,
                                     {
                                         tocHint.seen()
-                                        tocScope.launch { scroll.animateScrollTo(tocY) }
+                                        tocScope.launch { scroll.animateScrollTo(tocY()) }
                                     },
                                     Modifier.align(Alignment.CenterEnd).wrapContentHeight(unbounded = true).padding(end = dimens.margin - 10.dp),
                                 )
@@ -185,7 +196,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                         Column(Modifier.padding(horizontal = dimens.margin)) {
                             Rule(Modifier.padding(top = 4.dp))
                             Row(Modifier.padding(top = 14.dp * k).height(118.dp), verticalAlignment = Alignment.Top) {
-                                IssueOdometer(flow.position, covers.size, Modifier.width(118.dp))
+                                IssueOdometer({ flow.position }, covers.size, Modifier.width(118.dp))
                                 Box(Modifier.padding(top = 6.dp).width(1.dp).height(100.dp).background(colors.line))
                                 Column(Modifier.weight(1f).padding(start = 16.dp)) {
                                     Kicker(coverKicker(issue))
@@ -220,7 +231,7 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
             }
 
             // ---- 目录区 ----
-            Column(Modifier.padding(horizontal = dimens.margin).onGloballyPositioned { tocY = (it.positionInRoot().y + scroll.value).toInt().coerceAtLeast(0) }) {
+            Column(Modifier.padding(horizontal = dimens.margin).onGloballyPositioned { tocAt[0] = it }) {
                 if (data.resume.isNotEmpty()) {
                     SectionHeader("片单", "LINEUP", Modifier.padding(top = 26.dp), trailing = "继续观看 · ${data.resumeTotal}")
                     for ((i, t) in data.resume.take(TOC_ROWS).withIndex()) {
@@ -254,8 +265,11 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
             // 底部安全区：末尾内容能滚到标签栏上方
             Spacer(Modifier.height(150.dp + dimens.tabLift))
         }
-        // 状态栏：滚动 2 dp 就变实心，内容从它下面硬切
-        StatusBand(solid = scroll.value > with(LocalDensity.current) { 2.dp.toPx() })
+        // 状态栏：滚动 2 dp 就变实心，内容从它下面硬切。派生状态（1.5.1 性能）：只在「实心 / 透明」翻转时重组，
+        // 以前直接读滚动位置 = 手指滚首页的每一帧整页重组一遍
+        val solidAt = with(LocalDensity.current) { 2.dp.toPx() }
+        val solid by remember(scroll, solidAt) { derivedStateOf { scroll.value > solidAt } }
+        StatusBand(solid = solid)
     }
 }
 
@@ -269,9 +283,12 @@ private fun PhoneMasthead(volume: Int, date: String) {
     Box(Modifier.padding(horizontal = dimens.margin)) {
         Masthead(volume = "VOL. $volume", date = date, issue = volume, dateSlot = { com.gugaart.ui.screens.me.RankChip(date, it) })
         // 报头高 44，下线之下 0–22 dp：海报流离报头 18 dp（矮屏 ×0.86），这一行的字落在这一截里
-        MastheadServerLine(Modifier.align(Alignment.BottomStart).offset(y = 22.dp))
+        MastheadServerLine(Modifier.align(Alignment.BottomStart).offset(y = SERVER_LINE_DROP))
     }
 }
+
+/** 报头下那一行「服务器名 ⌄」往下伸出报头多少（它自己至少这么高，下沿 = 报头下线 + 这么多）。 */
+private val SERVER_LINE_DROP = com.gugaart.ui.servers.SERVER_LINE_TEXT
 
 /** 电脑 / 电视的首页版式在下一阶段；现在只立报头和一行媒体库（共用同一份 [HomeData]，证明状态三端可复用）。 */
 @Composable

@@ -97,10 +97,10 @@ fun parseTraktTokens(o: JsonObject, user: String?, nowMs: Long): TraktTokens? {
 fun traktPollOf(status: Int): TraktPoll? = when (status) {
     400 -> TraktPoll.Pending
     429 -> TraktPoll.SlowDown
-    404 -> TraktPoll.Failed("这个码不对，重新开始")
-    409 -> TraktPoll.Failed("这个码已经用过了")
-    410 -> TraktPoll.Failed("码过期了，重新开始")
-    418 -> TraktPoll.Failed("在 Trakt 上点了拒绝")
+    404 -> TraktPoll.Failed("码无效")
+    409 -> TraktPoll.Failed("码已使用")
+    410 -> TraktPoll.Failed("码已过期")
+    418 -> TraktPoll.Failed("已在 Trakt 拒绝")
     else -> null
 }
 
@@ -156,10 +156,10 @@ class TraktClient(private val transport: Transport, private val app: TraktApp) {
             putSecret(app)
         })
         if (r.status in 200..299) {
-            val t = obj(r)?.let { parseTraktTokens(it, null, nowMs) } ?: return TraktPoll.Failed("Trakt 回的东西读不懂")
+            val t = obj(r)?.let { parseTraktTokens(it, null, nowMs) } ?: return TraktPoll.Failed("无法解析 Trakt 的响应")
             return TraktPoll.Done(t.copy(user = username(t.access)))
         }
-        return traktPollOf(r.status) ?: TraktPoll.Failed("Trakt 回了 HTTP ${r.status}")
+        return traktPollOf(r.status) ?: TraktPoll.Failed("Trakt 返回 HTTP ${r.status}")
     }
 
     /** 续令牌。失败 = null（要重新连接）。 */

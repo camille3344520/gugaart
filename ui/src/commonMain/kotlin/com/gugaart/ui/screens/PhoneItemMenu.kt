@@ -97,7 +97,7 @@ object PhoneItemMenu {
             } else {
                 Column(Modifier.testTag("phone-menu-del-confirm")) {
                     BasicText("确定删除？", Modifier.padding(top = 8.dp), style = Guga.song(Guga.type.row, FontWeight.Black, colors.seal), maxLines = 1)
-                    BasicText("会从服务器删除媒体文件，不能撤销。", Modifier.padding(top = 6.dp, bottom = 8.dp), style = Guga.song(Guga.type.lead * 0.94f, color = colors.dim), maxLines = 2)
+                    BasicText("会从服务器删除媒体文件，无法撤销。", Modifier.padding(top = 6.dp, bottom = 8.dp), style = Guga.song(Guga.type.lead * 0.94f, color = colors.dim), maxLines = 2)
                     MenuRow("取消", { if (!busy) stage = "menu" }, Modifier.testTag("phone-menu-del-cancel"), icon = GuguIcon.X)
                     MenuRow(if (busy) "正在删除…" else "删除文件", {
                         if (!busy) {

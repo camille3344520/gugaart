@@ -56,7 +56,7 @@ fun TitleLogo(
 ) {
     val colors = Guga.colors
     val logo = if (textOnly) null else rememberImage(logoUrl, keepPrevious = false)
-    val dark = remember(logo) { logo?.isDarkLogo() == true }
+    val dark = rememberDarkLogo(logo)
     val logoAlpha by animateFloatAsState(if (logo != null) 1f else 0f, tween(260), label = "logo")
     Box(
         modifier.width(width).height(height).semantics { heading(); contentDescription = name }.testTag(if (logo == null) "title-text" else if (dark) "title-logo-backed" else "title-logo"),

@@ -144,7 +144,7 @@ object DesktopAccountMenu {
                 }
                 // 1.5.0：原来弹「换一个片库」对话框；现在打开顶栏服务器胶囊的下拉（同一份列表，账号各占一行）
                 // 键位提示只在 Mac 上印（「⌘⇧S」短；Windows 的「Ctrl Shift S」在 28 rem 宽的菜单里会把字挤掉，写在下拉底下）
-                AccountRow(GuguIcon.UserRound, "切换账号 / 服务器", if (LocalDesktopHost.current.modifier == ModifierGlyph.Cmd) DesktopCommand.Servers.cmdHint else null, tag = "account-switch") {
+                AccountRow(GuguIcon.UserRound, "切换服务器", if (LocalDesktopHost.current.modifier == ModifierGlyph.Cmd) DesktopCommand.Servers.cmdHint else null, tag = "account-switch") {
                     open = false
                     DesktopServerMenu.open = true
                 }
@@ -167,14 +167,9 @@ object DesktopAccountMenu {
         }
         if (leaving) {
             PaperDialog("desktop-leave", onDismiss = { leaving = false }, width = 44f) {
-                BasicText("退出「${s.userName}」", style = Guga.song(rsp(2.6f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText(
-                    "这个账号会从这台设备上移除，下次要重新输入密码。服务器上的记录和收藏都留着。",
-                    Modifier.padding(top = Guga.rem(1.4f)),
-                    style = Guga.song(rsp(1.5f), color = Guga.colors.dim, lineHeight = rsp(2.6f)),
-                )
+                BasicText("退出登录？", style = Guga.song(rsp(2.6f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.fillMaxWidth().padding(top = Guga.rem(2.8f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.2f), Alignment.End)) {
-                    DeskButton("算了", { leaving = false }, icon = null, small = true, outline = true)
+                    DeskButton("取消", { leaving = false }, icon = null, small = true, outline = true)
                     DeskButton(
                         "退出登录",
                         {

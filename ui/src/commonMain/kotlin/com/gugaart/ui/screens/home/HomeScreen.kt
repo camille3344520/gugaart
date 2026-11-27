@@ -14,6 +14,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.async
 import com.gugaart.ui.components.ErrorView
 import com.gugaart.ui.components.LoadingView
 import com.gugaart.ui.data.Kind
@@ -24,6 +27,7 @@ import com.gugaart.ui.data.Title
 import com.gugaart.ui.data.rememberLoad
 import com.gugaart.ui.data.titleOf
 import com.gugaart.ui.data.loadLibraries
+import com.gugaart.ui.data.BootPerf
 import com.gugaart.ui.mascot.LineFacts
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.mascot.MascotLines
@@ -60,24 +64,31 @@ data class HomeData(
 private val HOME_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Overview", "Genres", "Taglines", "CommunityRating"))
 
 /** 真实的代码路径：上游 :core 的 `getResume` / `getViewList` / `getLatest`（全部只读）。 */
-suspend fun loadHome(client: EmbyClient): HomeData {
-    val resume = client.getResume(limit = 12, o = HOME_FIELDS)
-    val libraries = loadLibraries(client)
-    val arrivals = libraries.filter { it.kind == "movies" || it.kind == "tvshows" || it.kind == null }.map { lib ->
-        NewArrivals(lib, client.getLatest(parentId = lib.id, limit = 16, o = HOME_FIELDS).map { client.titleOf(it) })
-    }.filter { it.titles.isNotEmpty() }
-    val watching = resume.items.map { client.titleOf(it) }
+suspend fun loadHome(client: EmbyClient): HomeData = kotlinx.coroutines.coroutineScope {
+    // 三路独立的取数并发（继续观看 / 媒体库 / 随机抽片），不再串行等（1.5.1 perf-win）
+    val resumeD = async { client.getResume(limit = 12, o = HOME_FIELDS) }
+    val librariesD = async { loadLibraries(client) }
     // 封面换一波时多抽一把：整个片库里随机的 24 部（只读；失败了就只用最近添加的）。离屏测试里牌堆不随机，也不发这一条
-    val drawn = if (!CoverDeck.live) emptyList() else try {
-        client.getItems(com.gugugaga.core.LibraryQuery(includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("Random"), limit = 24), HOME_FIELDS)
-            .items.map { client.titleOf(it) }.filter { it.art.poster != null }
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        throw e
-    } catch (_: Exception) {
-        emptyList()
+    val drawnD = async {
+        if (!CoverDeck.live) emptyList() else try {
+            client.getItems(com.gugugaga.core.LibraryQuery(includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("Random"), limit = 24), HOME_FIELDS)
+                .items.map { client.titleOf(it) }.filter { it.art.poster != null }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
+    val resume = resumeD.await()
+    val libraries = librariesD.await()
+    // 每个库的「最近添加」也并发取（以前一个一个串行等）
+    val arrivals = libraries.filter { it.kind == "movies" || it.kind == "tvshows" || it.kind == null }.map { lib ->
+        async { NewArrivals(lib, client.getLatest(parentId = lib.id, limit = 16, o = HOME_FIELDS).map { client.titleOf(it) }) }
+    }.awaitAll().filter { it.titles.isNotEmpty() }
+    val watching = resume.items.map { client.titleOf(it) }
+    val drawn = drawnD.await()
     val dealt = CoverDeck.next(watching, arrivals.flatMap { it.titles } + drawn, from = client)
-    return HomeData(
+    HomeData(
         // 每期的剧照：从这部作品的剧照里随机挑最高清的一档（离屏测试里不随机）
         covers = if (CoverDeck.live) CoverBackdrops.apply(client, dealt, fresh = CoverDeck.lastWasNew) else dealt,
         resume = watching,
@@ -106,14 +117,14 @@ fun coverAction(t: Title): String {
     return if (t.kind == Kind.Episode && t.episodeNo != null) "$verb 第 ${t.episodeNo} 集" else verb
 }
 
-/** 目录行的副行：「第 5 集 · 余 19 分」「第 11 集 · 还没开始」「电影 · 余 78 分」。 */
+/** 目录行的副行：「第 5 集 · 余 19 分」「第 11 集 · 未看」「电影 · 余 78 分」。 */
 fun tocSubtitle(t: Title, phone: Boolean): String {
     val head = when {
         t.kind == Kind.Episode && t.episodeNo != null -> "第 ${t.episodeNo} 集"
         t.kind == Kind.Movie -> "电影"
         else -> "剧集"
     }
-    val tail = if (t.progress <= 0f) (if (phone) "还没开始" else "未开始") else Rules.remaining(t.progress, t.runtimeSec) ?: "${t.pct}%"
+    val tail = if (t.progress <= 0f) "未看" else Rules.remaining(t.progress, t.runtimeSec) ?: "${t.pct}%"
     return "$head · $tail"
 }
 
@@ -151,10 +162,14 @@ fun coverNote(t: Title, hour: Int, day: Int): String? {
 fun HomeScreen(volume: Int, date: String, day: Int) {
     val load: Load<HomeData> = rememberLoad("home") { loadHome(it) }
     remember { HomeProbe.entered++ }
+    // 冷启动测量（perf-win）：第一帧画出首页内容时记一条；壳没设起点就什么都不记
+    com.gugaart.ui.data.BootContentMark(load.value != null)
     // 手机首页离开时不拆（KeptPage）：回来时版面原样立刻在，数据在后台静默刷新（看完一集回来，继续观看的进度要是新的）。
     // 旧内容一直留着，新数据到了再换（不闪）；封面还是这一期（CoverDeck 不发新的一波）。
     RefreshOnReturn(load)
     val data = load.value
+    // 冷启动「首页出内容」（不是骨架）的那一刻：壳接 Android 的 reportFullyDrawn（1.5.1 性能批次的口径）
+    if (data != null) LaunchedEffect(Unit) { HomeFirstContent.reached() }
     when {
         data != null -> when (Guga.uiMode) {
             UiMode.Phone -> HomePhone(data, volume, date, day, offline = load.error != null, onRefresh = { CoverDeck.requestNew(); load.retry() }, initialIssue = LocalPreset.current.homeIssue, initialScroll = LocalPreset.current.scroll)
@@ -193,6 +208,7 @@ fun RefreshOnReturn(load: Load<*>) {
             wasHidden = true
         } else if (wasHidden) {
             wasHidden = false
+            kotlinx.coroutines.delay(350L)
             load.retry()
             kotlinx.coroutines.delay(RETURN_RECHECK_MS)
             load.retry()
@@ -202,4 +218,23 @@ fun RefreshOnReturn(load: Load<*>) {
 
 object HomeProbe {
     var entered = 0
+}
+
+/**
+ * 首页第一次有了内容（数据到了、不是骨架）：每个进程只报一次。Android 壳在 [sink] 里调 `reportFullyDrawn()`——系统日志
+ * 「Fully drawn … +N ms」就是「打开到首页出内容」的时间（Android 的 TTFD 口径），冷启动量这个，不只量第一帧。
+ */
+object HomeFirstContent {
+    var sink: (() -> Unit)? = null
+    private var reported = false
+
+    fun reached() {
+        if (reported) return
+        reported = true
+        sink?.invoke()
+    }
+
+    internal fun resetForTest() {
+        reported = false
+    }
 }

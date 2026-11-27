@@ -541,7 +541,7 @@ fun DHero(
             drawRect(Brush.horizontalGradient(0f to p.copy(alpha = 0.5f), 0.55f to Color.Transparent, 1f to Color.Transparent))
         }
         if (caption != null) {
-            val text = if (source == BleedSource.PosterBlur) "没有剧照 · 用海报虚化代替" else caption
+            val text = if (source == BleedSource.PosterBlur) "海报" else caption
             if (over.captionDown > 0f) VerticalCaption(text, Modifier.align(Alignment.BottomEnd).padding(end = m - Guga.rem(2.6f).coerceAtMost(m), bottom = height * 0.22f))
             else VerticalCaption(text, Modifier.align(Alignment.TopEnd).padding(end = m - Guga.rem(2.6f).coerceAtMost(m), top = Guga.rem(13.2f)))
         }

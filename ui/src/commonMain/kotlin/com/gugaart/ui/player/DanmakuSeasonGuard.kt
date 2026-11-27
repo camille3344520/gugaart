@@ -4,6 +4,7 @@ import com.gugugaga.app.player.PlayerDanmaku
 import com.gugugaga.core.DanmakuMatchInput
 import com.gugugaga.danmaku.match.DanmakuAnime
 import com.gugugaga.danmaku.match.DanmakuPhase
+import com.gugugaga.danmaku.match.MatchCandidate
 import kotlin.math.abs
 
 /*
@@ -58,6 +59,21 @@ object DanmakuSeasonGuard {
     /** 这一集被拦下时，面板里那一行（null = 没拦）。 */
     fun status(itemId: String?): String? = itemId?.let { blocked[it] }
 
+    /**
+     * 多季的剧的这一集是哪一季（剧名、季号、这一季在 Emby 的事实）：弹幕来源里手动搜索默认填什么、候选和结果怎么排。
+     * 单季的剧、电影、特别篇、还没匹配过 = null（照旧）。
+     */
+    fun seasonKey(itemId: String?): SeasonKey? {
+        val input = itemId?.let { inputs[it] } ?: return null
+        val season = targetSeason(itemId) ?: return null
+        val f = facts[itemId]
+        if (season < 1 || (season < 2 && (f?.lastSeason ?: 1) < 2)) return null
+        return SeasonKey(input.title, season, f)
+    }
+
+    /** 手动搜索框默认填的词（[danmakuSeasonQuery]）；null = 不填。 */
+    fun manualQuery(itemId: String?): String? = seasonKey(itemId)?.let { danmakuSeasonQuery(it.series, it.season, it.facts?.name) }
+
     /** 匹配好以后看一眼；换了 / 拦了返回 true。 */
     suspend fun check(d: PlayerDanmaku, itemId: String?): Boolean {
         val st = d.state
@@ -70,8 +86,10 @@ object DanmakuSeasonGuard {
         val matched = st.title ?: return false
         if (!checked.add("$itemId|$matched")) return false
         if (!wrongSeason(matched, input.title, season, f?.year, f?.lastSeason)) return false
-        // 搜「剧名 第N季」之外也搜剧名本身 / 原名：季不写成「第N季」的剧（头文字D）只有搜剧名才搜得到那一季的条目
-        val queries = (seasonQueries(input.title, season) + listOfNotNull(input.title, input.originalTitle)).distinct()
+        // 搜「剧名 第N季」之外也搜剧名本身 / 原名：季不写成「第N季」的剧（头文字D）只有搜剧名才搜得到那一季的条目；
+        // Emby 的季名有内容（「Final Stage」「锻刀村篇」）时先搜「剧名 季名」
+        val named = danmakuSeasonQuery(input.title, season, f?.name).takeIf { !genericSeasonName(f?.name, input.title) }
+        val queries = (listOfNotNull(named) + seasonQueries(input.title, season) + listOfNotNull(input.title, input.originalTitle)).distinct()
         val hits = queries
             .flatMap { q -> runCatching { d.search(q) }.getOrDefault(emptyList()) }
             .distinctBy { it.animeId }
@@ -82,7 +100,7 @@ object DanmakuSeasonGuard {
             return true
         }
         // 没有专门的第 N 季：不拿别的季顶替
-        blocked[itemId] = "没有第 ${season} 季的弹幕（没用别的季顶替）"
+        blocked[itemId] = "没有第 ${season} 季的弹幕"
         d.loadItems(emptyList())
         return true
     }
@@ -311,4 +329,74 @@ fun pickSeasonEntry(
     val sameWork = normTitle(danmakuCore(top.title)) == normTitle(danmakuCore(second.title)) && danmakuYearOf(top) == danmakuYearOf(second)
     if (!sameWork && abs(top.episodeCount - second.episodeCount) <= 3) return null
     return top
+}
+
+/* ------------------------------------------------------------------ 多季剧集的手动搜索（2026-11-26，1.5.1） */
+
+/*
+ * 主理人：「头文字D播放第六季第三集的时候点搜索弹幕、字幕还是默认搜头文字D，这样还得手动再搜一次。」
+ * 弹幕来源那张纸（三端）：多季的剧的一集，手动搜索框默认填这一季的词（[danmakuSeasonQuery]），候选和搜索结果里这一季的排前面
+ * （[candidatesSeasonFirst] / [hitsSeasonFirst]），已经拿到的候选里有这一季自己的名字（「头文字D Final Stage」）就多给一两个快捷词
+ * （[seasonAltQueries]）。单季的剧、电影照旧：框是空的、顺序是上游的分数。
+ */
+
+/** 多季的剧的这一集：剧名、季号、这一季在 Emby 的事实（[DanmakuSeasonGuard.seasonKey]）。 */
+data class SeasonKey(val series: String, val season: Int, val facts: SeasonFacts? = null)
+
+private val GENERIC_SEASON_NAME = Regex("""(?i)^(?:第\s*[0-9一二两三四五六七八九十]+\s*[季部期]|season\s*[0-9]+|s\s*[0-9]+|series\s*[0-9]+)$""")
+
+/** Emby 的季名有没有内容：空的、「第 N 季」「Season N」「S2」这种（前面带剧名也一样）= 没有。纯函数，有单测。 */
+fun genericSeasonName(name: String?, series: String = ""): Boolean {
+    var n = name?.trim().orEmpty()
+    val s = series.trim()
+    if (s.isNotEmpty() && n.startsWith(s, ignoreCase = true)) n = n.substring(s.length).trim()
+    return n.isEmpty() || GENERIC_SEASON_NAME.matches(n)
+}
+
+/**
+ * 手动搜索的默认词：季名有内容 =「剧名 季名」（季名里已经带剧名就只用季名），只是「第 N 季」=「剧名 第N季」（中文数字，和平台上的写法一样）。
+ * 纯函数，有单测。
+ */
+fun danmakuSeasonQuery(series: String, season: Int, seasonName: String?): String {
+    val name = seasonName?.trim().orEmpty()
+    if (!genericSeasonName(name, series)) return if (normTitle(name).startsWith(normTitle(series))) name else "$series $name"
+    return "$series 第${cnNumeral(season)}季"
+}
+
+/** 一条条目算不算这一季、证据多强（[seasonTier] 的档；类型不对的 = null）。 */
+private fun seasonRankOf(title: String, year: Int?, type: String, typeDescription: String, k: SeasonKey): Int? {
+    if (seasonExcluded(title, type, typeDescription, k.season)) return null
+    return seasonTier(title, year, k.series, k.season, k.facts?.year, k.facts?.lastSeason)
+}
+
+/** 这一季的排前面（证据强的在前），别的照原来的顺序；[k] = null 原样返回。 */
+private fun <T> seasonFirst(list: List<T>, k: SeasonKey?, rank: (T, SeasonKey) -> Int?): List<T> {
+    if (k == null || list.size < 2) return list
+    return list.mapIndexed { i, t -> Triple(t, rank(t, k), i) }
+        .sortedWith(compareBy<Triple<T, Int?, Int>> { if (it.second == null) 1 else 0 }.thenByDescending { it.second ?: 0 }.thenBy { it.third })
+        .map { it.first }
+}
+
+/** 候选：这一季的排前面（被淘汰的不往前挪）。纯函数，有单测。 */
+fun candidatesSeasonFirst(cands: List<MatchCandidate>, k: SeasonKey?): List<MatchCandidate> =
+    seasonFirst(cands, k) { c, key -> if (c.eliminated) null else seasonRankOf(c.title, c.year, c.kind, c.typeLabel, key) }
+
+/** 手动搜索的结果：这一季的排前面。纯函数，有单测。 */
+fun hitsSeasonFirst(hits: List<DanmakuAnime>, k: SeasonKey?): List<DanmakuAnime> =
+    seasonFirst(hits, k) { a, key -> seasonRankOf(a.title, danmakuYearOf(a), a.type, a.typeDescription, key) }
+
+/**
+ * 快捷词：已经拿到的候选里，季序词或首播年对得上这一季的，用它自己的名字（「头文字D Final Stage」「头文字D 第六部」）。
+ * 不重复、不等于剧名本身和 [main]，最多 [max] 个。纯函数，有单测。
+ */
+fun seasonAltQueries(cands: List<MatchCandidate>, k: SeasonKey?, main: String?, max: Int = 2): List<String> {
+    if (k == null) return emptyList()
+    val seen = hashSetOf(normTitle(k.series))
+    main?.let { seen += normTitle(it) }
+    return candidatesSeasonFirst(cands, k).asSequence()
+        .filter { !it.eliminated && (seasonRankOf(it.title, it.year, it.kind, it.typeLabel, k) ?: -1) >= 1 }
+        .map { c -> c.base.trim().ifEmpty { danmakuCore(c.title, dropSeason = false) } }
+        .filter { it.isNotEmpty() && seen.add(normTitle(it)) }
+        .take(max)
+        .toList()
 }

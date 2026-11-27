@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -84,7 +85,7 @@ object TvServerSpec {
 
 /**
  * 电视的换服务器（1.5.0 A2-UI）：右边页边出来一列（详情页「版本」页边那一种纸面，不是玻璃），三端共用的列表状态 [ServerListState]。
- * 入口：角落导航的「服务器」一项、首页按遥控器的菜单键。打开时焦点落在**正在用的那一台**；上下换行，确定 = 换过去；
+ * 入口：角落导航的「服务器」一项、首页焦点不在封面 / 卡片上时按遥控器的菜单键。打开时焦点落在**正在用的那一台**；上下换行，确定 = 换过去；
  * 菜单键 / 长按确定 = 在那一行下面推开「改备注 / 用别的账号登录 / 删除这台服务器」；返回 / 左 = 收起（推开着管理时先收管理），焦点还给打开前的那一项。
  * 改备注、搜索（超过 [SEARCH_FROM] 台）按确定弹系统输入法（和登录页一屏表单的输入框同一个 [TvEditText]）。
  */
@@ -207,7 +208,7 @@ object TvServerPanel {
                         .testTag("tv-server-panel"),
                 ) {
                     TvSecHead("服务器", "SERVERS", trailing = "${entries.size} 台")
-                    BasicText("确定 = 换过去；菜单键 = 改备注、删除", Modifier.padding(top = 6.dp, bottom = 18.dp), style = Guga.song(21.sp, color = colors.faint), maxLines = 1)
+                    Spacer(Modifier.height(18.dp))
                     if (entries.size > SEARCH_FROM) {
                         TvLineField("search", "搜索", state.query, ServerSwitchCopy.SEARCH_HINT, editing == "search", { editing = if (editing == "search") null else "search" }, { state.query = it }) { editing = null }
                     }
@@ -220,7 +221,6 @@ object TvServerPanel {
                         }
                         TvAddRow { state.add() }
                     }
-                    BasicText("返回 / 左 = 收起", Modifier.padding(top = 20.dp), style = Guga.song(20.sp, color = colors.faint), maxLines = 1)
                 }
             }
         }
@@ -253,7 +253,7 @@ private fun TvServerRow(key: String, e: ServerEntry, state: ServerListState, spe
                 ServerRowText(e, spec, Modifier.padding(start = spec.markGap).weight(1f), onInk = focused, dim = busy, withPort = withPort)
             }
         }
-        val note = if (busy) "正在切换……" else state.noteOf(e)
+        val note = if (busy) "切换中…" else state.noteOf(e)
         if (note != null) {
             BasicText(note, Modifier.padding(start = 60.dp, top = 8.dp, bottom = 6.dp).testTag(if (busy) "tv-server-busy" else "tv-server-note"), style = Guga.song(22.sp, color = if (busy) colors.dim else colors.seal), maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
@@ -289,13 +289,12 @@ private fun TvManage(e: ServerEntry, state: ServerListState, editing: Boolean, o
                     state.saveNote(e)
                 }
                 TvManageRow("mng-save", GuguIcon.Check, "保存") { state.saveNote(e) }
-                TvManageRow("mng-cancel", GuguIcon.X, "算了") { state.closeManage() }
+                TvManageRow("mng-cancel", GuguIcon.X, "取消") { state.closeManage() }
             }
             ManageStage.Delete -> {
-                BasicText(ServerSwitchCopy.deleteTitle(serverTitle(e)), Modifier.padding(top = 4.dp), style = Guga.song(26.sp, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText(ServerSwitchCopy.DELETE_TEXT, Modifier.padding(top = 6.dp, bottom = 8.dp), style = Guga.song(21.sp, color = colors.dim, lineHeight = 32.sp), maxLines = 3)
-                TvManageRow("mng-cancel", GuguIcon.X, "算了") { state.closeManage() }
-                TvManageRow("mng-del-ok", GuguIcon.Trash, "删除", danger = true) { state.delete(e) }
+                BasicText(ServerSwitchCopy.deleteTitle(), Modifier.padding(top = 4.dp), style = Guga.song(26.sp, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TvManageRow("mng-cancel", GuguIcon.X, "取消") { state.closeManage() }
+                TvManageRow("mng-del-ok", GuguIcon.Trash, "移除", danger = true) { state.delete(e) }
             }
         }
     }

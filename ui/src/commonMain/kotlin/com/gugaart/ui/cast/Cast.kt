@@ -54,7 +54,7 @@ object Cast {
         } finally {
             searching = false
         }
-        if (devices.isEmpty()) message = "没找到能投的电视：电视和这台设备要连同一个网络，电视上要打开「投屏 / DLNA」" + (runCatching { h.emptyHint() }.getOrNull() ?: "")
+        if (devices.isEmpty()) message = "没找到电视" + (runCatching { h.emptyHint() }.getOrNull() ?: "")
     }
 
     /** 投到 [device]：本机暂停，电视从本机现在的位置接着放。 */
@@ -63,7 +63,7 @@ object Cast {
         val c = play.controller
         val snap = c.value
         val source = snap.resolved?.mediaSource ?: run {
-            message = "片源还没准备好，稍等一下再投"
+            message = "片源未就绪"
             return
         }
         val url = buildStaticStreamUrl(client.urlContext, c.currentItemId, source, useExtension = true)
@@ -79,7 +79,7 @@ object Cast {
             val loaded = h.action(device, "SetAVTransportURI", inst + listOf("CurrentURI" to url, "CurrentURIMetaData" to didl(title, url, mimeOf(source.container)))) != null
             val playing = loaded && h.action(device, "Play", inst + ("Speed" to "1")) != null
             if (!playing) {
-                message = "「${device.name}」没接受这个片子（可能放不了这种格式）"
+                message = "「${device.name}」拒绝了这个片源"
                 active = null
                 return@launch
             }
@@ -90,7 +90,7 @@ object Cast {
             while (isActive) {
                 polls++
                 // 实测（海信）：第一次投到一台电视，电视上会弹「是否允许投屏」，没人点就一直停着——几秒还没放起来就提醒一句
-                if (!sawPlaying && polls == 5) message = "正在投到「${device.name}」…电视上要是弹出确认，点一下「允许」"
+                if (!sawPlaying && polls == 5) message = "正在投到「${device.name}」… 电视上如有提示，选「允许」"
                 val st = statusOf(h, device)
                 if (st != null) {
                     status = st
@@ -103,7 +103,7 @@ object Cast {
                     if (sawPlaying && message?.startsWith("正在投到") == true) message = null
                     // 电视那边放完了 / 被人停了：投屏结束，本机停在电视放到的位置
                     if (sawPlaying && sought && st.stopped) {
-                        message = "电视那边停了"
+                        message = "电视已停止"
                         active = null
                         status = null
                         c.seekTo(lastPosSec * 1000.0)

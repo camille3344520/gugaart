@@ -16,8 +16,10 @@ import kotlinx.serialization.json.JsonPrimitive
  * 播放器里直接选内核（用户 2026-11-16：「播放器里面最好还可以选下播放器类型 mpv exo这种缩写3个字就行」）。
  *
  * 功能词「内核」下面写正在用的那个（EXO / VLC / MPV），面板里：自动 · EXO · VLC · MPV（只列这台设备上真有的）。
- * 上游的控制器只在开始时读一次「首选引擎」（设置 › 播放 › 首选引擎，键 playback.engine），所以选了一个 = 把它存成首选引擎
- * （下次播放也用它，设置里那一行同步变）+ 在当前位置、同一个版本 / 音轨 / 字幕重开一个控制器（[PlayerRestart]）。
+ * 审计 P1-1（1.5.1）：面板里换内核**只对这一部生效**，按片记住（剧按剧记，像字幕那样，[EngineMemory]）；面板底下一行「设为默认」，
+ * 点了才改全局首选（设置 › 播放 › 播放内核，键 playback.engine）。上游的控制器只在开始时读一次首选，所以这里在交给控制器的
+ * 播放设置里把这一部记住的内核盖上去（[playbackFor]），换了就在当前位置、同一个版本 / 音轨 / 字幕重开一个控制器（[PlayerRestart]）。
+ * 审计 P2-9：真有的内核不到两个（macOS、iOS 只有 MPV）时不显示「内核」（[coreWordVisible]）。
  */
 
 /** 内核的三个字母。 */
@@ -64,10 +66,68 @@ fun coreOptionsFor(play: PlaySession, graph: AppGraph): List<CoreOption> {
     return coreOptions(ctx.native, if (graph.deps.uiMode == com.gugugaga.ds.theme.UiMode.Desktop) DESKTOP_CORE_ORDER else ANDROID_CORE_ORDER)
 }
 
-/** 设置里现在的首选引擎。 */
+/** 设置里现在的首选引擎（全局的「默认」）。 */
 fun currentEnginePref(graph: AppGraph): EnginePref = PlaybackSettings.of(graph.settings.value).engine
 
-/** 在当前位置换内核：存成首选引擎，重开控制器。选的和正在用的一样就只存设置。 */
+/** P2-9：能选的内核（不算「自动」）不到两个时，播放器里不显示「内核」。纯函数，有单测。 */
+fun coreWordVisible(options: List<CoreOption>): Boolean = options.count { it.pref != EnginePref.Auto } >= 2
+
+/**
+ * 每部片记住的内核（键 `gugaart.engines.v1`，画报自己的）：剧按剧记（seriesId），也按集记（条目 id）——开播时只知道路由里的条目，
+ * 剧的编号要从查询缓存里找，找不到时还认得这一集。没记过 = 跟全局首选。最多记 [MAX] 条。
+ */
+class EngineMemory(private val local: com.gugugaga.app.platform.LocalStore) {
+    private val map = LinkedHashMap<String, String>()
+
+    init {
+        com.gugaart.ui.data.GugaPrefs.parseObject(local.get(KEY))?.forEach { (k, v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.let { map[k] = it.content } }
+    }
+
+    /** 这一部记住的内核：先按剧，再按条目；没有 = null。 */
+    fun get(itemId: String, seriesId: String?): EnginePref? = (seriesId?.let { map[it] } ?: map[itemId])?.let(EnginePref::of)
+
+    /** 记下 / 清掉（[pref] = null：这一部跟全局首选）。 */
+    fun put(itemId: String, seriesId: String?, pref: EnginePref?) {
+        for (k in listOfNotNull(seriesId, itemId)) {
+            map.remove(k)
+            if (pref != null) map[k] = pref.id
+        }
+        while (map.size > MAX) map.remove(map.keys.first())
+        local.set(KEY, kotlinx.serialization.json.buildJsonObject { map.forEach { (k, v) -> put(k, JsonPrimitive(v)) } }.toString())
+    }
+
+    companion object {
+        const val KEY = "gugaart.engines.v1"
+        const val MAX = 300
+    }
+}
+
+/** 交给控制器的播放设置：全局的设置，内核换成这一部记住的那个（没记 = 原样）。 */
+fun playbackFor(settings: kotlinx.serialization.json.JsonObject, film: EnginePref?): PlaybackSettings {
+    if (film == null) return PlaybackSettings.of(settings)
+    val p = (settings["playback"] as? kotlinx.serialization.json.JsonObject) ?: kotlinx.serialization.json.JsonObject(emptyMap())
+    return PlaybackSettings(kotlinx.serialization.json.JsonObject(p + ("engine" to JsonPrimitive(film.id))))
+}
+
+/** 这一部的编号：剧 = seriesId（条目没在缓存里 = null，只按条目记）。 */
+private fun seriesOf(graph: AppGraph, play: PlaySession): String? =
+    if (play.remote == null) play.controller.value.item?.seriesId ?: graph.queries.cachedItem(play.homeItemId)?.seriesId
+    else graph.queries.cachedItem(play.homeItemId)?.seriesId
+
+/** 这一部条目的编号（放着别台的源时认本台那一条）。 */
+private fun itemOf(play: PlaySession): String = if (play.remote == null) play.controller.currentItemId else play.homeItemId
+
+/** 这一部现在用的首选：记住的，没有就是全局的。 */
+fun filmEnginePref(play: PlaySession, graph: AppGraph): EnginePref =
+    EngineMemory(graph.deps.local).get(itemOf(play), seriesOf(graph, play)) ?: currentEnginePref(graph)
+
+/** 「设为默认」：把这一部的内核存成全局首选，这一部的记录清掉（以后跟着默认走）。 */
+fun setEngineDefault(play: PlaySession, graph: AppGraph, pref: EnginePref) {
+    graph.settings.patch("playback", "engine" to JsonPrimitive(pref.id))
+    EngineMemory(graph.deps.local).put(itemOf(play), seriesOf(graph, play), null)
+}
+
+/** 在当前位置换内核：只记在这一部上（P1-1），重开控制器。选的和正在用的一样就只记。 */
 object PlayerRestart {
     /** 每重开一次加一（[rememberPlaySession] 看到它变就换一个控制器）。 */
     var tick by mutableIntStateOf(0)
@@ -79,8 +139,9 @@ object PlayerRestart {
     internal fun take(): PlayRequest? = pending.also { pending = null }
 
     fun switchEngine(play: PlaySession, graph: AppGraph, pref: EnginePref) {
-        val before = currentEnginePref(graph)
-        graph.settings.patch("playback", "engine" to JsonPrimitive(pref.id))
+        val before = filmEnginePref(play, graph)
+        // 和全局首选一样 = 这一部不另记（以后跟着默认走）
+        EngineMemory(graph.deps.local).put(itemOf(play), seriesOf(graph, play), pref.takeIf { it != currentEnginePref(graph) })
         val c = play.controller
         val snap = c.value
         val running = snap.engineId

@@ -31,50 +31,61 @@ import com.gugugaga.ds.physics.rememberPressState
  * 点一行 = 选中 + 记住 + 收起；播放 / 续看放的就是它。只有一个源时不出现（和以前一样）。
  */
 
-/** 「版本」那一行：左 = 「版本」+ 选中那个的规格，右 = 选中那个的名字 + ›。 */
+/** 「版本」那一行：左 = 「版本」+ 选中那个的规格，右 = 选中那个的名字 + ›。上面那条线由这一组（[TrackPickerGroup]）画。 */
 @Composable
 fun VersionRow(state: SourcesState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val s = state.selected ?: return
     val r = state.rowText(s)
-    Column(modifier) {
-        Rule()
-        SettingRow(state.sectionTitle, note = r.spec.takeIf { it.isNotEmpty() }, tag = "phone-version-row", onClick = onOpen) { ValueChevron(r.title) }
+    SettingRow(state.sectionTitle, modifier, note = r.spec.takeIf { it.isNotEmpty() }, tag = "phone-version-row", onClick = onOpen) { ValueChevron(r.title) }
+}
+
+/**
+ * 纸片里的一行（版本、音轨、字幕同一种）：选中 = 实心小方块 + 加粗米白；没选的 = 空心 + 次要字；第二行是规格 / 编码。
+ * [lead] / [tags]：名字前后的东西（「源」的服务器小圆点、「推荐」小签）。
+ */
+@Composable
+fun SheetOptionRow(title: String, note: String, on: Boolean, tag: String, onClick: () -> Unit, lead: (@Composable () -> Unit)? = null, tags: (@Composable () -> Unit)? = null) {
+    val colors = Guga.colors
+    val type = Guga.type
+    val press = rememberPressState()
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 62.dp).pressGraphics(press)
+            .pressable(press, label = title, onClick = onClick)
+            .padding(vertical = 10.dp)
+            .testTag(if (on) "$tag-on" else tag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioMark(on)
+        Column(Modifier.weight(1f).padding(start = 18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                lead?.invoke()
+                BasicText(title, Modifier.weight(1f, fill = false), style = Guga.song(type.row, if (on) FontWeight.Bold else FontWeight.Normal, if (on) colors.ink else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                tags?.invoke()
+            }
+            if (note.isNotEmpty()) BasicText(note, Modifier.padding(top = 3.dp), style = Guga.song(type.caption, color = colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
+    Rule()
 }
 
 /** 贴底的纸片：每个源一行（选中 = 实心小方块 + 加粗米白；没选的 = 空心 + 次要字），标题后面是「推荐」「另一份文件」小签，第二行是规格。 */
 @Composable
 fun VersionSheet(state: SourcesState, onDismiss: () -> Unit) {
-    val colors = Guga.colors
     val type = Guga.type
     SheetHost(onDismiss, tag = "version-sheet", bottom = true) {
         SlipHeader(state.sectionTitle, state.sectionEnglish, trailing = "${state.sources.size} 个")
         Column(Modifier.padding(top = 4.dp).heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
             for (s in state.sources) {
                 val r = state.rowText(s)
-                val on = state.isSelected(s)
-                val press = rememberPressState()
-                Row(
-                    Modifier.fillMaxWidth().heightIn(min = 62.dp).pressGraphics(press)
-                        .pressable(press, label = r.title, onClick = {
-                            state.pick(s)
-                            onDismiss()
-                        })
-                        .padding(vertical = 10.dp)
-                        .testTag(if (on) "version-option-on" else "version-option"),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioMark(on)
-                    Column(Modifier.weight(1f).padding(start = 18.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            SourceDot(r, 7.dp, gap = 7.dp)
-                            BasicText(r.title, Modifier.weight(1f, fill = false), style = Guga.song(type.row, if (on) FontWeight.Bold else FontWeight.Normal, if (on) colors.ink else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            SourceTags(r, type.kicker, 1.dp, gap = 8.dp)
-                        }
-                        if (r.spec.isNotEmpty()) BasicText(r.spec, Modifier.padding(top = 3.dp), style = Guga.song(type.caption, color = colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                Rule()
+                SheetOptionRow(
+                    r.title, r.spec, state.isSelected(s), "version-option",
+                    onClick = {
+                        state.pick(s)
+                        onDismiss()
+                    },
+                    lead = { SourceDot(r, 7.dp, gap = 7.dp) },
+                    tags = { SourceTags(r, type.kicker, 1.dp, gap = 8.dp) },
+                )
             }
             // 别的服务器还在找 / 没找到的那几台：排在单子最后，不挤动上面的行
             SourceProgress(state, type.caption, 6.dp, Modifier.padding(top = 12.dp, start = 27.dp))

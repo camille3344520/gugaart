@@ -11,6 +11,7 @@ import com.gugugaga.core.EmbyClient
 import com.gugugaga.core.ItemsRequestOptions
 import com.gugugaga.core.LibraryQuery
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
@@ -106,6 +107,19 @@ fun rankNews(announced: Int?, level: Int): Int? = when {
     else -> null
 }
 
+/** 一次检查之后怎么报：不报 / 只在「我的」上标一个小点 / 出纸片。 */
+enum class RankAnnounce { None, Dot, Slip }
+
+/**
+ * 1.5.1 审计 P2-13：第一次检查（这个账号还没报过：刚登录、刚装上）不弹纸片——新用户还没播一部片，先被一张纸挡住；
+ * 只在「我的」上标一个小点（[RankBoard.unseen]）。以后升级 / 新拿到特别称号再弹。纯函数，有单测。
+ */
+fun rankAnnounce(firstCheck: Boolean, hasNews: Boolean): RankAnnounce = when {
+    !hasNews -> RankAnnounce.None
+    firstCheck -> RankAnnounce.Dot
+    else -> RankAnnounce.Slip
+}
+
 /** 要出的那张纸片：第几级、看过几部、[first] = 第一次报（不是升级）、[browse] = 用户自己点开看的（读者证上那一行）。 */
 @Immutable
 data class RankNews(val level: Int, val count: Int, val first: Boolean = false, val browse: Boolean = false)
@@ -139,9 +153,22 @@ class RankStore(private val local: LocalStore) {
         }.toString())
     }
 
+    /** P2-13 的小点还在不在（第一次检查拿到的称号还没在「我的」里看过）。存在 `gugaart.rankdot.v1`（`{"<账号>": true}`），重启以后还在。 */
+    fun dot(account: String): Boolean = (GugaPrefs.parseObject(local.get(DOT_KEY))?.get(account) as? JsonPrimitive)?.booleanOrNull == true
+
+    fun setDot(account: String, on: Boolean) {
+        val old = GugaPrefs.parseObject(local.get(DOT_KEY))
+        local.set(DOT_KEY, buildJsonObject {
+            old?.forEach { (k, v) -> if (k != account) put(k, v) }
+            if (on) put(account, true)
+        }.toString())
+    }
+
     companion object {
         const val KEY = "gugaart.ranks.v1"
         const val COUNT_KEY = "gugaart.rankcount.v1"
+        /** P2-13 的小点（协调人 1.5.1 批准新加的本机键）。 */
+        const val DOT_KEY = "gugaart.rankdot.v1"
 
         fun accountOf(serverId: String, userId: String): String = "$serverId/$userId"
     }
@@ -158,6 +185,37 @@ object RankBoard {
 
     /** 当前账号拿到了哪些特别称号（「我的」里的盾亮哪几枚）。 */
     var owned: Set<String> by mutableStateOf(emptySet())
+
+    /**
+     * 第一次检查拿到的称号还没看（P2-13）：导航上「我的」标一个朱红小点；进了「我的」就清掉（[seen]）。
+     * 存在本机（[RankStore.dot]），重启以后还在：[restoreDot] 在登录 / 开应用时读回来。
+     */
+    var unseen: Boolean by mutableStateOf(false)
+
+    /** 小点记在哪个账号、哪份本机存储上（[seen] 清的时候连存着的一起清）。 */
+    private var dotStore: RankStore? = null
+    private var dotAccount: String? = null
+
+    /** 开应用 / 换账号：把存着的小点读回来。 */
+    fun restoreDot(store: RankStore, account: String) {
+        dotStore = store
+        dotAccount = account
+        unseen = store.dot(account)
+    }
+
+    /** 第一次检查拿到了称号：标小点，并存下来。 */
+    fun showDot(store: RankStore, account: String) {
+        dotStore = store
+        dotAccount = account
+        unseen = true
+        store.setDot(account, true)
+    }
+
+    /** 进了「我的」= 看到了：小点清掉，存着的也清掉。 */
+    fun seen() {
+        unseen = false
+        dotAccount?.let { dotStore?.setDot(it, false) }
+    }
 
     /** 当前账号看过几部（null = 还没数出来；报头那一格这时画日期）。 */
     var count: Int? by mutableStateOf(null)

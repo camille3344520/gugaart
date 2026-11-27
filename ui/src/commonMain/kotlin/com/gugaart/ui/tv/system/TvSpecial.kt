@@ -127,7 +127,7 @@ fun TvSpecialSlip(news: SpecialNews) {
                     // 最后一页补空排，翻页时纸片不变高矮
                     repeat((rowCount - chunks.size).coerceAtLeast(0)) { Spacer(Modifier.height(badge + 6.dp + 30.dp)) }
                     if (pages.size > 1) {
-                        BasicText("‹  第 ${page + 1} / ${pages.size} 页 · 左右键翻页  ›", Modifier.align(Alignment.CenterHorizontally).testTag("tv-special-pages"), style = Guga.song(22.sp, FontWeight.Bold, ink.copy(alpha = 0.6f)), maxLines = 1)
+                        BasicText("‹  第 ${page + 1} / ${pages.size} 页  ›", Modifier.align(Alignment.CenterHorizontally).testTag("tv-special-pages"), style = Guga.song(22.sp, FontWeight.Bold, ink.copy(alpha = 0.6f)), maxLines = 1)
                     }
                 }
             }

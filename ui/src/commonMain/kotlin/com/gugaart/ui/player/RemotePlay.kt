@@ -68,7 +68,7 @@ object RemotePlay {
             lastTried = s.serverId
             val c = OtherServers.poolFor(graph).clientNow(s.serverId)
             if (c == null) {
-                play.post(Notice(NoticeTone.Warning, "换到「${s.serverName}」失败", "这台服务器要重新登录，或者现在连不上"))
+                play.post(Notice(NoticeTone.Warning, "换到「${s.serverName}」失败", "需要重新登录，或连不上"))
                 return true
             }
             val pc = playerClientOf(c)

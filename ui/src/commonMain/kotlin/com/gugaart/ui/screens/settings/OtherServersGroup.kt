@@ -52,10 +52,9 @@ import com.gugugaga.ds.physics.rememberPressState
 object OtherServersCopy {
     const val GROUP = "多台服务器"
     const val TOGGLE = "从其它服务器找片源"
-    const val TOGGLE_NOTE = "详情页和播放器里，把其它服务器上的同一部片也列进来"
+    const val TOGGLE_NOTE = "列出其它服务器上的同一部片"
     const val LIST = "参与的服务器"
-    const val LIST_NOTE = "勾掉的服务器不去找片源"
-    const val LIST_OFF = "上面的开关关着：哪台都不去找"
+    const val LIST_OFF = "开关已关"
     const val CURRENT = "本台"
 
     /** 「全部 2 台」/「1 / 2 台」：[others] = 除了正在用的那台。纯函数，有单测。 */
@@ -87,7 +86,7 @@ internal fun OtherServersGroup(startOpen: Boolean = false) {
     Column {
         SettingRow(
             OtherServersCopy.LIST,
-            note = if (prefs.enabled) OtherServersCopy.LIST_NOTE else OtherServersCopy.LIST_OFF,
+            note = if (prefs.enabled) null else OtherServersCopy.LIST_OFF,
             tag = "set-otherServers-list",
             onClick = { open = !open },
         ) { ValueChevron(OtherServersCopy.summary(others, prefs), open) }

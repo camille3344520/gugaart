@@ -262,31 +262,30 @@ fun SearchScreen(initial: String?) {
     LaunchedEffect(Unit) { chrome.spot = null }
     // 返回需要记住搜索词（进详情再返回，词和结果还在，滚动位置才还原得了）：rememberSaveable，跟着返回栈条目走（PageStates）
     var query by rememberSaveable { mutableStateOf(preset.query ?: initial.orEmpty()) }
-    // 打字时不每个字都去问服务器：停 250 ms 才查
-    var settled by rememberSaveable { mutableStateOf(query) }
-    LaunchedEffect(query) {
-        delay(250)
-        settled = query
-    }
+    var remoteSettled by rememberSaveable { mutableStateOf(query) }
     val index = rememberLoad("search-index") { loadLibraryIndex(it) }
-    val remote = rememberLoad("search-remote", settled) { searchRemote(it, settled) }
-    // 1.3.1：服务器那一路的结果，只在「就是当前这个词、而且这份结果就是按这个词取来的」时算数（remoteResultsReady）。
-    // 以前只看 settled == query：换了词、新请求还在路上时，上一个词的结果会被当成当前词的结果画出来
-    // （快速连打时搜出来的不是打的词；该搜到的被旧结果挤掉）。返回时缓存种子就是当前词，第一帧即用（位置还原）；换词期间旧结果不冒充。
-    val remoteReady = remoteResultsReady(settled, query, remote.valueKeys)
-    // 本地命中 + 服务器片名兜底（去重，本地优先）
-    val remoteTitles = remote.value?.titles.orEmpty().takeIf { remoteReady }.orEmpty()
-    val hits = remember(index.value, remoteTitles, query) {
-        val local = searchTitles(index.value, query)
-        val seen = local.map { it.title.id }.toSet()
-        local + remoteTitles.filter { it.id !in seen }.map { TitleHit(it, SearchMatch.range(it.name, query)) }
-    }
-    // 演员：本地人名单（名字 / 拼音缩写）+ 服务器的人物搜索；打名字正好是某位演员 → 演员和 ta 的作品排在前面，缩写照旧片子在前
     val peopleIndex = rememberLoad("search-people") { loadPeopleIndex(it) }
-    val localPeople = remember(peopleIndex.value, query) { searchPeopleLocal(peopleIndex.value.orEmpty(), query) }
-    val remotePeople = remote.value?.people.orEmpty().takeIf { remoteReady }.orEmpty()
-    val people = remember(localPeople, remotePeople) { mergePeople(localPeople, remotePeople, query) }
-    val first = peopleFirst(query, hits, people)
+    val remote = rememberLoad("search-remote", remoteSettled) { searchRemote(it, remoteSettled) }
+    // 本地搜索先在后台算（150 ms 防抖）；服务器兜底继续 250 ms 防抖
+    var searchRef: AsyncSearchState? = null
+    val remoteReady = remoteResultsReady(remoteSettled, searchRef?.settled ?: query, remote.valueKeys)
+    val effectiveRemote = remote.value?.takeIf {
+        remoteReady && (it.titles.isNotEmpty() || it.episodes.isNotEmpty() || it.people.isNotEmpty())
+    }
+    val search = rememberAsyncSearch(query, index.value, peopleIndex.value, effectiveRemote)
+    searchRef = search
+    LaunchedEffect(query, search.flushSeq) {
+        if (query.isBlank()) {
+            remoteSettled = ""
+        } else if (remoteSettled != query) {
+            delay(REMOTE_DEBOUNCE_MS)
+            remoteSettled = query
+        }
+    }
+    val snap = search.snapshot
+    val hits = snap.hits
+    val people = snap.people
+    val first = snap.peopleFirst
     val star = people.firstOrNull()?.person?.takeIf { first }
     val worksLoad = rememberLoad("search-works", star?.id) { c -> star?.let { loadPersonWorks(c, it.id) }.orEmpty() }
     val works = worksLoad.value.orEmpty().takeIf { star != null }.orEmpty()
@@ -305,7 +304,8 @@ fun SearchScreen(initial: String?) {
     }
     fun pick(term: String) {
         query = term
-        settled = term
+        search.flush(term)
+        remoteSettled = term
         recents.add(term)
     }
 
@@ -324,25 +324,30 @@ fun SearchScreen(initial: String?) {
                         singleLine = true,
                         cursorBrush = SolidColor(colors.spot),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { recents.add(query) }),
+                        keyboardActions = KeyboardActions(onSearch = {
+                            search.flush(query)
+                            remoteSettled = query
+                            recents.add(query)
+                        }),
                     )
                 }
-                if (query.isNotEmpty()) TextLink("清除", { query = "" }, Modifier.padding(start = 12.dp), color = colors.dim)
+                if (query.isNotEmpty()) TextLink("清除", { query = ""; search.clear(); remoteSettled = "" }, Modifier.padding(start = 12.dp), color = colors.dim)
             }
             Rule(strong = true)
-            val episodes = remember(index.value, remote.value, remoteReady, query) { mergeEpisodes(searchEpisodesLocal(index.value, query), remote.value?.episodes.orEmpty().takeIf { remoteReady }.orEmpty()) }
+            val episodes = snap.episodes
+            val waitingRemote = (index.value?.engine == null || peopleIndex.value.isNullOrEmpty()) && (remoteSettled != query || remote.refreshing)
+            val searching = search.isSearching(query, index.value != null || peopleIndex.value != null || effectiveRemote != null)
             when {
                 q.isEmpty() -> PhoneSearchIdle(recents.items, cloud, ::pick, recents::clear)
                 hits.isEmpty() && episodes.isEmpty() && people.isEmpty() ->
                     when {
-                        index.pending || remote.refreshing || settled != query ->
-                            BasicText("正在找……", Modifier.padding(top = 16.dp), style = Guga.note(type.caption, colors.faint))
-                        // 1.3.1：取数失败不是「搜不到」：给一句话 + 再试（以前失败也摆摊手图，且没有重试）
+                        index.pending || waitingRemote || searching ->
+                            BasicText("搜索中…", Modifier.padding(top = 16.dp), style = Guga.note(type.caption, colors.faint))
                         index.error != null || remote.error != null -> Column(Modifier.padding(top = 16.dp)) {
                             BasicText(index.error ?: remote.error!!, style = Guga.note(type.caption, colors.dim), maxLines = 2)
-                            TextLink("再试", { index.retry(); remote.retry() }, Modifier.padding(top = 8.dp))
+                            TextLink("重试", { index.retry(); remote.retry() }, Modifier.padding(top = 8.dp))
                         }
-                        else -> SearchNoneView(q, { query = "" })
+                        else -> SearchNoneView(q, { query = ""; search.clear(); remoteSettled = "" })
                     }
                 else -> {
                     BasicText(searchTally((hits.map { it.title.id } + works.map { it.id }).toSet().size, episodes.size, people.size), Modifier.padding(top = 12.dp).testTag("search-tally"), style = Guga.note(type.caption, colors.faint), maxLines = 1)
@@ -387,7 +392,7 @@ fun SearchScreen(initial: String?) {
                             Row(Modifier.fillMaxWidth().heightIn(min = 86.dp).pressGraphics(press).pressable(press, label = e.name) { openHit(e.seriesId ?: e.id) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 BasicText("E${e.episodeNo ?: ""}", Modifier.width(66.dp), style = Guga.numeral(if ((e.episodeNo ?: 0) >= 1000) 15.sp else type.row * 1.1f, colors.spot), maxLines = 1)
                                 Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                                    BasicText(highlighted(e.name, SearchMatch.range(e.name, q), colors.spot), style = Guga.song(type.row, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    BasicText(highlighted(e.name, snap.episodeRanges[e.id], colors.spot), style = Guga.song(type.row, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     BasicText(
                                         listOfNotNull(e.seriesName, e.seasonNo?.let { "第 $it 季" }, "已看".takeIf { e.played }).joinToString(" · "),
                                         Modifier.padding(top = 4.dp),

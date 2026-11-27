@@ -78,12 +78,6 @@ fun BoxScope.TvEpisodeStrip(eps: PlayerEpisodes, snap: PlayerSnapshot, onPlay: (
                 BasicText(it, Modifier.padding(bottom = 6.dp), style = Guga.song(26.sp, FontWeight.SemiBold, colors.dim), maxLines = 1)
             }
             Spacer(Modifier.weight(1f))
-            BasicText(
-                if (eps.seasons.size > 1) "确定 = 播放这一集　上 = 换季　返回 = 收起" else "确定 = 播放这一集　返回 = 收起",
-                Modifier.padding(bottom = 6.dp),
-                style = Guga.song(22.sp, color = colors.faint),
-                maxLines = 1,
-            )
         }
         Spacer(Modifier.height(22.dp))
         if (eps.seasons.size > 1) {
@@ -111,9 +105,9 @@ fun BoxScope.TvEpisodeStrip(eps: PlayerEpisodes, snap: PlayerSnapshot, onPlay: (
             groups.remove("ps-eps")
             BasicText(
                 when {
-                    eps.loading -> "正在取这一季的分集……"
-                    eps.failed -> "这一季的分集没取到，返回再打开试试。"
-                    else -> "这一季还没有分集。"
+                    eps.loading -> "加载中…"
+                    eps.failed -> "加载失败"
+                    else -> "没有分集"
                 },
                 Modifier.padding(start = TvSpec.LEFT).height(320.dp),
                 style = Guga.song(28.sp, color = colors.dim),
@@ -123,7 +117,7 @@ fun BoxScope.TvEpisodeStrip(eps: PlayerEpisodes, snap: PlayerSnapshot, onPlay: (
             TvLeadRow("ps-eps", list, { "pe-${it.id}" }, TvSpec.EPISODE_W, 330.dp, default = currentKey, visible = 5) { e, key, _ ->
                 val current = e.id == snap.itemId
                 val played = chrome.isPlayed(e.id, e.played && e.progress <= 0f)
-                TvEpisodeCard(e, key, played, current, subtitle = if (current) "正在看" else tvEpisodeSub(e, played, false), onClick = { if (!current) onPlay(e.id) }, onLongClick = {}, fallback = com.gugaart.ui.screens.detail.episodeStillFallback(e.episodeNo, seriesStills, e.art.thumb))
+                TvEpisodeCard(e, key, played, current, subtitle = if (current) "播放中" else tvEpisodeSub(e, played, false), onClick = { if (!current) onPlay(e.id) }, onLongClick = {}, fallback = com.gugaart.ui.screens.detail.episodeStillFallback(e.episodeNo, seriesStills, e.art.thumb))
             }
         }
     }

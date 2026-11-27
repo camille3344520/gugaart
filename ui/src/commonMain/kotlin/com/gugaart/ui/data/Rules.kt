@@ -111,11 +111,11 @@ object Rules {
     }
 
     /**
-     * 进度的一句话：0 % → 「还没开始」（手机）/「未开始」（电脑、电视），**不画进度线**；
+     * 进度的一句话：0 % → 「未看」（观看状态只有未看 / 已看两种，D-watch），**不画进度线**；
      * 进行中 → 「余 19 分 · 59%」；没有时长只写百分比。
      */
     fun progressLabel(progress: Float, runtimeSec: Long?, phone: Boolean): String {
-        if (progress <= 0f) return if (phone) "还没开始" else "未开始"
+        if (progress <= 0f) return "未看"
         val pct = (progress * 100).roundToInt().coerceIn(1, 99)
         if (runtimeSec == null || runtimeSec <= 0) return "$pct%"
         return "余 ${minutesOnly((runtimeSec * (1f - progress)).toLong())} · $pct%"

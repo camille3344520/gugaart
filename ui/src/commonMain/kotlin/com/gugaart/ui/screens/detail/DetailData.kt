@@ -7,6 +7,7 @@ import com.gugaart.ui.data.Rules
 import com.gugaart.ui.data.Season
 import com.gugaart.ui.data.Title
 import com.gugaart.ui.data.titleOf
+import com.gugaart.ui.data.getItemShared
 import com.gugaart.ui.data.toSeason
 import com.gugaart.ui.mascot.LineFacts
 import com.gugaart.ui.mascot.MascotLines
@@ -49,7 +50,7 @@ private suspend fun seasonIndex(client: EmbyClient, seriesId: String, seasonId: 
     val key = "$seriesId|$seasonId|$total"
     seasonIndexLock.withLock { seasonIndexCache[key] }?.let { return it }
     val list = try {
-        client.getEpisodes(seriesId, seasonId = seasonId, o = ItemsRequestOptions(fields = listOf("IndexNumber"), enableImages = false, enableUserData = false))
+        client.getEpisodes(seriesId, seasonId = seasonId, isMissing = false, o = ItemsRequestOptions(fields = listOf("IndexNumber"), enableImages = false, enableUserData = false))
             .items.map { EpisodeRef(it.id, it.indexNumber) }
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
@@ -71,7 +72,7 @@ private val EPISODE_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAs
 
 /** 真实的代码路径（全部只读）：`getItem` + `getSeasons` + `getResume` / `getNextUp`。 */
 suspend fun loadSeriesHead(client: EmbyClient, id: String): SeriesHead {
-    val series = client.titleOf(client.getItem(id))
+    val series = client.titleOf(client.getItemShared(id))
     val seasons = client.getSeasons(id).items.map { it.toSeason() }
     val resume = client.getResume(parentId = id, limit = 1, o = EPISODE_FIELDS).items.firstOrNull()
     val next = resume ?: try {
@@ -84,9 +85,13 @@ suspend fun loadSeriesHead(client: EmbyClient, id: String): SeriesHead {
     return SeriesHead(series, seasons, next?.let { client.titleOf(it) })
 }
 
-/** 一季里的一页分集（`getEpisodes`，分页：一次 [EPISODE_PAGE] 集）。 */
+/**
+ * 一季里的一页分集（`getEpisodes`，分页：一次 [EPISODE_PAGE] 集）。
+ * `IsMissing=false`：Emby 按元数据补出来的缺集（`LocationType=Virtual`，没有文件；用户开了「显示季中缺少的剧集」才会列出）不列——
+ * 点开放不了，哪个内核都是「Item has no playable media source」（fix/op1137）。和上游详情页、播放器自己的分集表同一个取法。
+ */
 suspend fun loadEpisodes(client: EmbyClient, seriesId: String, seasonId: String?, page: Int): EpisodeSlice {
-    val r = client.getEpisodes(seriesId, seasonId = seasonId, startIndex = page * EPISODE_PAGE, limit = EPISODE_PAGE, o = EPISODE_FIELDS)
+    val r = client.getEpisodes(seriesId, seasonId = seasonId, isMissing = false, startIndex = page * EPISODE_PAGE, limit = EPISODE_PAGE, o = EPISODE_FIELDS)
     val list = r.items.map { client.titleOf(it) }
     val first = list.firstOrNull()?.episodeNo?.let { it - page * EPISODE_PAGE }
     val total = maxOf(r.totalRecordCount, page * EPISODE_PAGE + list.size)
@@ -189,29 +194,12 @@ fun specLine(source: MediaSourceInfo?): String? {
     return "$res · $range"
 }
 
-/** 音轨 / 字幕的一行：名字 + 第二行的区分（内封 / 外挂 / 默认 / 强制）。 */
+/** 音轨 / 字幕的一行：名字（「国语 · AAC 2.0」）+ 小签（默认 / 外挂 / 强制）。 */
 @Immutable
 data class StreamRow(val name: String, val note: String)
 
-private val LANGS = mapOf("chi" to "中文", "zho" to "中文", "zh" to "中文", "eng" to "English", "en" to "English", "jpn" to "日本語", "ja" to "日本語", "kor" to "한국어", "ko" to "한국어")
-
-/** 没名字写「未命名」；多条同名靠第二行区分（内封 / 外挂 / 默认 / 强制 / 编码）。 */
-fun streamRow(s: MediaStream): StreamRow {
-    val name = (s.displayTitle ?: s.title)?.trim()?.takeIf { it.isNotEmpty() && it != "und" }
-        ?: s.language?.let { LANGS[it.lowercase()] }
-        ?: "未命名"
-    val notes = listOfNotNull(
-        if (s.type == "Subtitle") (if (s.isExternal == true) "外挂" else "内封") else null,
-        "默认".takeIf { s.isDefault == true },
-        "强制".takeIf { s.isForced == true },
-        s.codec?.uppercase(),
-        s.channels?.let { c -> if (s.type == "Audio") (if (c >= 6) "5.1" else if (c == 2) "2.0" else "$c 声道") else null },
-    )
-    return StreamRow(name, notes.joinToString(" · "))
-}
-
-fun streamsOf(source: MediaSourceInfo?, type: String): List<StreamRow> = source?.mediaStreams.orEmpty().filter { it.type == type }
-    .let { if (type == "Subtitle") com.gugaart.ui.player.chineseSubtitlesFirst(it) else it }.map { streamRow(it) }
+/** 名字照 [com.gugaart.ui.data.trackName]（P1-2：详情页、播放器同一个函数）；没语言没名字写「未命名」。 */
+fun streamRow(s: MediaStream): StreamRow = com.gugaart.ui.data.trackName(s).let { StreamRow(it.text, it.tags.joinToString(" · ")) }
 
 /** 「主演 A   联合主演 B」：前两位演员；导演另算。 */
 fun leads(t: Title): List<String> = t.people.filter { it.type == "Actor" || it.type == null }.take(2).map { it.name }
@@ -238,7 +226,7 @@ private val PERSON_TYPES = mapOf("Actor" to "演员", "Director" to "导演", "W
 
 /** 人物和他 / 她在片库里的作品（只读）：`getItem` + `getItems(personIds)`；每部作品带演职员，从里面找出这个人的角色。 */
 suspend fun loadPerson(client: EmbyClient, id: String): PersonData {
-    val person = client.titleOf(client.getItem(id))
+    val person = client.titleOf(client.getItemShared(id))
     val r = client.getItems(
         LibraryQuery(personIds = listOf(id), includeItemTypes = listOf("Movie", "Series"), recursive = true, sortBy = listOf("ProductionYear", "SortName"), sortOrder = "Descending", limit = 200),
         ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "People", "Overview", "CommunityRating")),
@@ -255,4 +243,21 @@ suspend fun loadPerson(client: EmbyClient, id: String): PersonData {
         Work(t, role, behind)
     }
     return PersonData(person, works)
+}
+
+/** P0-3：整季标已看 / 未看之前的确认框文案（三端同一份）。[note] 只在标为未看时有：后果在确认的那一刻说清楚。 */
+@Immutable
+data class SeasonMarkCopy(val title: String, val note: String?, val confirm: String)
+
+/** 「把第 1 季标为已看？」/「把第 1 季标为未看？」+「会清掉播放进度」；没有季号的季用季名。纯函数，有单测。 */
+fun seasonMarkCopy(season: Season, toPlayed: Boolean): SeasonMarkCopy {
+    val name = if (season.number != null && season.number > 0) "第 ${season.number} 季" else season.name
+    val verb = if (toPlayed) "标为已看" else "标为未看"
+    return SeasonMarkCopy("把${name}$verb？", if (toPlayed) null else "会清掉播放进度", verb)
+}
+
+/** 电脑「整部已看 / 整部未看」的确认框（照 P0-3）：「把《片名》全部标为已看？」；标为未看加「会清掉播放进度」。纯函数，有单测。 */
+fun wholeMarkCopy(title: String, toPlayed: Boolean): SeasonMarkCopy {
+    val verb = if (toPlayed) "标为已看" else "标为未看"
+    return SeasonMarkCopy("把《$title》全部$verb？", if (toPlayed) null else "会清掉播放进度", verb)
 }

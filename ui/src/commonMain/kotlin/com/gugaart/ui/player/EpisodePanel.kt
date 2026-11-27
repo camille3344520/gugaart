@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,9 +87,9 @@ fun EpisodePanel(snap: PlayerSnapshot) {
         when {
             list.isEmpty() -> BasicText(
                 when {
-                    eps.loading -> "正在取这一季的分集……"
-                    eps.failed -> "这一季的分集没取到，稍后再打开试试。"
-                    else -> "这一季还没有分集。"
+                    eps.loading -> "加载中…"
+                    eps.failed -> "加载失败"
+                    else -> "没有分集"
                 },
                 Modifier.padding(top = 12.dp * t.k),
                 style = Guga.song(t.body, color = colors.dim),
@@ -101,7 +102,7 @@ fun EpisodePanel(snap: PlayerSnapshot) {
                 LazyColumn(Modifier.fillMaxSize().testTag("panel-eps-list"), state = state) {
                     items(list.size, key = { list[it].id }) { i ->
                         val e = list[i]
-                        EpisodeRow(e, e.id == snap.itemId) { if (e.id != snap.itemId) g.playEpisode(e.id) }
+                        EpisodeRow(e, e.id == snap.itemId) { if (e.id != snap.itemId && !e.unaired) g.playEpisode(e.id) }
                     }
                 }
             }
@@ -112,7 +113,7 @@ fun EpisodePanel(snap: PlayerSnapshot) {
 /** 季的叫法：有季号「第 N 季」，没有就用季名（乱码也原样，不替用户改名）。 */
 fun seasonWord(s: Season): String = if (s.number != null && s.number > 0) "第 ${s.number} 季" else s.name.ifBlank { "特别篇" }
 
-/** 一集一行：剧照（带进度线）+ 集号 + 集名 + 副行。 */
+/** 一集一行：剧照（带进度线）+ 集号 + 集名 + 副行。未播出的（op1137b）置灰、点不了，副行是「未播出」小签。 */
 @Composable
 private fun EpisodeRow(e: Title, current: Boolean, onClick: () -> Unit) {
     val colors = Guga.colors
@@ -122,8 +123,8 @@ private fun EpisodeRow(e: Title, current: Boolean, onClick: () -> Unit) {
     val press = rememberPressState()
     Column {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 58.dp * t.k).pressGraphics(press).pressable(press, label = e.name, onClick = onClick)
-                .padding(vertical = 6.dp * t.k).testTag(if (current) "panel-ep-current" else "panel-ep"),
+            Modifier.fillMaxWidth().heightIn(min = 58.dp * t.k).alpha(if (e.unaired) com.gugaart.ui.theme.GugaColors.UNAVAILABLE_ALPHA else 1f).pressGraphics(press).pressable(press, enabled = !e.unaired, label = e.name, onClick = onClick)
+                .padding(vertical = 6.dp * t.k).testTag(if (e.unaired) "panel-ep-unaired" else if (current) "panel-ep-current" else "panel-ep"),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp * t.k),
         ) {
@@ -147,11 +148,12 @@ private fun EpisodeRow(e: Title, current: Boolean, onClick: () -> Unit) {
                     )
                 }
                 val sub = listOfNotNull(
-                    "正在看".takeIf { current },
+                    "播放中".takeIf { current },
                     e.runtimeSec?.let { Rules.minutesOnly(it) },
                     e.pct?.takeIf { !current }?.let { "看到 $it%" } ?: "已看".takeIf { played && !current },
                 ).joinToString(" · ")
-                if (sub.isNotEmpty()) BasicText(sub, Modifier.padding(top = 2.dp), style = Guga.note(t.note, if (current) colors.spot else colors.faint), maxLines = 1)
+                if (e.unaired) com.gugaart.ui.components.OutlineTag("未播出", t.note, 1.dp, colors.dim, Modifier.padding(top = 4.dp))
+                else if (sub.isNotEmpty()) BasicText(sub, Modifier.padding(top = 2.dp), style = Guga.note(t.note, if (current) colors.spot else colors.faint), maxLines = 1)
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(colors.line))

@@ -8,8 +8,10 @@ import com.gugaart.ui.data.SUB_SCALES
 import com.gugaart.ui.data.SubOutline
 import com.gugaart.ui.data.SubPosition
 import com.gugaart.ui.data.SubStylePrefs
+import com.gugaart.ui.data.GUGA_SUBTITLE_LANGS
 import com.gugaart.ui.data.SubtitleDefault
 import com.gugaart.ui.data.currentLabel
+import com.gugaart.ui.data.effectiveSubtitleLangs
 import com.gugaart.ui.data.subScaleText
 import com.gugaart.ui.screens.settings.AREA_CHOICES
 import com.gugaart.ui.screens.settings.GugaSection
@@ -30,24 +32,18 @@ import com.gugugaga.app.settings.BITRATE_CHOICES_MBPS
 import com.gugugaga.app.settings.DANMAKU_SOURCE_NAMES
 import com.gugugaga.app.settings.DEFAULT_DANMAKU_RENDER_JSON
 import com.gugugaga.app.settings.DEFAULT_DANMAKU_SOURCES
-import com.gugugaga.app.settings.EPISODE_PAGE_SIZES
 import com.gugugaga.app.settings.GLASS_STRENGTH_MAX
 import com.gugugaga.app.settings.GLASS_STRENGTH_MIN
-import com.gugugaga.app.settings.HOME_SECTION_LABELS
 import com.gugugaga.app.settings.LangOption
 import com.gugugaga.app.settings.PerfPref
 import com.gugugaga.app.settings.RATE_CHOICES
 import com.gugugaga.app.settings.SEEK_STEP_CHOICES_SEC
-import com.gugugaga.app.settings.SUBTITLE_LANGS
-import com.gugugaga.app.settings.SUBTITLE_MODE_CHOICES
 import com.gugugaga.app.settings.Secrets
 import com.gugugaga.app.settings.bitrateLabel
 import com.gugugaga.app.settings.codesFromKeys
 import com.gugugaga.app.settings.danmakuPrefs
 import com.gugugaga.app.settings.engineChoices
 import com.gugugaga.app.settings.extraCodes
-import com.gugugaga.app.settings.homeHidden
-import com.gugugaga.app.settings.homeSections
 import com.gugugaga.app.settings.jsonStrings
 import com.gugugaga.app.settings.keysFromCodes
 import com.gugugaga.app.settings.playbackPrefs
@@ -116,7 +112,7 @@ fun tvOtherServerRows(o: TvOtherServers): List<TvSetting> {
         val others = servers.filterNot { it.isCurrent }
         val on = servers.indices.filter { i -> servers[i].isCurrent || copy.included(servers[i], o.prefs) }.toSet()
         rows += TvChoice(
-            "otherServersList", copy.LIST, if (o.prefs.enabled) copy.LIST_NOTE else copy.LIST_OFF,
+            "otherServersList", copy.LIST, if (o.prefs.enabled) null else copy.LIST_OFF,
             copy.summary(others, o.prefs),
             servers.map { e ->
                 val host = com.gugaart.ui.servers.serverHost(e.address)
@@ -257,7 +253,7 @@ fun tvSettingRows(
     /** 弹幕服务器清单（danmaku/DanmakuServers.kt；null = 还没读出来）和存清单（按先后的地址，空的去掉）。 */
     danmakuServers: List<String>? = null,
     saveDanmakuServers: (List<String>) -> Unit = {},
-    /** 备份与还原（账号分区里；backup/BackupController.kt）。null = 不出这一块。 */
+    /** 备份与同步（备份分区里；backup/BackupController.kt）。null = 不出这一块。 */
     backup: com.gugaart.ui.backup.BackupController? = null,
     /** Trakt（账号分区里）。null = 不出这一块。 */
     trakt: TvTrakt? = null,
@@ -265,45 +261,26 @@ fun tvSettingRows(
     fonts: TvFontChoices? = null,
     /** 播放分区的「多台服务器」（1.5.0）。null = 不出这一组。 */
     otherServers: TvOtherServers? = null,
+    diagOpen: Boolean = false,
+    queriesCleared: Boolean = false,
+    onToggleDiag: () -> Unit = {},
+    onClearQueries: () -> Unit = {},
 ): List<TvSetting> = when (section) {
-    GugaSection.Look -> {
+    GugaSection.Appearance -> {
         val ui = settings.uiSettings
         val perf = listOf(PerfPref.Auto to "自动", PerfPref.High to "高", PerfPref.Mid to "中", PerfPref.Low to "低")
         listOf(
             TvHead("纸面", "PAPER"),
-            TvInfo("theme", "主题", "深色", "只有深色：墨黑纸、米白字"),
-            TvToggle("spot", "主题色跟随海报", "封面翻到哪一部，片单名和进度线换成那张海报的颜色", prefs.spotColorFollowsCover) { on -> store.update { it.copy(spotColorFollowsCover = on) } },
-            TvToggle("paper", "纸纹", null, prefs.paperTexture) { on -> store.update { it.copy(paperTexture = on) } },
+            TvToggle("spot", "主题色跟随海报", null, prefs.spotColorFollowsCover) { on -> store.update { it.copy(spotColorFollowsCover = on) } },
             TvHead("玻璃", "GLASS"),
-            steps("glass", "玻璃强度", "左侧导航栏的折射强度", stepValues(GLASS_STRENGTH_MIN, GLASS_STRENGTH_MAX, 0.1), ui.glassStrength, ::percentText, "GLASS") { g.settings.patch("ui", "glass" to num(it)) },
-            one("perf", "材质", "玻璃的实时折射吃显卡；卡了再降", perf, ui.perf, "MATERIAL", { if (it == PerfPref.Auto) "按设备自动选择" else null }) { g.settings.patch("ui", "perf" to JsonPrimitive(it.id)) },
+            steps("glass", "玻璃强度", null, stepValues(GLASS_STRENGTH_MIN, GLASS_STRENGTH_MAX, 0.1), ui.glassStrength, ::percentText, "GLASS") { g.settings.patch("ui", "glass" to num(it)) },
+            one("perf", "材质", null, perf, ui.perf, "MATERIAL") { g.settings.patch("ui", "perf" to JsonPrimitive(it.id)) },
             TvHead("放映员", "THE PROJECTIONIST"),
-            TvToggle("mascot", "咕咕嘎嘎出现在界面上", "放映手记、观影卡、空状态；播放时从不出现", prefs.showMascot) { on -> store.update { withMascot(it, on) } },
+            TvToggle("mascot", "咕咕嘎嘎出现在界面上", null, prefs.showMascot) { on -> store.update { withMascot(it, on) } },
             one("notes", "放映手记", null, NotesChoice.entries.map { it to it.label }, notesChoiceOf(prefs), "NOTES") { c -> store.update { withNotes(it, c) } },
-        )
-    }
-    GugaSection.Layout -> {
-        val p = settings.uiSettings.interfacePrefs
-        fun ui(key: String, v: JsonElement) = g.settings.patch("ui", key to v)
-        val hidden = settings.homeHidden
-        listOf(
             TvHead("首页", "HOME"),
-            TvToggle("homeCarousel", "首页轮播图", "首页封面轮播的海报", p.homeCarousel) { ui("homeCarousel", JsonPrimitive(it)) },
-            TvToggle("mediaCount", "媒体计数", "片单里显示部数 / 集数", p.mediaCount) { ui("mediaCount", JsonPrimitive(it)) },
-            TvToggle("posterCenter", "海报卡片文字居中", null, p.posterCenter) { ui("posterCenter", JsonPrimitive(it)) },
-            TvToggle("coverAutoFlip", "封面自动轮播", "不动的时候每隔几秒换到下一部；一按键就停", prefs.coverAutoFlip) { on -> store.update { it.copy(coverAutoFlip = on) } },
-            TvToggle("idleHome", "闲置回首页", "不在首页也不在播放时，10 分钟没有按键就回到封面", prefs.idleHome) { on -> store.update { it.copy(idleHome = on) } },
-            TvHead("详情页", "DETAIL"),
-            one("detailImage", "详情页图片", null, listOf("poster" to "海报", "backdrop" to "横版剧照"), p.detailImage, "IMAGE") { ui("detailImage", JsonPrimitive(it)) },
-            one("episodePageSize", "单集分页数量", "一季超过这么多集就分页", EPISODE_PAGE_SIZES.map { it to it.toString() }, p.episodePageSize, "PAGE SIZE") { ui("episodePageSize", JsonPrimitive(it)) },
-            TvHead("首页板块", "SECTIONS"),
-            TvOrder(
-                "homeOrder", "板块顺序", settings.homeSections.take(4).joinToString(" › ") { HOME_SECTION_LABELS[it] ?: it } + " …",
-                settings.homeSections.map { it to (HOME_SECTION_LABELS[it] ?: it) }, "ORDER",
-            ) { g.settings.patch("home", "sections" to jsonStrings(it)) },
-        ) + settings.homeSections.map { id ->
-            TvToggle("home-$id", HOME_SECTION_LABELS[id] ?: id, null, id !in hidden) { on -> g.settings.patch("home", "hidden" to jsonStrings(if (on) hidden - id else (hidden + id).distinct())) }
-        }
+            TvToggle("coverAutoFlip", "封面自动轮播", null, prefs.coverAutoFlip) { on -> store.update { it.copy(coverAutoFlip = on) } },
+        )
     }
     GugaSection.Playback -> {
         val p = settings.playbackPrefs
@@ -311,18 +288,28 @@ fun tvSettingRows(
         val android = g.deps.uiMode != UiMode.Desktop
         val engines = engineChoices(android)
         listOf(
-            TvHead("播放引擎", "ENGINE"),
+            TvHead("内核", "ENGINE"), // P2-3：不再用「引擎」
             TvChoice(
-                "engine", "首选引擎", if (android) "ExoPlayer 放不了时换 VLC，再换 mpv，最后请服务器转码" else "mpv 放不了时换 VLC，最后请服务器转码",
+                "engine", "播放内核", com.gugaart.ui.screens.settings.engineChainNote(android, mac = false),
                 engines.firstOrNull { it.id == p.engine }?.label?.substringBefore('（') ?: "自动",
                 engines.map { TvPick(it.label.substringBefore('（'), it.label.substringAfter('（', "").removeSuffix("）").takeIf { n -> n.isNotEmpty() }) },
                 setOf(engines.indexOfFirst { it.id == p.engine }).filter { it >= 0 }.toSet(), "ENGINE",
             ) { put("engine", JsonPrimitive(engines[it].id)) },
-            one("bitrate", "码率上限", "超过时请服务器转码", BITRATE_CHOICES_MBPS.map { it to bitrateLabel(it).substringBefore('（') }, p.maxBitrateMbps, "BITRATE") { put("maxBitrateMbps", JsonPrimitive(it)) },
+            one("bitrate", "画质上限", "超过时转码", BITRATE_CHOICES_MBPS.map { it to bitrateLabel(it).substringBefore('（') }, p.maxBitrateMbps, "BITRATE") { put("maxBitrateMbps", JsonPrimitive(it)) },
+            TvChoice(
+                "defaultShader",
+                "默认着色器",
+                null,
+                prefs.defaultShader.label,
+                com.gugaart.ui.player.ShaderPreset.entries.map { TvPick(it.label, it.note) },
+                setOf(com.gugaart.ui.player.ShaderPreset.entries.indexOf(prefs.defaultShader).coerceAtLeast(0)),
+                "SHADER",
+            ) { i -> store.update { it.copy(defaultShader = com.gugaart.ui.player.ShaderPreset.entries[i]) } },
             TvHead("播放行为", "BEHAVIOUR"),
-            TvToggle("autoPlayNext", "自动播放下一集", "片尾出现时倒数", p.autoPlayNext) { put("autoPlayNext", JsonPrimitive(it)) },
+            TvToggle("autoPlayNext", "自动播放下一集", null, p.autoPlayNext) { put("autoPlayNext", JsonPrimitive(it)) },
+            TvToggle("creditsAutoNext", "片尾自动播下一集", null, prefs.creditsAutoNext) { on -> store.update { it.copy(creditsAutoNext = on) } },
             one("skipMarkers", "跳过片头 / 片尾", null, listOf("off" to "关闭", "button" to "显示按钮", "auto" to "自动跳过"), p.skipMarkers, "SKIP") { put("skipMarkers", JsonPrimitive(it)) },
-            one("seekStep", "快进 / 快退步长", "长按时逐级加速到 ×3", SEEK_STEP_CHOICES_SEC.map { it to "$it 秒" }, p.seekStepSec, "STEP") { put("seekStepSec", JsonPrimitive(it)) },
+            one("seekStep", "快进 / 快退步长", null, SEEK_STEP_CHOICES_SEC.map { it to "$it 秒" }, p.seekStepSec, "STEP") { put("seekStepSec", JsonPrimitive(it)) },
             steps("defaultRate", "默认倍速", null, RATE_CHOICES, p.defaultRate, ::scaleText, "SPEED") { put("defaultRate", num(it)) },
         ) + (otherServers?.let(::tvOtherServerRows) ?: emptyList())
     }
@@ -331,29 +318,40 @@ fun tvSettingRows(
         fun put(key: String, v: JsonElement) = g.settings.patch(STRM_SETTINGS_SECTION, key to v)
         listOf(
             TvHead("直链", "STRM"),
-            TvToggle("preferStrm", "优先直连 strm 目标", "跳过 Emby 中转，由播放内核直接打开网盘 / CDN 地址", a.preferStrmTarget) { put("preferStrmTarget", JsonPrimitive(it)) },
+            TvToggle("preferStrm", "优先直连 strm 目标", "跳过 Emby 中转", a.preferStrmTarget) { put("preferStrmTarget", JsonPrimitive(it)) },
             one("proxyMode", "线路", null, listOf("auto" to "自动", "direct" to "始终直连", "proxy" to "始终经代理"), a.strmProxyMode, "ROUTE") { put(STRM_PROXY_MODE_KEY, JsonPrimitive(it)) },
             TvHead("请求头", "HEADERS"),
-            TvText("ua", "User-Agent", "网盘 / CDN 认浏览器的时候填；留空 = 播放内核自己的", a.cdnUserAgent, "USER-AGENT", hint = "留空 = 不带") { put("cdnUserAgent", JsonPrimitive(it)) },
-            TvText("referer", "Referer", "有的直链要带来源页才放行", a.cdnReferer, "REFERER", hint = "留空 = 不带") { put("cdnReferer", JsonPrimitive(it)) },
+            TvText("ua", "User-Agent", "留空 = 内核默认", a.cdnUserAgent, "USER-AGENT", hint = "留空 = 内核默认") { put("cdnUserAgent", JsonPrimitive(it)) },
+            TvText("referer", "Referer", "留空 = 不带", a.cdnReferer, "REFERER", hint = "留空 = 不带") { put("cdnReferer", JsonPrimitive(it)) },
         )
     }
     GugaSection.Subs -> {
         val p = settings.playbackPrefs
         fun put(key: String, v: JsonElement) = g.settings.patch("playback", key to v)
+        val effSubLangs = effectiveSubtitleLangs(p.subtitleLangs, prefs.subLangsSeeded)
+        val subKeys = keysFromCodes(GUGA_SUBTITLE_LANGS, effSubLangs)
         listOf(
             TvHead("音轨", "AUDIO"),
             langs("audioLangs", "首选音轨语言", AUDIO_LANGS, p.audioLangs, "AUDIO") { put("audioLangs", jsonStrings(it)) },
             TvHead("字幕", "SUBTITLES"),
-            one("subtitleDefault", "字幕默认", "手动换过字幕，就记成这部片子「上次的选择」", SubtitleDefault.entries.map { it to it.label }, prefs.subtitleDefault, "DEFAULT", { it.note }) { v -> store.update { it.copy(subtitleDefault = v) } },
-            one("subtitleMode", "字幕模式", null, SUBTITLE_MODE_CHOICES.map { it.id to it.label.substringBefore('（') }, p.subtitleMode, "MODE", { id ->
-                SUBTITLE_MODE_CHOICES.firstOrNull { it.id == id }?.label?.substringAfter('（', "")?.removeSuffix("）")?.takeIf { it.isNotEmpty() }
-            }) { put("subtitleMode", JsonPrimitive(it)) },
-            langs("subtitleLangs", "首选字幕语言", SUBTITLE_LANGS, p.subtitleLangs, "SUBTITLES") { put("subtitleLangs", jsonStrings(it)) },
+            one("subtitleDefault", "开播字幕", null, SubtitleDefault.entries.map { it to it.label }, prefs.subtitleDefault, "DEFAULT") { v -> store.update { it.copy(subtitleDefault = v) } },
+            TvChoice(
+                "subtitleLangs",
+                "首选字幕语言",
+                if (subKeys.isEmpty()) "仅按默认轨" else subKeys.mapNotNull { k -> GUGA_SUBTITLE_LANGS.firstOrNull { it.key == k }?.label }.joinToString(" → "),
+                if (subKeys.isEmpty()) "无" else "${subKeys.size} 种",
+                GUGA_SUBTITLE_LANGS.map { o -> TvPick(o.label, subKeys.indexOf(o.key).takeIf { it >= 0 }?.let { "第 ${it + 1} 优先" }) },
+                GUGA_SUBTITLE_LANGS.indices.filter { GUGA_SUBTITLE_LANGS[it].key in subKeys }.toSet(),
+                "SUBTITLES",
+                multi = true,
+            ) { i ->
+                put("subtitleLangs", jsonStrings(toggledLangs(GUGA_SUBTITLE_LANGS, effSubLangs, GUGA_SUBTITLE_LANGS[i].key)))
+                if (!prefs.subLangsSeeded) store.update { it.copy(subLangsSeeded = true) }
+            },
             // 字幕搜索（1.4.0，docs/subtitle-search.md §6）：画报自己的键 subtitleOnline
-            TvToggle("subtitleOnline", "在线字幕源（迅雷 / 射手）", com.gugaart.ui.screens.settings.SUBTITLE_ONLINE_NOTE, prefs.subtitleOnline) { on -> store.update { it.copy(subtitleOnline = on) } },
+            TvToggle("subtitleOnline", "在线字幕（迅雷、射手）", null, prefs.subtitleOnline) { on -> store.update { it.copy(subtitleOnline = on) } },
             // 字幕智能匹配（1.4.1 U2）：画报自己的键 subtitleAutoBest，默认关
-            TvToggle("subtitleAutoBest", "自动加载最合适的字幕", com.gugaart.ui.screens.settings.SUBTITLE_AUTO_BEST_NOTE, prefs.subtitleAutoBest) { on -> store.update { it.copy(subtitleAutoBest = on) } },
+            TvToggle("subtitleAutoBest", "自动加载最合适的字幕", null, prefs.subtitleAutoBest) { on -> store.update { it.copy(subtitleAutoBest = on) } },
         ) + tvSubtitleStyleRows(prefs.subStyle, store, fonts?.subtitle, fonts?.subtitleStatus)
     }
     GugaSection.Danmaku -> {
@@ -373,7 +371,7 @@ fun tvSettingRows(
             // 最上面：弹幕服务器（用户 2026-11-15：「输入弹幕服务器的不要放最下面，放弹幕设置最上面」）
             TvHead("弹幕服务器", "SERVER"),
             *tvDanmakuServerRows(danmakuServers, saveDanmakuServers).toTypedArray(),
-            TvText("tmdb", "TMDB 令牌", "匹配更准；保存在系统安全存储中", secrets?.tmdbToken.orEmpty(), "TMDB TOKEN", secret = true) { saveSecret(it, null) },
+            TvText("tmdb", "TMDB 令牌", "存在系统安全存储中", secrets?.tmdbToken.orEmpty(), "TMDB TOKEN", secret = true) { saveSecret(it, null) },
             TvHead("显示", "DISPLAY"),
             TvToggle("dm-enabled", "显示弹幕", null, r.enabled) { render("enabled", JsonPrimitive(it)) },
             steps("dm-opacity", "不透明度", null, stepValues(0.1, 1.0, 0.05), r.opacity, ::percentText, "OPACITY") { render("opacity", num(it)) },
@@ -389,11 +387,11 @@ fun tvSettingRows(
             TvToggle("dm-bottom", "底部弹幕", null, r.bottom) { mode("bottom", it) },
             TvHead("样式", "STYLE"),
             fonts?.danmaku?.let { list ->
-                TvChoice("dm-font", "字体", "和字幕共用同一套字体", list.currentLabel(), list.map { TvPick(it.label, it.note) }, list.indices.filter { list[it].selected }.toSet(), "FONT") { list[it].pick() }
+                TvChoice("dm-font", "字体", null, list.currentLabel(), list.map { TvPick(it.label, it.note) }, list.indices.filter { list[it].selected }.toSet(), "FONT") { list[it].pick() }
             } ?: one("dm-font", "字体", null, DanmakuFont.entries.map { it to it.label }, r.font, "FONT") { render("font", JsonPrimitive(it.id)) },
             one("dm-weight", "粗细", null, DanmakuWeight.entries.map { it to it.label }, r.weight, "WEIGHT") { render("weight", JsonPrimitive(it.id)) },
             TvHead("匹配", "MATCHING"),
-            TvToggle("autoMatch", "播放时自动匹配弹幕", "按 TMDB 身份 + 集号匹配", dm.autoMatch) { put("autoMatch", JsonPrimitive(it)) },
+            TvToggle("autoMatch", "播放时自动匹配弹幕", null, dm.autoMatch) { put("autoMatch", JsonPrimitive(it)) },
             TvOrder(
                 "dm-sources", "来源优先级", dm.sourcePriority.take(3).joinToString(" › ") { DANMAKU_SOURCE_NAMES[it] ?: it },
                 dm.sourcePriority.map { it to (DANMAKU_SOURCE_NAMES[it] ?: it) }, "SOURCES",
@@ -406,39 +404,55 @@ fun tvSettingRows(
                 render("fpsCap", if (it == "auto") JsonPrimitive("auto") else JsonPrimitive(it.toInt()))
             },
             TvAction("dm-reset", "恢复默认的弹幕显示", null, "恢复默认", confirm = "再按一次确定：恢复默认") { put("render", DEFAULT_DANMAKU_RENDER_JSON) },
-            TvInfo("dm-blockWords", "屏蔽词", if (r.blockWords.isEmpty()) "没有" else "${r.blockWords.size} 个", "要输中文：请在手机或电脑上改"),
+            TvInfo("dm-blockWords", "屏蔽词", if (r.blockWords.isEmpty()) "没有" else "${r.blockWords.size} 个", "在手机或电脑上编辑"),
         )
     }
     GugaSection.Cache -> listOf(
-        TvHead("占用", "USAGE"),
-        TvAction("cache-queries", "界面数据缓存", "首页、片库上次的内容", "清理") { g.queries.clear() },
         TvHead("维护", "MAINTENANCE"),
-        TvAction("reset-settings", "恢复默认设置", "播放、弹幕、外观等偏好将恢复为默认值；账号和缓存不受影响", "恢复默认", confirm = "再按一次确定：恢复默认设置") { g.settings.reset() },
+        TvAction("reset-settings", "恢复默认设置", null, "恢复默认", confirm = "再按一次确定：恢复默认设置") { g.settings.reset() },
     )
     GugaSection.Account -> {
         val s = g.session.session.value
         listOf(
             TvHead("当前账号", "SIGNED IN"),
             TvInfo("account-name", s?.userName ?: "未登录", s?.serverName, "已登录".takeIf { s != null }),
-            TvAction("account-switch", "切换账号 / 服务器", "已保存的账号在登录页里选", "切换") { g.nav.navigate(Route.Login(switch = true)) },
-        ) + (trakt?.let(::tvTraktRows) ?: emptyList()) + (backup?.let(::tvBackupRows) ?: emptyList())
+            TvAction("account-switch", "切换服务器", null, "切换") { g.nav.navigate(Route.Login(switch = true)) },
+        ) + (trakt?.let(::tvTraktRows) ?: emptyList())
     }
-    GugaSection.About -> listOfNotNull(
-        TvHead("更新", "UPDATE"),
-        if (g.updater.enabled) TvAction("about-check", "检查更新", g.updater.status.value.lastResult.ifEmpty { "还没有检查过" }, "检查") { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) } else TvInfo("about-check", "检查更新", "未开启", "这一版不检查更新"),
-        // 不自动下载、不自动安装（用户 2026-11-15）：没有「自动下载更新」开关了
-        TvInfo("channel", "更新通道", g.updater.channelLabel),
-        // 随包的第三方组件和许可证（D-lead-41；和手机 / 电脑同一份 OpenSourceLicenses）。排在「这台设备」前面：
-        // 右页一屏只排得下 6 行，能接焦点的两行（检查更新、开源许可）要隔得近，焦点往下才走得到（windowStart 的 next）
-        TvHead("许可", "LICENSES"),
-        TvPanel(TV_LICENSES, "开源许可", "本应用按 GPL-3.0 分发 · 第三方组件和它们的许可证", "查看"),
-        TvHead("这台设备", "DEVICE"),
-        TvInfo("version", "版本", g.deps.appVersion),
-        TvInfo("platform", "平台", g.deps.platformLabel),
-        TvInfo("device", "设备名称", g.deps.identity.device),
-        TvInfo("mode", "界面模式", "电视", "由设备决定"),
-        TvInfo("secure", "令牌存储", g.deps.secureMode()),
-    )
+    GugaSection.Backup -> backup?.let(::tvBackupRows) ?: emptyList()
+    GugaSection.Advanced -> listOf(
+        TvHead("闲置", "IDLE"),
+        TvToggle("idleHome", "闲置回首页", "10 分钟无操作", prefs.idleHomeFor(g.deps.uiMode)) { on -> store.update { it.copy(idleHome = on) } },
+    ) +
+        tvSettingRows(GugaSection.Strm, settings, prefs, g, store, secrets, saveSecret, danmakuServers, saveDanmakuServers, backup, trakt, fonts, otherServers, diagOpen, queriesCleared, onToggleDiag, onClearQueries) +
+        tvSettingRows(GugaSection.Cache, settings, prefs, g, store, secrets, saveSecret, danmakuServers, saveDanmakuServers, backup, trakt, fonts, otherServers, diagOpen, queriesCleared, onToggleDiag, onClearQueries) +
+        tvSettingRows(GugaSection.About, settings, prefs, g, store, secrets, saveSecret, danmakuServers, saveDanmakuServers, backup, trakt, fonts, otherServers, diagOpen, queriesCleared, onToggleDiag, onClearQueries)
+    GugaSection.About, GugaSection.Diagnostics -> {
+        val diag = diagOpen || section == GugaSection.Diagnostics
+        listOfNotNull(
+            TvHead("更新", "UPDATE"),
+            if (g.updater.enabled) TvAction("about-check", "检查更新", g.updater.status.value.lastResult.ifEmpty { "未检查" }, "检查") { com.gugaart.ui.screens.update.UpdateConsent.checkByHand(g) } else TvInfo("about-check", "检查更新", "未开启", "这一版不检查更新"),
+            // 随包的第三方组件和许可证（D-lead-41）
+            TvHead("许可", "LICENSES"),
+            TvPanel(TV_LICENSES, "开源许可", "GPL-3.0 · 第三方组件许可证", "查看"),
+            TvHead("这台设备", "DEVICE"),
+            TvInfo("version", "版本", g.deps.appVersion),
+            TvInfo("platform", "平台", g.deps.platformLabel),
+            TvInfo("device", "设备名称", g.deps.identity.device),
+            TvAction("about-diagnostics", "诊断", null, if (diag) "收起" else "展开") { onToggleDiag() },
+        ) + if (diag) {
+            listOf(
+                TvInfo("deviceId", "设备 ID", g.deps.identity.deviceId.take(8) + "…"),
+                TvInfo("secure", "令牌存储", g.deps.secureMode()),
+                TvInfo("mode", "界面模式", "电视"),
+                TvInfo("channel", "更新通道", g.updater.channelLabel),
+                TvAction("cache-queries", "界面数据缓存", if (queriesCleared) "已清理" else null, "清理") {
+                    g.queries.clear()
+                    onClearQueries()
+                },
+            )
+        } else emptyList()
+    }
 }
 
 /** 「开源许可」那一行的 id（也是页边那一列的 id：路由 `Route.Settings("licenses")` 直接打开它）。 */
@@ -452,19 +466,19 @@ private fun tvDanmakuServerRows(urls: List<String>?, save: (List<String>) -> Uni
     val list = urls.orEmpty()
     val rows = ArrayList<TvSetting>()
     if (list.isEmpty()) {
-        rows += TvText("dm-apiUrl", "弹幕服务器 API 地址", "令牌在路径里；键盘那一屏默认打码", "", "DANMAKU API", secret = true, hint = "https://…") { save(listOf(it)) }
+        rows += TvText("dm-apiUrl", "弹幕服务器 API 地址", "地址里含令牌", "", "DANMAKU API", secret = true, hint = "https://…") { save(listOf(it)) }
         return rows
     }
     list.forEachIndexed { i, url ->
         rows += TvText(
             if (i == 0) "dm-apiUrl" else "dm-apiUrl-${i + 1}",
             if (list.size > 1) "弹幕服务器 ${i + 1}" else "弹幕服务器 API 地址",
-            if (i == 0) "令牌在路径里；键盘那一屏默认打码" else "存成空 = 去掉这一台",
+            if (i == 0) "地址里含令牌" else "留空 = 删除",
             url, "DANMAKU API", secret = true, hint = "https://…",
         ) { v -> save(list.toMutableList().also { it[i] = v }) }
     }
     if (list.size < com.gugaart.ui.danmaku.MAX_DANMAKU_SERVERS) {
-        rows += TvText("dm-apiUrl-new", "再加一个弹幕服务器", "可以填好几台：播放时同时去匹配，哪台先匹配上就先用哪台", "", "DANMAKU API", secret = true, hint = "https://…") { v ->
+        rows += TvText("dm-apiUrl-new", "添加弹幕服务器", null, "", "DANMAKU API", secret = true, hint = "https://…") { v ->
             if (v.isNotBlank()) save(list + v)
         }
     }
@@ -480,18 +494,18 @@ private fun tvBackupRows(c: com.gugaart.ui.backup.BackupController): List<TvSett
     val idle = c.busy == null
     val rows = ArrayList<TvSetting>()
     rows += TvHead("备份与还原", "BACKUP")
-    rows += TvInfo("bk-what", "备份里有什么", "设置 · 弹幕服务器 · Emby 地址", "不带登录令牌，还原后要重新登录；手机、电视、电脑通用")
+    rows += TvInfo("bk-what", "备份内容", "设置 · 弹幕服务器 · Emby 地址", null)
     val p = c.pending
     if (p != null) {
         rows += TvAction("bk-apply", "用这份备份覆盖这台设备的设置", com.gugaart.ui.backup.pendingText(p), "还原", confirm = "再按一次确定：覆盖这台设备的设置") { c.apply() }
         rows += TvAction("bk-cancel", "不还原", null, "取消") { c.cancel() }
     }
-    rows += TvText("bk-dav-url", "WebDAV 地址", "文件夹地址；备份存成里面的 gugaart-backup.json", dav.url, "WEBDAV", hint = "https://…") { c.saveWebdav(dav.copy(url = it)) }
+    rows += TvText("bk-dav-url", "WebDAV 地址", "存为文件夹里的 gugaart-backup.json", dav.url, "WEBDAV", hint = "https://…") { c.saveWebdav(dav.copy(url = it)) }
     rows += TvText("bk-dav-user", "WebDAV 用户名", null, dav.user, "USER") { c.saveWebdav(dav.copy(user = it)) }
     rows += TvText("bk-dav-pass", "WebDAV 密码", "存在系统安全存储里", dav.password, "PASSWORD", secret = true) { c.saveWebdav(dav.copy(password = it)) }
     if (dav.complete) {
         rows += TvAction("bk-dav-up", "备份到 WebDAV", c.message, if (c.busy == "dav-up") "备份中…" else "备份") { if (idle) c.upload() }
-        if (p == null) rows += TvAction("bk-dav-down", "从 WebDAV 还原", "先读出来给你看是哪一份", if (c.busy == "dav-down") "读取中…" else "读取") { if (idle) c.download() }
+        if (p == null) rows += TvAction("bk-dav-down", "从 WebDAV 还原", null, if (c.busy == "dav-down") "读取中…" else "读取") { if (idle) c.download() }
         rows += TvAction("bk-dav-test", "测试 WebDAV 连接", null, if (c.busy == "dav-test") "测试中…" else "测试") { if (idle) c.testWebdav() }
     } else if (c.message != null) {
         rows += TvInfo("bk-message", "备份", c.message)
@@ -527,26 +541,26 @@ private fun tvTraktRows(t: TvTrakt): List<TvSetting> {
     val rows = ArrayList<TvSetting>()
     rows += TvHead("Trakt", "TRAKT")
     when (val s = t.state) {
-        com.gugaart.ui.trakt.TraktState.Unavailable -> rows += TvInfo("trakt-unavailable", "连接 Trakt", "连不了", "这一版没有带 Trakt 应用")
-        com.gugaart.ui.trakt.TraktState.Disconnected -> rows += TvAction("trakt-connect", "连接 Trakt", t.message ?: "看的时候自动记到 Trakt；Trakt 看过的可以同步回 Emby", "连接") { t.connect() }
-        is com.gugaart.ui.trakt.TraktState.Expired -> rows += TvAction("trakt-expired", "Trakt 的授权过期了", t.message ?: ((s.user?.let { "@$it · " } ?: "") + "重新连接一次就好"), "重新连接") { t.connect() }
+        com.gugaart.ui.trakt.TraktState.Unavailable -> rows += TvInfo("trakt-unavailable", "连接 Trakt", "不支持")
+        com.gugaart.ui.trakt.TraktState.Disconnected -> rows += TvAction("trakt-connect", "连接 Trakt", t.message, "连接") { t.connect() }
+        is com.gugaart.ui.trakt.TraktState.Expired -> rows += TvAction("trakt-expired", "Trakt 的授权过期了", t.message ?: s.user?.let { "@$it" }, "重新连接") { t.connect() }
         is com.gugaart.ui.trakt.TraktState.Waiting -> rows += TvAction(
             "trakt-waiting",
             "在手机上打开 ${s.code.verificationUrl.removePrefix("https://")}，输入：${s.code.userCode}",
-            "输好了这里会自己连上；${s.code.expiresInSec / 60} 分钟内有效",
+            "${s.code.expiresInSec / 60} 分钟内有效",
             "取消",
         ) { t.cancel() }
         is com.gugaart.ui.trakt.TraktState.Connected -> {
             rows += TvAction("trakt-connected", "已连接 Trakt", s.user?.let { "@$it" }, "断开", confirm = "再按一次确定：断开 Trakt") { t.disconnect() }
-            rows += TvToggle("trakt-scrobble", "看的时候记到 Trakt", "看到 80% 以上 Trakt 记为看过", t.prefs.scrobble) { t.setPrefs(t.prefs.copy(scrobble = it)) }
-            rows += TvAction("trakt-sync", "Trakt 看过的同步到 Emby", t.syncMessage ?: "只把 Emby 里还没看的标成已看", if (t.syncMessage == "同步中…") "同步中…" else "同步") { if (t.syncMessage != "同步中…") t.sync() }
+            rows += TvToggle("trakt-scrobble", "看的时候记到 Trakt", null, t.prefs.scrobble) { t.setPrefs(t.prefs.copy(scrobble = it)) }
+            rows += TvAction("trakt-sync", "Trakt 看过的同步到 Emby", t.syncMessage ?: "只把未看的标成已看", if (t.syncMessage == "同步中…") "同步中…" else "同步") { if (t.syncMessage != "同步中…") t.sync() }
             rows += TvToggle("trakt-autosync", "打开应用时自动同步", null, t.prefs.autoSync) { t.setPrefs(t.prefs.copy(autoSync = it)) }
             // 追更日历：一集一行，确定 = 打开库里的那部剧
             rows += TvHead("追更日历", "TRAKT CALENDAR")
             val days = t.calendar
             when {
-                days == null -> rows += TvInfo("trakt-cal-loading", "追更日历", "正在读 Trakt…")
-                days.isEmpty() -> rows += TvInfo("trakt-cal-empty", "追更日历", "接下来两周没有", "在剧集详情页按「追更」，新的一集就会排在这里")
+                days == null -> rows += TvInfo("trakt-cal-loading", "追更日历", "加载中…")
+                days.isEmpty() -> rows += TvInfo("trakt-cal-empty", "追更日历", "两周内没有更新")
                 else -> for (day in days) for ((i, e) in day.entries.withIndex()) {
                     val line = listOfNotNull(e.season?.let { "第 $it 季" }, e.number?.let { "第 $it 集" }, e.title).joinToString(" · ")
                     val sid = e.seriesId
@@ -574,7 +588,7 @@ fun tvSubtitleStyleRows(s: SubStylePrefs, store: GugaSettingsStore, fonts: List<
         TvToggle("sub-bold", "粗体", null, s.bold) { on -> set { it.copy(bold = on) } },
         fonts?.let { list ->
             TvChoice(
-                "sub-font", "字体", fontStatus ?: "和弹幕共用：思源黑体、思源宋体、霞鹜文楷、得意黑随包，站酷快乐体用到时下载", list.currentLabel(),
+                "sub-font", "字体", fontStatus, list.currentLabel(),
                 list.map { TvPick(it.label, it.note) }, list.indices.filter { list[it].selected }.toSet(), "FONT",
                 preview = { i -> s.copy(font = list[i].key) },
             ) { i -> list[i].pick() }
@@ -585,10 +599,10 @@ fun tvSubtitleStyleRows(s: SubStylePrefs, store: GugaSettingsStore, fonts: List<
         ) { i -> set { it.copy(outline = SubOutline.entries[i]) } },
         TvToggle("sub-shadow", "阴影", null, s.shadow) { on -> set { it.copy(shadow = on) } },
         TvChoice(
-            "sub-position", "位置", "最下面一行离画面底边多远", s.position.label, SubPosition.entries.map { TvPick(it.label) }, setOf(SubPosition.entries.indexOf(s.position)), "POSITION",
+            "sub-position", "位置", null, s.position.label, SubPosition.entries.map { TvPick(it.label) }, setOf(SubPosition.entries.indexOf(s.position)), "POSITION",
             preview = { i -> s.copy(position = SubPosition.entries[i]) },
         ) { i -> set { it.copy(position = SubPosition.entries[i]) } },
-        TvToggle("sub-overrideAss", "也改 ASS 特效字幕", "默认不改：ASS 自带的字体、颜色、位置照原样，只跟着字号缩放", s.overrideAss) { on -> set { it.copy(overrideAss = on) } },
+        TvToggle("sub-overrideAss", "也改 ASS 特效字幕", null, s.overrideAss) { on -> set { it.copy(overrideAss = on) } },
         TvAction("sub-reset", "恢复默认的字幕样式", null, "恢复默认", confirm = "再按一次确定：恢复默认的字幕样式") { set { SubStylePrefs() } },
     )
 }

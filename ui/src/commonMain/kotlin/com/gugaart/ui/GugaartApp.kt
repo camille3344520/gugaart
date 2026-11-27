@@ -53,6 +53,7 @@ import com.gugaart.ui.wide.LocalWideNav
 import com.gugaart.ui.wide.WideNav
 import com.gugaart.ui.wide.WideTab
 import com.gugaart.ui.data.GugaSettingsStore
+import com.gugugaga.app.settings.playbackPrefs
 import com.gugaart.ui.mascot.LocalGugaPrefs
 import com.gugaart.ui.mascot.LocalHour
 import com.gugaart.ui.player.GugaPlayerScreen
@@ -91,12 +92,15 @@ import com.gugugaga.app.platform.localUtcOffsetMs
 import com.gugugaga.app.settings.uiSettings
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.app.ui.LocalOptionalGraph
+import com.gugugaga.app.settings.PerfPref
 import com.gugugaga.app.ui.glassBackendFor
 import com.gugugaga.ds.components.PageBackdrops
 import com.gugugaga.ds.focus.LocalBackDispatcher
 import com.gugugaga.ds.focus.LocalFocusRegistry
 import com.gugugaga.ds.glass.GlassBackend
+import com.gugugaga.ds.glass.GlassCaps
 import com.gugugaga.ds.glass.GlassScene
+import com.gugugaga.ds.glass.chooseGlassBackend
 import com.gugugaga.ds.glass.LocalGlassStrength
 import com.gugugaga.ds.glass.platformGlassCaps
 import com.gugugaga.ds.physics.MotionPrefs
@@ -159,6 +163,17 @@ const val TV_DESIGN_WIDTH = 1920f
 /** 电视上用的密度：让窗口正好是 [TV_DESIGN_WIDTH] dp 宽（1920 px → 1.0，3840 px → 2.0，1280 px → 0.667）。 */
 fun tvDesignDensity(windowWidthPx: Int): Float = windowWidthPx / TV_DESIGN_WIDTH
 
+/**
+ * 电视端玻璃后端选择：一律不走 Live（API 31+ 也用低分辨率 ControlledGl），仅在降级 / 中档 / 无 GLES2 时退到 Plates，低档退 Solid。
+ * 测试构建的 --es glass（[override]）照常优先。
+ */
+fun tvGlassBackend(perf: PerfPref, caps: GlassCaps, override: GlassBackend? = null, degraded: Boolean = false, glFailed: Boolean = false): GlassBackend {
+    if (override != null) return chooseGlassBackend(caps, override)
+    if (caps.reduceTransparency || perf == PerfPref.Low) return GlassBackend.Solid
+    if (degraded || glFailed || caps.lowEnd || perf == PerfPref.Mid) return GlassBackend.Plates
+    return if (caps.gles2) GlassBackend.ControlledGl else GlassBackend.Plates
+}
+
 @OptIn(ExperimentalTime::class)
 @Composable
 private fun GugaartRoot(graph: AppGraph, windowSize: DpSize?) {
@@ -166,12 +181,14 @@ private fun GugaartRoot(graph: AppGraph, windowSize: DpSize?) {
     val settings by graph.settings.state.collectAsState()
     val ui = settings.uiSettings
     val caps = remember { platformGlassCaps() }
-    val backend = glassBackendFor(ui.perf, caps, deps.glassBackendOverride)
+    val backend = if (deps.uiMode == UiMode.Tv) tvGlassBackend(ui.perf, caps, deps.glassBackendOverride) else glassBackendFor(ui.perf, caps, deps.glassBackendOverride)
     // 会话：恢复上次的账号（登录 / 已保存账号 / 备用线路的逻辑都在上游的 SessionManager）
     LaunchedEffect(graph) {
-        // 开发运行 / debug 包才有：先把几台本地 Mock 存成几台服务器（1.5.0 跨服务器验收；发布物里 urls 永远是空的）
-        com.gugaart.ui.data.DevMockServers.seed(graph)
-        graph.session.restore()
+        restoreSessionOffMain(
+            // 开发运行 / debug 包才有：先把几台本地 Mock 存成几台服务器（1.5.0 跨服务器验收；发布物里 urls 永远是空的）
+            seed = { com.gugaart.ui.data.DevMockServers.seed(graph) },
+            restore = { graph.session.restore() },
+        )
     }
     // 更新不自动下载（用户 2026-11-15：「更不更新让用户点，不要自动更新」）：上游的「自动下载更新」默认开，这里每次启动关掉
     LaunchedEffect(graph) {
@@ -207,6 +224,13 @@ private fun GugaartRoot(graph: AppGraph, windowSize: DpSize?) {
             val stored = (graph.settings.value["danmaku"] as? kotlinx.serialization.json.JsonObject)?.get("render") as? kotlinx.serialization.json.JsonObject
             com.gugaart.ui.data.DanmakuDefaults.seed(stored)?.let { graph.settings.patch("danmaku", "render" to it) }
             store.update { it.copy(danmakuSeeded = true) }
+        }
+        if (!store.prefs.value.subLangsSeeded) {
+            val cur = graph.settings.value.playbackPrefs.subtitleLangs
+            if (cur == com.gugaart.ui.data.UPSTREAM_DEFAULT_SUBTITLE_LANGS) {
+                graph.settings.patch("playback", "subtitleLangs" to com.gugugaga.app.settings.jsonStrings(com.gugaart.ui.data.DEFAULT_GUGA_SUBTITLE_LANGS))
+            }
+            store.update { it.copy(subLangsSeeded = true) }
         }
     }
     val today = remember {
@@ -253,7 +277,7 @@ private fun GugaartRoot(graph: AppGraph, windowSize: DpSize?) {
  * 必须在上游的 `GuguTheme` 里面，并且有 `LocalGraph`。[startTab]：测试 / 截图用，直接落在某个标签页。
  */
 @Composable
-fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPrefs(), startTab: PhoneTab = PhoneTab.Home, preset: ScreenPreset = ScreenPreset()) {
+fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPrefs(), startTab: PhoneTab = PhoneTab.Home, preset: ScreenPreset = LocalPreset.current) {
     val graph = LocalGraph.current
     val chrome = remember { PageChrome() }
     // 页面底 = 墨黑纸。整幅剧照是页面内容（backdropContent），不是这张底图。
@@ -273,7 +297,7 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
     // 「没人动」的那只钟：应用里才有（测试可以从外面给一只）。电脑 / 电视：不在首页也不在播放，10 分钟没有输入 → 翻回首页
     val outerClock = com.gugaart.ui.idle.LocalIdleClock.current
     val idle = remember(outerClock, today.live) { outerClock ?: if (today.live) com.gugaart.ui.idle.IdleClock() else null }
-    val idleHome = androidx.compose.runtime.rememberUpdatedState(prefs.idleHome)
+    val idleHome = androidx.compose.runtime.rememberUpdatedState(prefs.idleHomeFor(graph.deps.uiMode))
     // 换页、在播放器里都算「有人在」（用户 2026-11-15：「播放器里面 返回 有几率直接返回到主页」）：看片时遥控器的键直接交给播放器、
     // 安卓的返回键在 Compose 之前就被接走，这只钟一直以为没人动；看了 10 分钟以上，按返回一离开播放器就被它翻回了首页。
     if (idle != null) LaunchedEffect(route) { idle.touch() }
@@ -301,7 +325,16 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
         }
     }
     // 没有海报的页面（片库、搜索、设置…）= 兜底朱红
-    GugaTheme(spot = chrome.spot.takeIf { prefs.spotColorFollowsCover }) {
+    val prevRouteForSpot = remember { arrayOf<Route>(route) }
+    val routeChanged = prevRouteForSpot[0]::class != route::class
+    val suppressSpotAnim = remember { booleanArrayOf(false) }
+    if (routeChanged) suppressSpotAnim[0] = true
+    val animateSpot = !routeChanged && !suppressSpotAnim[0]
+    androidx.compose.runtime.SideEffect {
+        prevRouteForSpot[0] = route
+        if (!routeChanged) suppressSpotAnim[0] = false
+    }
+    GugaTheme(spot = chrome.spot.takeIf { prefs.spotColorFollowsCover }, animateSpot = animateSpot) {
         CompositionLocalProvider(LocalChrome provides chrome, LocalGugaPrefs provides prefs, LocalHour provides today.hour, LocalPreset provides preset, LocalWideNav provides wide, com.gugaart.ui.idle.LocalIdleClock provides idle) {
             // 菜单栏（M2-4）经这个接收者调命令表；菜单命令是 AWT 事件，顺手刷新闲置钟（X05）
             androidx.compose.runtime.DisposableEffect(graph, wide, chrome, idle) {
@@ -318,6 +351,7 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
             Box(
                 // 电视：遥控器的方向键 / 菜单键 / 焦点兜底在 tv/TvShell.kt（tvRoot）；别的端不变
                 Modifier.fillMaxSize()
+                    .then(com.gugaart.ui.tv.rememberTvPerfModifier(mode == UiMode.Tv))
                     // 任何输入（按键、鼠标、触摸）先在这里记一笔「有人在」，不吃事件
                     .then(
                         if (idle == null) Modifier else Modifier
@@ -364,20 +398,33 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                 if (route !is Route.Play) lastPage[0] = route
                 val pageRoute = if (playing) lastPage[0] else route
                 var pagesKept by remember { mutableStateOf(!inPlayer) }
-                LaunchedEffect(inPlayer) { if (!inPlayer) pagesKept = true }
+                var wasInPlayer by remember { mutableStateOf(inPlayer) }
+                LaunchedEffect(inPlayer) {
+                    if (!inPlayer) {
+                        pagesKept = true
+                        if (wasInPlayer && mode == UiMode.Tv) {
+                            com.gugaart.ui.tv.TvPerfTiming.onBackRouteChanged(pageRoute.toString(), graph.focus.lastFocusedKey)
+                        }
+                    }
+                    wasInPlayer = inPlayer
+                }
+                var glFailed by remember { mutableStateOf(false) }
+                val sceneBackend = if (mode == UiMode.Tv && graph.deps.glassBackendOverride == null && backend == GlassBackend.ControlledGl && ((com.gugaart.ui.tv.TvPerfGovernor.degraded && com.gugaart.ui.tv.TvFlipProbe.govGlass) || glFailed)) GlassBackend.Plates else backend
+                val tvPagesSlot = remember(today) { androidx.compose.runtime.movableContentOf<Route> { r -> TvPages(r, today) } }
                 if (inPlayer) GugaPlayerScreen(route as Route.Play)
                 if (!inPlayer || pagesKept) KeptPage(!inPlayer) { CompositionLocalProvider(com.gugaart.ui.idle.LocalPageShown provides !inPlayer) { GlassScene(
-                    backend = backend,
+                    backend = sceneBackend,
                     // 电视的 ControlledGl 后端只折射这张图：整幅铺满的页面把剧照的整屏小图放在 wide.bleedBackdrop 里（docs/glass.md §4）
                     backdrop = if (mode == UiMode.Tv) wide.bleedBackdrop ?: paper else paper,
                     modifier = Modifier.fillMaxSize(),
+                    glLayer = graph.deps.glLayer?.takeIf { mode == UiMode.Tv && !inPlayer && !glFailed && sceneBackend == GlassBackend.ControlledGl }?.let { f -> { host, mod -> f(host, mod) { glFailed = true } } },
                     // 玻璃要「看见」的页面内容画在这里：Live 后端把它录进取屏层，固定导航才有东西可折射
                     backdropContent = {
                         Box(Modifier.fillMaxSize().background(Guga.colors.paper)) {
                             when {
                                 // 电脑 / 电视：各自一套版式（desktop/、tv/），和手机共用数据入口
                                 mode == UiMode.Desktop -> if (session == null) DesktopLoginScreen(today) else DesktopPages(pageRoute, today)
-                                mode == UiMode.Tv -> if (session == null) TvLoginScreen(today) else TvPages(pageRoute, today)
+                                mode == UiMode.Tv -> if (session == null) TvLoginScreen(today) else tvPagesSlot(pageRoute)
                                 session == null -> LoginScreen(today)
                                 else -> {
                                     // 手机的首页离开后不拆（用户 2026-11-15：「安卓从其他界面返回首页排版很久，这个不能卡」）：

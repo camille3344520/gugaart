@@ -229,7 +229,7 @@ object DesktopServerMenu {
                     .testTag("desktop-server-menu"),
             ) {
                 Row(Modifier.fillMaxWidth().padding(start = Guga.rem(1.6f), end = Guga.rem(1.6f), top = Guga.rem(1.6f), bottom = Guga.rem(1.2f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.2f))) {
-                    BasicText("换一台服务器", Modifier.alignByBaseline(), style = Guga.song(rsp(2f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 1)
+                    BasicText("切换服务器", Modifier.alignByBaseline(), style = Guga.song(rsp(2f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 1)
                     BasicText("SERVERS", Modifier.alignByBaseline(), style = Guga.numeral(rsp(1.1f), colors.spot, letterSpacing = 0.2.em), maxLines = 1)
                     Spacer(Modifier.weight(1f))
                     BasicText("${entries.size} 台", Modifier.alignByBaseline(), style = Guga.note(rsp(1.2f), colors.faint), maxLines = 1)
@@ -245,7 +245,7 @@ object DesktopServerMenu {
                 Rule()
                 val mod = LocalDesktopHost.current.modifier
                 BasicText(
-                    "${DesktopCommand.Servers.hint(mod) ?: "Ctrl Shift S"} 开 / 关 · 1–9 直接切到第几台 · 右键改备注 / 删除",
+                    "${DesktopCommand.Servers.hint(mod) ?: "Ctrl Shift S"} 开 / 关 · 1–9 切换 · 右键 改备注 / 删除",
                     Modifier.padding(horizontal = Guga.rem(1.6f), vertical = Guga.rem(1.1f)).testTag("desktop-server-hint"),
                     style = Guga.note(rsp(1.1f), colors.faint),
                     maxLines = 1,

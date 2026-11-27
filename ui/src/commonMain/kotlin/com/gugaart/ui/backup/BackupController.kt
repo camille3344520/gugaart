@@ -69,7 +69,7 @@ class BackupController(
         message = "WebDAV 设置已保存"
     }
 
-    fun testWebdav() = act("dav-test") { message = dav.test(webdav) ?: "WebDAV 连得上" }
+    fun testWebdav() = act("dav-test") { message = dav.test(webdav) ?: "WebDAV 连接正常" }
 
     fun upload() = act("dav-up") {
         val err = dav.upload(webdav, make())
@@ -117,7 +117,7 @@ class BackupController(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                message = "没有成功，再试一次"
+                message = "失败"
             } finally {
                 busy = null
             }

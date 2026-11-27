@@ -117,8 +117,7 @@ fun LoginScreen(today: Today) {
         }
         forgetting?.let { s ->
             ConfirmSheet(
-                title = "移除「${s.remark?.takeIf { it.isNotBlank() } ?: s.name}」",
-                text = "这台服务器和它保存的账号会从这台设备上拿掉。服务器上的东西不动。",
+                title = "移除这台服务器？",
                 confirm = "移除",
                 onConfirm = {
                     model.forget(s)
@@ -220,14 +219,13 @@ private fun ServerList(model: LoginModel, first: Boolean, onForget: (StoredServe
                     number = i + 1,
                     name = s.remark?.takeIf { it.isNotBlank() } ?: s.name,
                     right = when {
-                        model.entering == s.id -> "正在进……"
+                        model.entering == s.id -> "进入中…"
                         ms == null -> "…"
                         bad -> "连不上"
                         else -> "$ms ms"
                     },
                     sub = when {
-                        bad -> "连不上：地址也许换了"
-                        names.isEmpty() -> "还没有登录过"
+                        names.isEmpty() -> "未登录"
                         else -> names
                     },
                     bad = bad,
@@ -246,7 +244,7 @@ private fun ServerList(model: LoginModel, first: Boolean, onForget: (StoredServe
         )
         Rule()
         if (!servers.isNullOrEmpty()) {
-            BasicText("长按一台，可以把它从这台设备上移除。", Modifier.padding(top = 12.dp), style = Guga.note(Guga.type.caption, colors.faint))
+            BasicText("长按可移除", Modifier.padding(top = 12.dp), style = Guga.note(Guga.type.caption, colors.faint))
         }
     }
 }
@@ -278,8 +276,10 @@ private fun ServerRow(number: Int, name: String, right: String, sub: String, bad
 private fun AddServer(model: LoginModel) {
     val colors = Guga.colors
     val found = model.found
+    // 边打边找（P2-19，和电脑一样）：停下来就自己去找，不用先点「连接」
+    androidx.compose.runtime.LaunchedEffect(model.address, model.scheme) { model.probeWhenIdle() }
     Column(Modifier.testTag(if (found != null) "login-found" else "login-add-step")) {
-        Headline("添加服务器 · STEP 1 / 2", "片子", "放在哪儿", "填 Emby 服务器的地址。局域网里的也行，带不带端口都行。")
+        Headline("添加服务器 · STEP 1 / 2", "片子", "放在哪儿", "填 Emby 服务器的地址")
         PaperField(
             "地址",
             model.address,
@@ -289,7 +289,7 @@ private fun AddServer(model: LoginModel) {
             big = true,
             keyboard = KeyboardType.Uri,
             ime = ImeAction.Go,
-            onIme = model::connect,
+            onIme = model::connectThenNext,
             error = model.addError != null,
             tag = "login-address",
             trailing = { if (found != null) Icon(GuguIcon.Check, colors.spot, 20.dp) },
@@ -304,26 +304,23 @@ private fun AddServer(model: LoginModel) {
         Rule()
         when {
             found != null -> Column(Modifier.fillMaxWidth().padding(top = 20.dp).border(1.dp, colors.ink).padding(horizontal = 18.dp, vertical = 20.dp)) {
-                BasicText("找到了", style = Guga.song(Guga.type.kicker, color = colors.spot, letterSpacing = 0.3.em), maxLines = 1)
+                BasicText("已找到", style = Guga.song(Guga.type.kicker, color = colors.spot, letterSpacing = 0.3.em), maxLines = 1)
                 BasicText(found.name, Modifier.padding(top = 10.dp), style = Guga.song(22.sp, FontWeight.Black, letterSpacing = 0.08.em), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 BasicText(listOfNotNull(model.foundInfo, if (found.accounts.isEmpty()) "需要登录" else "保存过 ${found.accounts.size} 个账号").joinToString(" · "), Modifier.padding(top = 10.dp), style = Guga.song(Guga.type.caption, color = colors.dim), maxLines = 2)
             }
+            model.probing -> BasicText("正在找…", Modifier.padding(top = 16.dp).testTag("login-probing"), style = Guga.note(Guga.type.caption, colors.dim), maxLines = 1)
             model.addError != null -> Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(GuguIcon.TriangleAlert, colors.seal, 14.dp, Modifier.padding(top = 3.dp))
-                BasicText("没连上：${model.addError}", style = Guga.note(Guga.type.caption * 1.06f, colors.seal), maxLines = 3)
+                BasicText("连接失败：${model.addError}", style = Guga.note(Guga.type.caption * 1.06f, colors.seal), maxLines = 3)
             }
-            else -> BasicText("不知道地址？在装着 Emby 的那台电脑上打开管理页面，浏览器地址栏里的就是。", Modifier.padding(top = 16.dp), style = Guga.note(Guga.type.caption * 1.04f, colors.faint), maxLines = 3)
         }
+        // 只有一个按钮：「下一步：登录」（还没找到 = 先找，找到了直接进）
         WideButton(
-            when {
-                found != null -> "下一步：登录"
-                model.probing -> "正在找……"
-                else -> "连接"
-            },
-            { if (found != null) model.next() else model.connect() },
+            "下一步：登录",
+            model::connectThenNext,
             Modifier.padding(top = 26.dp).testTag("login-connect"),
-            trailing = GuguIcon.ChevronRight.takeIf { !model.probing },
-            enabled = found != null || (model.address.isNotBlank() && !model.probing),
+            trailing = GuguIcon.ChevronRight,
+            enabled = found != null || model.address.isNotBlank(),
         )
     }
 }
@@ -356,7 +353,7 @@ private fun SignIn(model: LoginModel) {
             model.password,
             { model.password = it },
             Modifier.padding(top = 22.dp),
-            placeholder = "由你自己输入",
+            placeholder = "没有密码就留空",
             password = true,
             error = model.badPassword,
             enabled = !model.busy,
@@ -370,10 +367,10 @@ private fun SignIn(model: LoginModel) {
                 BasicText(model.error.orEmpty(), style = Guga.note(Guga.type.caption * 1.06f, colors.seal), maxLines = 3)
             }
         } else {
-            BasicText("密码只发给你的服务器；登录后本机只保存令牌，放在系统安全存储里。", Modifier.padding(top = 14.dp), style = Guga.note(Guga.type.caption * 1.04f, colors.faint), maxLines = 3)
+            BasicText("密码只发给你的服务器，本机只保存令牌", Modifier.padding(top = 14.dp), style = Guga.note(Guga.type.caption * 1.04f, colors.faint), maxLines = 3)
         }
         WideButton(
-            if (model.busy) "正在登录……" else "登录",
+            if (model.busy) "登录中…" else "登录",
             model::signIn,
             Modifier.padding(top = 24.dp).testTag("login-submit"),
             trailing = GuguIcon.ChevronRight.takeIf { !model.busy },

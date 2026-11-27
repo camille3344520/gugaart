@@ -150,8 +150,8 @@ object SubtitleAutoBest {
         val mine = ++round
         itemId = target.itemId
         session = null
-        if (!enabled && !offerWhenOff) return publish(AutoBestState.Skipped("设置里没开自动加载"), mine)
-        if (hasChinese) return publish(AutoBestState.Skipped("这一集已经有中文字幕"), mine)
+        if (!enabled && !offerWhenOff) return publish(AutoBestState.Skipped("自动加载已关"), mine)
+        if (hasChinese) return publish(AutoBestState.Skipped("已有中文字幕"), mine)
         publish(AutoBestState.Searching, mine)
         val s = SubtitleSearchSession(target, client, net, online, langs)
         session = s
@@ -160,13 +160,13 @@ object SubtitleAutoBest {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return publish(AutoBestState.Failed(null, "没搜成：" + (e.message ?: e::class.simpleName.orEmpty())), mine)
+            return publish(AutoBestState.Failed(null, "搜索失败：" + (e.message ?: e::class.simpleName.orEmpty())), mine)
         }
-        val best = s.best ?: return publish(AutoBestState.Skipped("没有对得上的字幕"), mine)
+        val best = s.best ?: return publish(AutoBestState.Skipped("没有匹配的字幕"), mine)
         return when (autoBestAction(enabled, hasChinese, best, offerWhenOff)) {
             AutoBestAction.Offer -> publish(AutoBestState.Found(best.hit, best.score, foundNote(best)), mine)
             AutoBestAction.Load -> if (mine == round) load(s, best, select, mine) else state
-            else -> publish(AutoBestState.Skipped("没有完全对得上的字幕"), mine)
+            else -> publish(AutoBestState.Skipped("没有精确匹配的字幕"), mine)
         }
     }
 
@@ -178,10 +178,10 @@ object SubtitleAutoBest {
             val (text, format) = s.fetchText(hit)
             val sub = LocalSubtitles.add(s.target.itemId, text, format, autoLocalLabel(hit), if (hit.lang == SubLang.English) "eng" else "chi")
             if (LocalSubtitles.urlOf(sub) == null) {
-                return publish(AutoBestState.Failed(hit, "本机放不了这条字幕（回环服务起不来）"), mine)
+                return publish(AutoBestState.Failed(hit, "加载失败"), mine)
             }
             if (mine == round) select?.invoke(sub.index)
-            publish(AutoBestState.Loaded(hit, best.score, sub.index, false, "已自动加载：${hit.name}（仅本次播放）"), mine)
+            publish(AutoBestState.Loaded(hit, best.score, sub.index, false, "已自动加载：${hit.name} · 仅本次"), mine)
         } catch (e: CancellationException) {
             throw e
         } catch (e: SubtitleFetchException) {
@@ -197,10 +197,9 @@ object SubtitleAutoBest {
         return s
     }
 
-    /** 「找到…」那句话；服务器源的多说一句「用上会存进 Emby」（写服务器要用户自己点）。 */
+    /** 「找到…」那句话（1.5.1 m151：去向写在动作按钮上，不再另写「用上会存进 Emby」）。 */
     private fun foundNote(best: ScoredHit): String =
-        (if (best.score.isExactHash) "找到完全对得上的字幕" else "找到对得上的字幕") +
-            (if (best.hit.toEmby) "（用上会存进 Emby）" else "") + "：" + best.hit.name
+        (if (best.score.isExactHash) "找到精确匹配的字幕" else "找到匹配的字幕") + "：" + best.hit.name
 
     /** 自动加载的本机字幕在字幕面板里叫什么（和手动搜来的同一种写法）。 */
     fun autoLocalLabel(hit: SubtitleHit): String = "搜到的字幕 · ${hit.lang.short} · ${hit.source.label} · 仅本次"

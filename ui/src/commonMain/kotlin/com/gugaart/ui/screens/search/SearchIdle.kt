@@ -87,6 +87,5 @@ fun PhoneSearchIdle(recents: List<RecentSearch>, cloud: List<CloudWord>, onPick:
             SectionHeader("随便搜搜", "TRY", Modifier.padding(top = dimens.sectionGap))
             SearchCloud(cloud, onPick, Triple(type.caption * 1.05f, type.row * 1.15f, type.section * 1.05f), Modifier.padding(top = 16.dp))
         }
-        BasicText("按片名、单集名、演员、年份、题材检索；拼音首字母也行（yxj = 颜心记）", Modifier.padding(top = 30.dp), style = Guga.note(type.caption, colors.faint), maxLines = 2)
     }
 }

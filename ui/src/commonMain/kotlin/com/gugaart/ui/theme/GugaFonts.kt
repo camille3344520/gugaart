@@ -9,8 +9,10 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import com.gugaart.ui.res.Res
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 /**
@@ -92,14 +94,30 @@ object GugaFonts {
     }
 
     /** 找一次资源里的字体文件并换上；重复调用是空操作。读不到 / 平台做不了 → 保持平台字体，不抛。 */
-    @OptIn(ExperimentalResourceApi::class)
     suspend fun ensureLoaded() = lock.withLock {
         if (tried) return@withLock
         tried = true
+        val (songFamily, numeralFamily) = resolve(::bundledBytes)
+        if (songFamily != null) {
+            song = songFamily
+            bundled = true
+        }
+        numeralFamily?.let { numeral = it }
+    }
+
+    @OptIn(ExperimentalResourceApi::class)
+    private suspend fun bundledBytes(name: String): ByteArray? = Res.readBytes("$DIR/$name")
+
+    /**
+     * 读字体文件、换成平台字体：(宋体, 数字斜体)，没有的是 null。整段不在调用者的线程上做——三份 3.4 MB 的子集要从安装包里解压
+     * （Android 的资源读取不自己换线程），Android 上还要写进缓存目录；原来在根上的 LaunchedEffect 里 = 主线程
+     * （1.5.1 性能批次：手机 release 包冷启动采样，主线程占 79 ms）。[read] 读不到 / 抛错 = 那个文件没有。
+     */
+    internal suspend fun resolve(read: suspend (String) -> ByteArray?): Pair<FontFamily?, FontFamily?> = withContext(Dispatchers.Default) {
         val cache = HashMap<String, ByteArray?>()
         suspend fun bytes(name: String): ByteArray? = cache.getOrPut(name) {
             try {
-                Res.readBytes("$DIR/$name")
+                read(name)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
@@ -113,10 +131,7 @@ object GugaFonts {
         val fonts = plan { it in present }.mapNotNull { (file, weight, variable) ->
             bytes(file)?.let { platformFont("guga-song-$file-${weight.weight}", it, weight, FontStyle.Normal, variable) }
         }
-        if (fonts.isNotEmpty()) {
-            song = FontFamily(fonts)
-            bundled = true
-        }
-        bytes(NUMERAL)?.let { platformFont("guga-numeral", it, FontWeight.Normal, FontStyle.Italic, false) }?.let { numeral = FontFamily(it) }
+        val num = bytes(NUMERAL)?.let { platformFont("guga-numeral", it, FontWeight.Normal, FontStyle.Italic, false) }?.let { FontFamily(it) }
+        (if (fonts.isNotEmpty()) FontFamily(fonts) else null) to num
     }
 }

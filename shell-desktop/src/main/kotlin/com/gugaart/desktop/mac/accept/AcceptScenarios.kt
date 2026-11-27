@@ -24,9 +24,10 @@ internal object AcceptScenarios {
     /** 输入框里打的：一个带 `/` `:` `?` `=` `.` 的地址 + 三个字母（j f k 在播放器里是快进 / 全屏 / 暂停——漏出去了一看就知道，也不写服务器）。 */
     const val PROBE_TEXT = "http://a.b/c?d=1jfk"
 
-    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib", "subs-first", "sub-switch", "shader", "subtitle-search", "search141", "sub-style", "specials141", "servers150", "sources150", "switchback150", "serversettings150", "remote150")
+    val NAMES = listOf("window", "input", "keys", "browse", "play", "nowplaying", "menu", "dock", "keychain", "pip", "error-nolib", "subs-first", "sub-switch", "shader", "subtitle-search", "search141", "sub-style", "specials141", "servers150", "sources150", "switchback150", "serversettings150", "remote150", "season151", "dmjit") // DMJIT-TEMP
 
     fun all(host: AcceptHost): List<Scenario> = listOf(
+        Scenario("dmjit", "danmaku jitter probe (temp)", emptyList(), 900) { DmJitterProbe.run(it) }, // DMJIT-TEMP
         Scenario("window", "窗口外观：红绿灯、报头让位、深色、失焦变淡、全屏、改尺寸", listOf("X01", "X08", "B22", "P20", "G03"), 180) { window(it) },
         Scenario("input", "输入框：聚焦后打字进框、不触发快捷键；未聚焦时 / 跳搜索", listOf("S05", "S01", "C01", "D04", "D07", "T08", "P25", "D03"), 420) { input(it) },
         Scenario("keys", "快捷键：/ ⌘K ⌘, F5 [ ] ← → ⌘F Esc Enter，⌘ 提示与菜单栏", listOf("X04", "B05", "B13", "B29", "S01", "T01", "B10", "B01", "M05"), 300) { keys(it) },
@@ -49,7 +50,8 @@ internal object AcceptScenarios {
         Scenario("sources150", "1.5.0 详情页「源」：990201 本台 4K（推荐）+1080p（另一份文件）+别台行（服务器名+延迟）；选 1080p 放 990202、选别台放那台（查 Mock sessions；要 --mock-servers 预存三台）", listOf("A2"), 600) { sources150(it) },
         Scenario("switchback150", "1.5.0 切走再切回：首页第一帧就是上次的内容（不空骨架），记切回用时（要 --mock-servers 预存三台）", listOf("A2"), 300) { switchback150(it) },
         Scenario("serversettings150", "1.5.0 设置 › 播放 › 多台服务器：关「从其它服务器找片源」后详情页只剩本台的源（要 --mock-servers 预存三台）", listOf("A2"), 300) { serverSettings150(it) },
-        Scenario("remote150", "1.5.0 播放器画质面板「版本」：换到别台从当前位置接着放；停掉那台再换 → 「换到「X」没成功，继续播放当前的」4 秒后消失（要 --mock-servers 预存三台 + GUGAART_ACCEPT_STOP）", listOf("A2"), 600) { remote150(it) },
+        Scenario("remote150", "1.5.0 播放器画质面板「版本」：换到别台从当前位置接着放；停掉那台再换 → 「换到「X」失败」4 秒后消失（要 --mock-servers 预存三台 + GUGAART_ACCEPT_STOP）", listOf("A2"), 600) { remote150(it) },
+        Scenario("season151", "1.5.1 多季的剧默认搜这一季：头文字D 第 6 季第 3 集，弹幕来源框里是「头文字D 第六季」、这一季的候选在前、快捷词；字幕「换个名字搜」带季集（要 Mock 里有六季的头文字D + GUGAART_ACCEPT_DANMAKU 假弹幕服务器）", listOf("D04", "P06"), 420) { season151(it) },
     )
 
     // ================================================================== 1. 窗口外观
@@ -355,12 +357,12 @@ internal object AcceptScenarios {
             field(c, "dm-block", "设置 › 弹幕 › 屏蔽词（D03）", "set-dm-blockWords", secret = false, rows = "D03 S05")
             restore("danmaku", dm0)
 
-            c.nav(Route.Settings("account"), 1_500)
-            field(c, "dav-url", "设置 › 账号与服务器 › WebDAV 地址（不点保存）（T08）", "backup-dav-url", secret = false, rows = "T08 S05")
-            c.nav(Route.Settings("account"), 1_500)
-            field(c, "dav-user", "设置 › 账号与服务器 › WebDAV 用户名（不点保存）（T08）", "backup-dav-user", secret = false, rows = "T08 S05")
-            c.nav(Route.Settings("account"), 1_500)
-            field(c, "dav-pass", "设置 › 账号与服务器 › WebDAV 密码（打码的框；不点保存）（T08）", "backup-dav-pass", secret = true, rows = "T08 S05")
+            c.nav(Route.Settings("backup"), 1_500)
+            field(c, "dav-url", "设置 › 备份与同步 › WebDAV 地址（不点保存）（T08）", "backup-dav-url", secret = false, rows = "T08 S05")
+            c.nav(Route.Settings("backup"), 1_500)
+            field(c, "dav-user", "设置 › 备份与同步 › WebDAV 用户名（不点保存）（T08）", "backup-dav-user", secret = false, rows = "T08 S05")
+            c.nav(Route.Settings("backup"), 1_500)
+            field(c, "dav-pass", "设置 › 备份与同步 › WebDAV 密码（打码的框；不点保存）（T08）", "backup-dav-pass", secret = true, rows = "T08 S05")
         } finally {
             restore("accelerator", accel0)
             restore("danmaku", dm0)
@@ -386,7 +388,7 @@ internal object AcceptScenarios {
         c.skip("login-password", "登录 › 用户名 / 密码框", "不往账号密码框里打字（规矩：不输入任何账号密码）；同一个 PaperField 组件，地址框已覆盖")
         c.nav(Route.Home, 600)
 
-        // ---- 播放器里的弹幕源搜索（D04）：开播 → 弹幕面板 → 「不对？换一个 / 手动搜索」→ 搜索框。打完收起，不点候选、不点搜索
+        // ---- 播放器里的弹幕源搜索（D04）：开播 → 弹幕面板 → 「换弹幕 / 手动搜索」→ 搜索框。打完收起，不点候选、不点搜索
         val item = resumeItem(c)
         if (item == null) {
             c.skip("dm-search", "播放器 › 弹幕源 › 手动搜索框（D04）", "「继续观看」是空的")
@@ -412,27 +414,27 @@ internal object AcceptScenarios {
             d.click(word)
             val panelOpen = d.waitFor(3_000) { d.tree().has("player-side") }
             Thread.sleep(900)
-            var link = scrollTo(c) { tr -> tr.nodes.lastOrNull { n -> (n.texts + n.desc).any { it.contains("换一个") } } }
-            val panelShot = d.shot("input-dm-panel", "弹幕面板（找「不对？换一个」）")
+            var link = scrollTo(c) { tr -> tr.nodes.lastOrNull { n -> (n.texts + n.desc).any { it.contains("换弹幕") } } }
+            val panelShot = d.shot("input-dm-panel", "弹幕面板（找「换弹幕」）")
             if (link != null && !link.visible) {
-                // 滚到底了还看不见：面板最后一行被底下的「收起，回到全幅」压住了。记下来，改点「弹幕源」下面那一行（同一个动作）
+                // 滚到底了还看不见：面板最后一行被底下的「收起」压住了。记下来，改点「弹幕源」下面那一行（同一个动作）
                 val tr = d.tree()
                 val side = tr.tag("player-side")
                 c.check(
-                    "dm-panel-last-row", "弹幕面板滚到底能看到最后一行「不对？换一个 / 手动搜索」（D04 / P03）", Verdict.Fail,
-                    "滚到底了这一行仍被裁掉（在「收起，回到全幅」那一条后面）：用户点不到",
+                    "dm-panel-last-row", "弹幕面板滚到底能看到最后一行「换弹幕 / 手动搜索」（D04 / P03）", Verdict.Fail,
+                    "滚到底了这一行仍被裁掉（在「收起」那一条后面）：用户点不到",
                     values = mapOf("这一行" to link.bounds.short(), "面板" to side?.bounds?.short(), "收起" to tr.tag("player-side-close")?.bounds?.short()),
                     shots = listOf(panelShot),
                 )
                 val inPanel = side?.let { listOf(it) + tr.descendants(it) }.orEmpty()
                 val header = inPanel.indexOfFirst { n -> n.texts.any { it.replace(" ", "") == "弹幕源" } }
-                link = inPanel.drop(header + 1).firstOrNull { n -> n.visible && (n.texts + n.desc).any { it.isNotBlank() } && (n.texts + n.desc).none { it.contains("换一个") } }
+                link = inPanel.drop(header + 1).firstOrNull { n -> n.visible && (n.texts + n.desc).any { it.isNotBlank() } && (n.texts + n.desc).none { it.contains("换弹幕") } }
             }
             if (link != null) d.click(link)
             if (c.waitTag("dm-picker", 4_000) == null) {
-                val after = d.shot("input-dm-after-link", "点了「换一个」以后")
+                val after = d.shot("input-dm-after-link", "点了「换弹幕」以后")
                 c.check(
-                    "dm-search", "播放器 › 弹幕源 › 手动搜索框（D04）", Verdict.Fail, "点「不对？换一个 / 手动搜索」以后没有滑出弹幕来源",
+                    "dm-search", "播放器 › 弹幕源 › 手动搜索框（D04）", Verdict.Fail, "点「换弹幕 / 手动搜索」以后没有滑出弹幕来源",
                     values = mapOf("面板开了" to panelOpen, "链接" to link?.let { "${(it.texts + it.desc).joinToString("/")} ${it.bounds.short()} 看得见=${it.visible}" }, "页面" to c.path),
                     shots = listOf(panelShot, after),
                 )
@@ -1394,7 +1396,7 @@ internal object AcceptScenarios {
         pingsSettled()
         rowOf(offPort)?.let { d.click(it) }
         val noted = d.waitFor(8_000) { d.tree().textUnder("server-note")?.contains(com.gugaart.ui.servers.ServerSwitchCopy.OFFLINE) == true }
-        c.expect("servers-offline", "点停掉的那台：不切（还在 :$first）、下拉不收，那一行下面写「连不上这台服务器，没有切换」", noted && port() == first && menuOpen(), values = mapOf("现在" to port()), shots = listOf(d.shot("srv-06-offline", "点离线的那台")))
+        c.expect("servers-offline", "点停掉的那台：不切（还在 :$first）、下拉不收，那一行下面写「连不上，未切换」", noted && port() == first && menuOpen(), values = mapOf("现在" to port()), shots = listOf(d.shot("srv-06-offline", "点离线的那台")))
         d.key(KeyEvent.VK_ESCAPE)
         val escClosed = d.waitFor(3_000) { !menuOpen() }
         c.expect("servers-esc", "Esc 收起下拉", escClosed)
@@ -2338,18 +2340,116 @@ internal object AcceptScenarios {
         val clicked3 = clickSourceRow(portOf(url3))
         val flashShown = d.waitFor(8_000, 100) { d.tree().has("player-notice-flash") }
         val flashText = d.tree().textUnder("player-notice-flash").orEmpty()
-        val shFlash = d.shot("rem-03-flash", "换到停掉的台：「换到「X」没成功，继续播放当前的」")
+        val shFlash = d.shot("rem-03-flash", "换到停掉的台：「换到「X」失败」")
         val tFlash = System.currentTimeMillis()
         val gone = d.waitFor(8_000, 200) { !d.tree().has("player-notice-flash") }
         val flashMs = System.currentTimeMillis() - tFlash
         c.expect(
-            "remote-fail-toast", "停掉那台再换：出「换到「X」没成功，继续播放当前的」，约 4 秒后消失",
-            flashShown && "没成功，继续播放当前的" in flashText && gone,
+            "remote-fail-toast", "停掉那台再换：出「换到「X」失败」，约 4 秒后消失",
+            flashShown && "」失败" in flashText && gone,
             values = mapOf("提示" to flashText, "亮ms" to flashMs, "点到行" to clicked3), shots = listOf(shFlash),
         )
         c.back(1_500)
     }
 
+    // ================================================================== 1.5.1 多季的剧：默认搜这一季
+
+    /**
+     * 主理人：「头文字D播放第六季第三集的时候点搜索弹幕、字幕还是默认搜头文字D，这样还得手动再搜一次。」
+     * Mock 里六季的《头文字D》（季名「第 N 季」；外面的脚本给 Mock 加的）放第 6 季第 3 集：
+     *  ① 弹幕来源：手动搜索框默认「头文字D 第六季」、这一季的候选排前面、框下面是这一季在弹幕服务器上自己的名字；点第一个快捷词真的去搜。
+     *     弹幕服务器是外面起的假服务器（环境变量 `GUGAART_ACCEPT_DANMAKU`，只认 127.0.0.1），写进这份 Mock 数据目录的设置。
+     *  ② 字幕：字幕面板「搜索字幕…」，「换个名字搜」框默认带季集；迅雷是真的（只读）。只在 Mock 上跑。
+     */
+    private fun season151(c: Ctx) {
+        val d = c.d
+        val titleDm = "弹幕来源：多季的剧默认搜这一季（1.5.1）"
+        val titleSub = "字幕搜索：「换个名字搜」默认带季集（1.5.1）"
+        c.reset()
+        val client = runCatching { c.client() }.getOrNull()
+        val base = client?.address?.baseUrl.orEmpty()
+        if (client == null || !(base.startsWith("http://127.0.0.1:") || base.startsWith("http://localhost:"))) {
+            c.skip("season-dm", titleDm, "不是 Mock")
+            c.skip("season-sub", titleSub, "不是 Mock")
+            return
+        }
+        val ep = runCatching {
+            runBlocking {
+                val series = client.getItems(LibraryQuery(includeItemTypes = listOf("Series"), recursive = true, searchTerm = "头文字D", limit = 10)).items.firstOrNull { it.name == "头文字D" }
+                series?.let { s -> client.getEpisodes(s.id, season = 6).items.firstOrNull { it.indexNumber == 3 } }
+            }
+        }.getOrNull()
+        if (ep == null) {
+            c.skip("season-dm", titleDm, "Mock 里没有六季的头文字D（要外面的脚本加）")
+            c.skip("season-sub", titleSub, "Mock 里没有六季的头文字D（要外面的脚本加）")
+            return
+        }
+        val dm = System.getenv("GUGAART_ACCEPT_DANMAKU")?.takeIf { it.startsWith("http://127.0.0.1:") }
+        if (dm != null) runBlocking { com.gugaart.ui.danmaku.DanmakuServers.save(listOf(dm)) }
+        val t0 = System.currentTimeMillis()
+        c.nav(Route.Play(ep.id, startMs = null), 300)
+        val ff = c.awaitFirstFrame(t0)
+        // 弹幕匹配走完（假服务器几百毫秒；有歧义时自己会出来）
+        Thread.sleep(6_000)
+        // ---- ① 弹幕来源（「弹幕源」那一行点开的就是这一张）
+        if (!d.tree().has("dm-picker")) d.ui { com.gugaart.ui.player.DanmakuPickerBoard.open = true }
+        val opened = c.waitTag("dm-picker", 5_000) != null
+        d.waitFor(5_000) { d.tree().tag("dm-search")?.editable?.isNotEmpty() == true }
+        Thread.sleep(600)
+        val tree = d.tree()
+        val box = tree.tag("dm-search")?.editable
+        val cands = (0 until 6).mapNotNull { i -> tree.textUnder("dm-cand-$i") }
+        val quick = (0 until 3).mapNotNull { i -> tree.textUnder("dm-quick-$i") }
+        val shPicker = d.shot("season-dm", "弹幕来源：框里「头文字D 第六季」，第六季的候选在前，框下面是快捷词")
+        fun sixth(t: String?) = t != null && ("Final Stage" in t || "第六部" in t)
+        c.expect(
+            "season-dm", titleDm,
+            opened && box == "头文字D 第六季" && (cands.isEmpty() || sixth(cands.first())),
+            values = mapOf("片" to "${ep.seriesName} S${ep.parentIndexNumber}E${ep.indexNumber}", "首帧ms" to ff, "弹幕服务器" to (dm != null), "框" to box, "候选" to cands.joinToString(" | "), "快捷词" to quick.joinToString(" | ")),
+            shots = listOf(shPicker),
+        )
+        // 框里的词原样搜一次：结果里第六季的排前面
+        d.tree().tag("dm-search-go")?.let { d.click(it) }
+        val searched = d.waitFor(10_000) { d.tree().has("dm-hit-0") }
+        Thread.sleep(500)
+        val hits = (0 until 4).mapNotNull { i -> d.tree().textUnder("dm-hit-$i") }
+        val shSearch = d.shot("season-dm-search", "点「搜索」：搜「头文字D 第六季」，第六季的条目在前")
+        c.expect("season-dm-search", "弹幕来源：搜框里的词，这一季的结果排前面（1.5.1）", searched && sixth(hits.firstOrNull()), values = mapOf("结果" to hits.joinToString(" | ")), shots = listOf(shSearch))
+        val chip = d.tree().tag("dm-quick-0")
+        if (chip != null) {
+            d.click(chip)
+            val got = d.waitFor(10_000) { d.tree().has("dm-hit-0") }
+            Thread.sleep(500)
+            val box2 = d.tree().tag("dm-search")?.editable
+            val hit0 = d.tree().textUnder("dm-hit-0")
+            val shHits = d.shot("season-dm-quick", "点快捷词：填进框里并搜")
+            c.expect("season-dm-quick", "点快捷词 = 填进框里并搜，结果是这一季的条目（1.5.1）", got && box2 == quick.firstOrNull(), values = mapOf("框" to box2, "第一条" to hit0), shots = listOf(shHits))
+        } else c.skip("season-dm-quick", "点快捷词（1.5.1）", "没有快捷词（候选里没有这一季自己的名字）")
+        d.tree().tag("dm-picker-close")?.let { d.click(it) }
+        d.waitFor(3_000) { !d.tree().has("dm-picker") }
+        // ---- ② 字幕搜索：底部「字幕」→ 面板最后一行「搜索字幕…」
+        val board = com.gugaart.ui.subtitle.SubtitleSearchBoard
+        c.wakeControls()
+        if (!d.tree().has("panel-sub")) {
+            d.tree().nodes.firstOrNull { (it.tag == "word" || it.tag == "word-on") && it.desc.any { s -> s.startsWith("字幕") } }?.let { d.click(it) }
+            d.waitFor(3_000) { d.tree().has("panel-sub") }
+        }
+        Thread.sleep(500)
+        d.tree().nodes.firstOrNull { n -> n.desc.any { it == "搜索字幕…" } }?.let { d.click(it) }
+        val subOpen = d.waitFor(5_000) { d.tree().has("sub-search") }
+        d.waitFor(60_000, pollMs = 300) { board.session?.let { !it.searching } == true }
+        Thread.sleep(800)
+        val s = board.session
+        val subBox = d.tree().tag("sub-query")?.editable
+        val shSub = d.shot("season-sub", "字幕搜索：「换个名字搜」默认带季集，迅雷的结果里有这一集")
+        c.expect(
+            "season-sub", titleSub,
+            subOpen && s != null && Regex("""S06E03""", RegexOption.IGNORE_CASE).containsMatchIn(s.query) && subBox == s.query,
+            values = mapOf("框" to subBox, "文件名" to s?.target?.fileName, "迅雷" to s?.thunder, "前几条" to s?.hits?.take(5)?.joinToString(" | ") { it.name }),
+            shots = listOf(shSub),
+        )
+        c.back(1_500)
+    }
 }
 
 internal data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

@@ -1,6 +1,7 @@
 package com.gugaart.ui.screens.home
 
 import com.gugaart.ui.data.Title
+import com.gugugaga.app.media.imageIdentityKey
 import com.gugugaga.core.EmbyClient
 import com.gugugaga.core.ImageType
 import com.gugugaga.core.ImageUrlOptions
@@ -100,7 +101,13 @@ object CoverBackdrops {
         return try {
             val json = withTimeoutOrNull(LIST_TIMEOUT_MS) { client.getJson("/Items/$id/Images") } ?: return null to null
             val backdrop = parseImages(json, "Backdrop").takeIf { it.size >= 2 }?.let { pickBackdrop(it, random) }
-                ?.let { p -> client.imageUrl(id, ImageType.Backdrop, ImageUrlOptions(tag = p.tag, index = p.index, maxWidth = COVER_BACKDROP_W)) }
+                ?.let { p ->
+                    val built = client.imageUrl(id, ImageType.Backdrop, ImageUrlOptions(tag = p.tag, index = p.index, maxWidth = COVER_BACKDROP_W))
+                    // 挑中的就是模型已有那张（去掉尺寸参数后同一条）→ 直接用模型那条地址。图片缓存的 key 是完整 URL，
+                    // 封面要 1920、详情要 1600 会把同一张图各取一次（1.5.1 perf-win2 Mock 实测）。挑中别的张仍用高清的，不改清晰度。
+                    val existing = t.art.backdrop
+                    if (existing != null && imageIdentityKey(existing) == imageIdentityKey(built)) existing else built
+                }
             val poster = parseImages(json, "Primary").takeIf { it.size >= 2 }?.let { pickBackdrop(it, random) }
                 ?.let { p -> client.imageUrl(id, ImageType.Primary, ImageUrlOptions(tag = p.tag, index = p.index, maxWidth = COVER_POSTER_W)) }
             backdrop to poster

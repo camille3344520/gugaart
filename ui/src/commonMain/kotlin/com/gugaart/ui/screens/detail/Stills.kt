@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.SectionHeader
 import com.gugaart.ui.data.rememberLoad
+import com.gugaart.ui.data.getItemShared
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.data.rememberImage
 import com.gugugaga.app.model.Still
@@ -79,7 +80,7 @@ import kotlin.math.roundToInt
 /** 这部片的剧照（上游 `rememberStills`）。没登录 / 还没取到 = 空。 */
 @Composable
 fun rememberItemStills(id: String): List<Still> {
-    val load = rememberLoad("stills", id) { it.getItem(id) }
+    val load = rememberLoad("stills", id) { it.getItemShared(id) }
     val item = load.value ?: return emptyList()
     return com.gugugaga.app.ui.rememberStills(item)
 }

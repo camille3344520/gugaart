@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -43,6 +44,9 @@ import kotlinx.serialization.json.put
 object SearchIndexStore {
     /** 壳给的磁盘缓存（Windows / macOS：数据目录下 `cache/search-index`；安卓：cacheDir 下 `search-index`）。 */
     var disk: BlobCache? = null
+
+    /** 测量缝（1.5.1 perf-win）：壳设了它，索引各阶段的耗时就进日志；不设（默认）什么都不记。 */
+    var perf: ((String) -> Unit)? = null
 
     const val PAGE = 2000
     /** 磁盘上最多几个账号的索引、一共多大（一份 2 万条约 10 MB）。 */
@@ -112,6 +116,15 @@ object SearchIndexStore {
         mem = emptyMap()
     }
 
+    /** 测试基准用：直接往内存索引放入一份造好的数据（和真实构建同结构）。 */
+    internal fun seed(client: EmbyClient, titles: List<Title>, episodes: List<Title>, people: List<Person>) {
+        val account = accountOf(client)
+        val engine = LibraryEngine(titles, episodes, people)
+        DocMemo.seedPeople(people, engine.personDocs)
+        val snap = Snapshot(account, titles, episodes, people, engine, Raw(now(), now(), emptyList(), emptyList(), emptyList()))
+        mem = mem + (account to snap)
+    }
+
     private fun refreshLater(client: EmbyClient, account: String, gate: Mutex) {
         scope.launch {
             if (!lock.withLock { refreshing.add(account) }) return@launch
@@ -174,24 +187,33 @@ object SearchIndexStore {
         return out.filter { it.id.isNotEmpty() && it.name.isNotBlank() }.distinctBy { it.id }
     }
 
-    private suspend fun fetchAll(client: EmbyClient): Raw {
-        val titles = fetchGroup(client, Group.Titles)
-        val episodes = fetchGroup(client, Group.Episodes)
+    private suspend fun fetchAll(client: EmbyClient): Raw = kotlinx.coroutines.coroutineScope {
+        val t0 = now()
+        // 三组（片 / 单集 / 人物）独立，并发取（以前串行；1.5.1 perf-win）
+        val titlesD = async { fetchGroup(client, Group.Titles) }
+        val episodesD = async { fetchGroup(client, Group.Episodes) }
         // 人物取不到（有的服务器给普通用户关了 /Persons）不拖垮整份索引：没有人物，界面照旧问 Emby 的人物搜索
-        val people = try {
-            fetchGroup(client, Group.People)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            emptyList()
+        val peopleD = async {
+            try {
+                fetchGroup(client, Group.People)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
+        val titles = titlesD.await()
+        val episodes = episodesD.await()
+        val people = peopleD.await()
         val t = now()
-        return Raw(t, t, titles, episodes, people)
+        perf?.invoke("index fetch titles=${titles.size} episodes=${episodes.size} people=${people.size} in ${t - t0} ms")
+        Raw(t, t, titles, episodes, people)
     }
 
     /** 增量刷新；什么都没变 → 返回同一个 [old]。 */
     internal suspend fun refresh(client: EmbyClient, old: Raw): Raw {
-        if (now() - old.fullAt > FULL_MS) return fetchAll(client)
+        val t0 = now()
+        if (now() - old.fullAt > FULL_MS) return fetchAll(client).also { perf?.invoke("index refresh full in ${now() - t0} ms") }
         var changed = false
         suspend fun group(g: Group, have: List<BaseItemDto>): List<BaseItemDto> {
             val probe = page(client, g, 0, PROBE, newest = true)
@@ -218,16 +240,20 @@ object SearchIndexStore {
         } catch (_: Exception) {
             old.people
         }
-        return if (!changed) old else Raw(now(), old.fullAt, titles, episodes, people)
+        val out = if (!changed) old else Raw(now(), old.fullAt, titles, episodes, people)
+        perf?.invoke("index refresh changed=$changed in ${now() - t0} ms")
+        return out
     }
 
     /** 原始条目 → 界面模型 + 引擎（几万条：放在后台线程）。 */
     private suspend fun build(client: EmbyClient, account: String, raw: Raw): Snapshot = withContext(Dispatchers.Default) {
+        val t0 = now()
         val titles = raw.titles.map { client.titleOf(it) }
         val episodes = raw.episodes.map { client.titleOf(it) }
         val people = raw.people.map { Person(it.id, it.name.trim(), photo = client.personImage(it.id, it.imageTags["Primary"], ImageUrlOptions(maxWidth = 360))) }
         val engine = LibraryEngine(titles, episodes, people)
         DocMemo.seedPeople(people, engine.personDocs)
+        perf?.invoke("index build titles=${titles.size} episodes=${episodes.size} people=${people.size} in ${now() - t0} ms")
         Snapshot(account, titles, episodes, people, engine, raw)
     }
 
@@ -269,12 +295,14 @@ object SearchIndexStore {
 
     private suspend fun readDisk(client: EmbyClient, account: String): Snapshot? {
         val d = disk ?: return null
+        val t0 = now()
         val bytes = try {
             d.get(key(account))
         } catch (_: Exception) {
             null
         } ?: return null
         val raw = withContext(Dispatchers.Default) { decode(bytes) } ?: return null
+        perf?.invoke("index disk-read ${bytes.size} bytes in ${now() - t0} ms")
         return build(client, account, raw)
     }
 

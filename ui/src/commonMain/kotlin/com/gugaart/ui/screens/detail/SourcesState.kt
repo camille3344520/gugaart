@@ -120,7 +120,7 @@ fun serverMissWord(p: OtherServerProgress): String? = when (p.state) {
     ServerSearchState.Found -> "没有这部片".takeIf { p.found == 0 }
     ServerSearchState.NotFound -> "没有这部片"
     ServerSearchState.Offline -> "连不上"
-    ServerSearchState.TimedOut -> "没回应"
+    ServerSearchState.TimedOut -> "无应答"
     ServerSearchState.NeedsLogin -> "要重新登录"
 }
 
@@ -131,7 +131,7 @@ fun serverMissWord(p: OtherServerProgress): String? = when (p.state) {
 data class SourceProgressText(val searching: List<String>, val summary: String?)
 
 fun sourceProgressText(servers: List<OtherServerProgress>): SourceProgressText = SourceProgressText(
-    searching = servers.filter { it.state == ServerSearchState.Searching }.map { "正在问 ${it.server.name}…" },
+    searching = servers.filter { it.state == ServerSearchState.Searching }.map { "正在查询 ${it.server.name}…" },
     summary = servers.mapNotNull { p -> serverMissWord(p)?.let { "${p.server.name} $it" } }.joinToString(" · ").takeIf { it.isNotEmpty() },
 )
 
@@ -324,7 +324,9 @@ fun rememberSourcesState(itemId: String, type: String?, providerIds: Map<String,
     val serverName = session?.serverName.orEmpty()
     val repo = rememberSourceRepository()
     // provider id 是记住选择的键：播放器里条目详情晚到，到了换一份状态（自带的行照样第一帧就在）
-    val state = remember(itemId, serverId, com.gugaart.ui.data.providerKeyOf(providerIds)) {
+    // 服务器上这一条变了（字幕「保存到服务器」）：换一份状态，重新取（字幕选单里出现新存的那条）
+    val rev = com.gugaart.ui.data.ItemRevisions.of(itemId)
+    val state = remember(itemId, serverId, com.gugaart.ui.data.providerKeyOf(providerIds), rev) {
         SourcesState(
             itemId, providerIds, VersionPickStore(g.deps.local), serverId,
             initial = ownSources(itemId, own, serverId, serverName),

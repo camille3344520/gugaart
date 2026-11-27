@@ -32,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -43,6 +42,9 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.components.PrimaryButton
 import com.gugaart.ui.components.SheetSpec
+import com.gugaart.ui.components.TapOutside
+import com.gugaart.ui.components.closeOnTap
+import com.gugaart.ui.components.holdTouches
 import com.gugaart.ui.components.TextLink
 import com.gugaart.ui.components.typingTarget
 import com.gugaart.ui.data.GugaPrefs
@@ -152,7 +154,7 @@ object SubtitleSearchBoard {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                problem = "没取到这一集的信息：" + describeEmbyError(e)
+                problem = "加载失败：" + describeEmbyError(e)
             }
         }
     }
@@ -168,38 +170,55 @@ object SubtitleSearchBoard {
     }
 
     /**
-     * 同 [choose]，但搜索是外面给的（[s]）：播放器里「找到完全对得上的字幕 · 用上」那句提示用自动加载那一次的搜索，不开栏（1.4.1 U2）。
+     * 同 [choose]，但搜索是外面给的（[s]）：播放器里「找到精确匹配的字幕 · 用上」那句提示用自动加载那一次的搜索，不开栏（1.4.1 U2）。
      * [player] = 那一次播放（null = 播放器外）。
      */
-    fun chooseIn(s: SubtitleSearchSession, player: PlaySession?, hit: SubtitleHit, g: AppGraph, scope: kotlinx.coroutines.CoroutineScope = g.scope) {
+    fun chooseIn(s: SubtitleSearchSession, player: PlaySession?, hit: SubtitleHit, g: AppGraph, scope: kotlinx.coroutines.CoroutineScope = g.scope, action: HitAction? = null) {
         if (s.apply is ApplyState.Working) return
         scope.launch {
             try {
-                if (hit.toEmby) {
+                if (!hit.toEmby && (action == HitAction.Upload || action == HitAction.Retry)) {
+                    // 迅雷 / 射手 → Subtitle Manager 插件（docs/subtitle-search.md §4.4）：存好了详情页 / 播放器面板重新取这一条
+                    try {
+                        val idx = s.uploadToServer(hit)
+                        com.gugaart.ui.data.ItemRevisions.bump(s.target.itemId)
+                        s.apply = when {
+                            idx != null && player != null -> {
+                                select(player, s.target.itemId, idx, "选上存到服务器的字幕")
+                                ApplyState.Done(hit.key, "已保存到服务器")
+                            }
+                            idx != null -> ApplyState.Done(hit.key, "已保存到服务器")
+                            else -> ApplyState.Done(hit.key, "已保存到服务器，处理中")
+                        }
+                        if (idx != null && player != null) close()
+                    } catch (e: SubtitleUploadException) {
+                        s.apply = ApplyState.Failed(hit.key, e.message ?: "保存失败", e.fail)
+                    }
+                } else if (hit.toEmby) {
                     val idx = s.downloadToEmby(hit)
                     s.apply = when {
                         idx != null && player != null -> {
                             select(player, s.target.itemId, idx, "选上搜到的字幕")
                             ApplyState.Done(hit.key, "已存进 Emby，已选上")
                         }
-                        idx != null -> ApplyState.Done(hit.key, "已存进 Emby，下次播放可以直接选")
-                        else -> ApplyState.Done(hit.key, "服务器收下了，还在处理；稍后在字幕里就能看到")
+                        idx != null -> ApplyState.Done(hit.key, "已存进 Emby")
+                        else -> ApplyState.Done(hit.key, "已存进 Emby，处理中")
                     }
                     if (idx != null && player != null) close()
                 } else {
                     val (text, format) = s.fetchText(hit)
                     val sub = LocalSubtitles.add(s.target.itemId, text, format, localLabel(hit), if (hit.lang == SubLang.English) "eng" else "chi")
                     if (LocalSubtitles.urlOf(sub) == null) {
-                        s.apply = ApplyState.Failed(hit.key, "本机放不了这条字幕（回环服务起不来）")
+                        s.apply = ApplyState.Failed(hit.key, "加载失败")
                         return@launch
                     }
                     if (player != null) {
                         select(player, s.target.itemId, sub.index, "加载搜到的字幕")
-                        s.apply = ApplyState.Done(hit.key, "已加载（仅本次播放）")
+                        s.apply = ApplyState.Done(hit.key, "已加载 · 仅本次")
                         close()
                     } else {
                         pendingLocal = s.target.itemId to sub.index
-                        s.apply = ApplyState.Done(hit.key, "开播后加载（仅本次播放）")
+                        s.apply = ApplyState.Done(hit.key, "开播后加载 · 仅本次")
                         close()
                         g.play(s.target.itemId)
                     }
@@ -207,7 +226,7 @@ object SubtitleSearchBoard {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: EmbyException) {
-                s.apply = ApplyState.Failed(hit.key, if (e.status == 401 || e.status == 403) "服务器不让这个账号下载字幕" else "没存进去：" + describeEmbyError(e))
+                s.apply = ApplyState.Failed(hit.key, if (e.status == 401 || e.status == 403) "账号没有下载字幕的权限" else "保存失败：" + describeEmbyError(e))
             } catch (e: SubtitleFetchException) {
                 s.apply = ApplyState.Failed(hit.key, e.message ?: "下载失败")
             } catch (e: Exception) {
@@ -240,7 +259,7 @@ object SubtitleSearchBoard {
 /** 一路源的状态行。纯函数，有单测。 */
 fun sourceLine(label: String, s: SourceState): String = when (s) {
     SourceState.Idle -> "$label · —"
-    SourceState.Busy -> "$label · 正在搜…"
+    SourceState.Busy -> "$label · 搜索中…"
     is SourceState.Done -> if (s.count == 0) "$label · 没有" else "$label · ${s.count} 条"
     is SourceState.Off -> "$label：${s.why}"
     is SourceState.Failed -> "$label：${s.why}"
@@ -257,18 +276,15 @@ fun statusLine(s: SubtitleSearchSession): String = listOfNotNull(
 /** 指纹那一行。 */
 fun printLine(p: PrintState): String? = when (p) {
     PrintState.Idle -> null
-    PrintState.Busy -> "正在取文件指纹（只读几段，约 64 KB）…"
-    is PrintState.Got -> "文件指纹已取（${listOfNotNull("迅雷".takeIf { p.prints.thunderCid != null }, "射手".takeIf { p.prints.shooterHash != null }).joinToString(" / ")}）"
+    PrintState.Busy -> "读取文件指纹…"
+    is PrintState.Got -> "已取文件指纹 · ${listOfNotNull("迅雷".takeIf { p.prints.thunderCid != null }, "射手".takeIf { p.prints.shooterHash != null }).joinToString(" / ")}"
     is PrintState.Missing -> p.why
 }
 
-/** 在线源的隐私说明（栏底的小字）。 */
-const val SUBTITLE_PRIVACY_NOTE = "迅雷 / 射手：会发送文件名和文件指纹（几段内容的哈希），不发服务器地址和登录信息。可在 设置 › 字幕与音轨 关闭。"
-
-/** 这一行右端的去向印记。 */
+/** 这一行右端的动作印记（1.5.1 m151：去向写在动作上，不再另写说明）。 */
 fun destinationOf(hit: SubtitleHit, inPlayer: Boolean): String = when {
-    hit.toEmby -> "进 Emby"
-    inPlayer -> "仅本次"
+    hit.toEmby -> "保存到服务器"
+    inPlayer -> "仅本次播放"
     else -> "播放并加载"
 }
 
@@ -281,7 +297,17 @@ fun BoxScope.SubtitleSearchHost(play: PlaySession, width: Dp) {
     DisposableEffect(play) { onDispose { if (SubtitleSearchBoard.play === play) SubtitleSearchBoard.close() } }
     val s = SubtitleSearchBoard.session ?: return
     if (SubtitleSearchBoard.play !== play) return
-    SubtitleSearchDrawer(s, width, inPlayer = true, onClose = { SubtitleSearchBoard.close() })
+    SubtitleSearchLayer(s, width, inPlayer = true, onClose = { SubtitleSearchBoard.close() })
+}
+
+/**
+ * 播放器里的那一栏（测试也挂它）：下面垫一层透明的 [TapOutside]——点栏外面的画面 = 收起（和返回键一样），
+ * 画面一个事件都收不到（不开关控件、不暂停、不拖进度）；栏本身 [holdTouches]，里面的滚动、点击照常（docs/subtitle-search.md §5.5）。
+ */
+@Composable
+fun BoxScope.SubtitleSearchLayer(s: SubtitleSearchSession, width: Dp, inPlayer: Boolean, onClose: () -> Unit) {
+    TapOutside(onClose, Modifier.testTag("sub-search-outside"))
+    SubtitleSearchDrawer(s, width, inPlayer, onClose)
 }
 
 /** 手机 / 电脑：播放器外的那一栏（条目菜单打开的），盖在页面上，后面压一层墨。根上画一次。 */
@@ -294,8 +320,9 @@ fun BoxScope.SubtitleSearchPageHost() {
     if (s == null && preparing == null) return
     val width = if (Guga.uiMode == com.gugugaga.ds.theme.UiMode.Desktop) Guga.rem(48f) else 360.dp
     Box(
+        // 点墨（栏外面）= 收起，和返回键一样；下面的页面收不到
         Modifier.matchParentSize().background(Guga.colors.paper.copy(alpha = SheetSpec.SCRIM))
-            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } }
+            .closeOnTap { SubtitleSearchBoard.close() }
             .testTag("sub-search-scrim"),
     )
     if (s != null) SubtitleSearchDrawer(s, width, inPlayer = false, onClose = { SubtitleSearchBoard.close() })
@@ -310,7 +337,7 @@ private fun BoxScope.SubtitleSearchPreparing(name: String, problem: String?, wid
         Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
             DrawerHead(onClose)
             BasicText(name, Modifier.padding(top = 12.dp), style = Guga.song(14.sp, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
-            BasicText(problem ?: "正在取这一集的信息…", Modifier.padding(top = 8.dp), style = Guga.song(13.sp, color = if (problem != null) colors.seal else colors.dim), maxLines = 3)
+            BasicText(problem ?: "加载中…", Modifier.padding(top = 8.dp), style = Guga.song(13.sp, color = if (problem != null) colors.seal else colors.dim), maxLines = 3)
         }
     }
 }
@@ -358,8 +385,9 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
         Modifier.align(Alignment.CenterStart).width(width).fillMaxHeight()
             .background(SheetSpec.SLIP.copy(alpha = 0.97f))
             .border(1.dp, colors.line)
-            // 纸上空白处的点击不漏到后面的画面（行、输入框、滚动先拿到事件，这里只收它们不要的）
-            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } }
+            // 纸上的点击、拖动不漏到后面的画面：只「在场」挡住下面的兄弟，不吃事件——以前在这里把事件全吃掉，
+            // 慢慢拖就滚不动（滚动过阈值前要看事件有没有被别人消费），1.5.1 subfix 问题 1（components/TouchGuard.kt）
+            .holdTouches()
             .testTag("sub-search"),
     ) {
         Column(Modifier.fillMaxHeight().verticalScroll(scroll).padding(horizontal = 20.dp, vertical = 18.dp)) {
@@ -396,17 +424,22 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
             )
             // 最合适（1.4.1 U2）：结果上面一张卡，一点即用；没有过门槛的就没有这张卡。手动搜索之后同一套打分，照样在这里
             val best = s.best
-            if (best != null) BestCard(best, s.apply, inPlayer) { SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, best.hit, g, scope) }
+            // 迅雷 / 射手的结果：服务器装了 Subtitle Manager、账号是管理员时多一个「保存到服务器」（§4.4，[hitActionsOf]）
+            if (best != null) BestCard(best, s.apply, inPlayer, hitActionsOf(best.hit, inPlayer, s.canUpload, s.apply)) { a ->
+                SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, best.hit, g, scope, a)
+            }
             // 结果（完整的单子照旧；最合适那条在行上也标一下）
             Column(Modifier.padding(top = 10.dp).testTag("sub-results")) {
-                if (s.hits.isEmpty() && !s.searching) BasicText("没有搜到。可以换个名字搜，或者换成英文。", Modifier.padding(vertical = 10.dp), style = Guga.song(13.sp, color = colors.dim), maxLines = 2)
+                if (s.hits.isEmpty() && !s.searching) BasicText("没有结果", Modifier.padding(vertical = 10.dp), style = Guga.song(13.sp, color = colors.dim), maxLines = 2)
                 s.hits.take(30).forEachIndexed { i, h ->
-                    HitRow(h, i, s.apply, inPlayer, best = best?.takeIf { it.hit.key == h.key }) { SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, h, g, scope) }
+                    HitRow(h, i, s.apply, hitActionsOf(h, inPlayer, s.canUpload, s.apply), best = best?.takeIf { it.hit.key == h.key }) { a ->
+                        SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, h, g, scope, a)
+                    }
                 }
             }
             if (s.online) {
                 // 手动：换个名字搜（只重搜迅雷；服务器和射手不吃自由文本）
-                BasicText("换个名字搜", Modifier.padding(top = 18.dp), style = Guga.song(13.sp, FontWeight.Bold, colors.spot, letterSpacing = 0.2.em), maxLines = 1)
+                BasicText("手动搜索", Modifier.padding(top = 18.dp), style = Guga.song(13.sp, FontWeight.Bold, colors.spot, letterSpacing = 0.2.em), maxLines = 1)
                 Row(Modifier.padding(top = 8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f).heightIn(min = 44.dp).border(1.dp, colors.line).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                         if (s.query.isEmpty()) BasicText("片名或文件名", style = Guga.song(15.sp, color = colors.faint), maxLines = 1)
@@ -423,16 +456,19 @@ fun BoxScope.SubtitleSearchDrawer(s: SubtitleSearchSession, width: Dp, inPlayer:
                     }
                     PrimaryButton("搜索", searchName, Modifier.padding(start = 10.dp).testTag("sub-query-go"), icon = null, enabled = s.query.isNotBlank() && s.thunder != SourceState.Busy)
                 }
-                BasicText(SUBTITLE_PRIVACY_NOTE, Modifier.padding(top = 14.dp).testTag("sub-privacy"), style = Guga.song(11.sp, color = colors.faint, lineHeight = 17.sp), maxLines = 4)
             }
             Spacer(Modifier.height(24.dp))
         }
     }
 }
 
-/** 一条结果：名称 + 小字（简 · SRT · 迅雷 · 文件名）+ 右端去向印记；选中以后小字换成进度 / 结果。 */
+/**
+ * 一条结果：名称 + 小字（简 · SRT · 迅雷 · 文件名）+ 去向；选中以后小字换成进度 / 结果。
+ * 只有一个去向（[actions] 一项）：整行一点即用，右端是去向印记（和以前一样）；两个（「保存到服务器」「仅本次播放」，§4.4）：整行不接点，
+ * 名字下面两个按钮并排。
+ */
 @Composable
-private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, inPlayer: Boolean, best: ScoredHit? = null, onPick: () -> Unit) {
+private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, actions: List<HitAction>, best: ScoredHit? = null, onAction: (HitAction) -> Unit) {
     val colors = Guga.colors
     val press = rememberPressState()
     val mine = when (apply) {
@@ -441,15 +477,17 @@ private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, inPlayer: Boo
         is ApplyState.Failed -> apply.key == h.key
         null -> false
     }
+    val single = actions.singleOrNull()
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 54.dp).pressGraphics(press).pressable(press, label = "字幕 ${h.name}", onClick = onPick)
+        Modifier.fillMaxWidth().heightIn(min = 54.dp)
+            .then(if (single != null) Modifier.pressGraphics(press).pressable(press, label = "字幕 ${h.name}", onClick = { onAction(single) }) else Modifier)
             .then(if (mine) Modifier.background(colors.spot.copy(alpha = 0.14f)) else Modifier)
             .padding(vertical = 8.dp, horizontal = 6.dp).testTag("sub-hit-$index"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             if (best != null) BasicText(
-                if (best.score.isExactHash) "最合适 · 完全对得上" else "最合适",
+                if (best.score.isExactHash) "最合适 · 精确" else "最合适",
                 Modifier.padding(bottom = 2.dp).testTag("sub-hit-best"),
                 style = Guga.song(11.sp, FontWeight.Black, colors.spot, letterSpacing = 0.2.em),
                 maxLines = 1,
@@ -463,13 +501,30 @@ private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, inPlayer: Boo
             } else h.meta()
             val tint = if (mine && apply is ApplyState.Failed) colors.seal else if (mine) colors.spot else colors.dim
             BasicText(line, Modifier.padding(top = 2.dp), style = Guga.song(12.sp, color = tint), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (single == null) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (a in actions) ActionStamp(a, enabled = apply !is ApplyState.Working, Modifier.testTag("sub-hit-$index-${a.name.lowercase()}")) { onAction(a) }
+            }
         }
-        val dest = destinationOf(h, inPlayer)
-        BasicText(
-            dest,
+        if (single != null) BasicText(
+            single.label,
             Modifier.padding(start = 8.dp).border(1.dp, if (h.toEmby) colors.spot else colors.line).padding(horizontal = 6.dp, vertical = 2.dp),
             style = Guga.song(11.sp, FontWeight.Bold, if (h.toEmby) colors.spot else colors.dim),
             maxLines = 1,
         )
+    }
+}
+
+/** 行上的一个去向按钮（两个并排时）：写服务器的（保存到服务器 / 重试）专色细框，仅本次 / 播放并加载 灰框。按下放大。 */
+@Composable
+private fun ActionStamp(a: HitAction, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = Guga.colors
+    val press = rememberPressState()
+    val toServer = a == HitAction.Upload || a == HitAction.Retry
+    Box(
+        modifier.pressGraphics(press).pressable(press, enabled = enabled, label = a.label, onClick = onClick)
+            .heightIn(min = 34.dp).border(1.dp, if (toServer) colors.spot else colors.line).padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(a.label, style = Guga.song(12.sp, FontWeight.Bold, if (toServer) colors.spot else colors.dim), maxLines = 1)
     }
 }

@@ -32,13 +32,25 @@ data class LibraryEntry(
 fun BaseItemDto.toLibraryEntry(): LibraryEntry =
     LibraryEntry(id = id, name = name.trim(), kind = collectionType?.lowercase(), titles = childCount ?: recursiveItemCount)
 
-/** 一个媒体库的海报墙里排哪几种条目（合集库取 BoxSet，其余取电影和剧集）。部数也按这个口径数。 */
+/**
+ * 一个媒体库的海报墙里排哪几种条目。部数也按这个口径数。纯函数，有单测。
+ * 1.5.1 审计 P1-12：家庭视频、MV 按 `Video` 取（MV 库里 Emby 给的类型是 `MusicVideo`，一起取）；混合库（没有 CollectionType）电影、剧集之外也取 `Video`。
+ */
 fun libraryItemTypes(kind: String?): List<String> = when (kind) {
     "movies" -> listOf("Movie")
     "tvshows" -> listOf("Series")
     "boxsets" -> listOf("BoxSet")
+    "homevideos" -> listOf("Video")
+    "musicvideos" -> listOf("MusicVideo", "Video")
+    null, "mixed" -> listOf("Movie", "Series", "Video")
     else -> listOf("Movie", "Series")
 }
+
+/** 不在片库里列出来的库（P1-12：影视客户端，不做音乐、直播、照片、播放列表）。 */
+private val UNLISTED_LIBRARY_KINDS = setOf("music", "livetv", "photos", "playlists")
+
+/** 这个库在片库里列不列出来。纯函数，有单测。 */
+fun isListedLibrary(kind: String?): Boolean = kind !in UNLISTED_LIBRARY_KINDS
 
 /**
  * 一个媒体库的部数：`/Items?ParentId=…&Recursive=true&IncludeItemTypes=…&Limit=0` 的 `TotalRecordCount`（只读；和上游筛选面板数数的口径一样）。
@@ -60,7 +72,7 @@ suspend fun libraryCount(client: EmbyClient, library: LibraryEntry): Int? = try 
  * 数不出来的库不写数字（null），不退回 `ChildCount`。
  */
 suspend fun loadLibraries(client: EmbyClient): List<LibraryEntry> = coroutineScope {
-    val views = client.getViewList().map { it.toLibraryEntry().copy(titles = null) }
+    val views = client.getViewList().map { it.toLibraryEntry().copy(titles = null) }.filter { isListedLibrary(it.kind) }
     views.map { lib -> async { lib.copy(titles = libraryCount(client, lib)) } }.awaitAll()
 }
 
@@ -101,10 +113,10 @@ fun rememberLibraryShelf(graph: AppGraph): State<Shelf> {
 
 /** 「媒体库 5 · 电视剧 22 · 电影 118 · …」；各种没有数据的情况都有自己的一句话，不留空行。 */
 fun shelfLine(shelf: Shelf): String = when (shelf) {
-    Shelf.SignedOut -> "还没有登录 · 登录后这里排出你的媒体库"
+    Shelf.SignedOut -> "未登录"
     Shelf.Loading -> "正在排片…"
     is Shelf.Failed -> "片库没连上 · ${shelf.message}"
     is Shelf.Ready ->
-        if (shelf.libraries.isEmpty()) "这台服务器上还没有媒体库"
+        if (shelf.libraries.isEmpty()) "没有媒体库"
         else "媒体库 ${shelf.libraries.size} · " + shelf.libraries.joinToString(" · ") { l -> if (l.titles != null) "${l.name} ${l.titles}" else l.name }
 }

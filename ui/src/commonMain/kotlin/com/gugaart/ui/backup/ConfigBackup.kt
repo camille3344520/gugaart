@@ -85,8 +85,8 @@ class ParsedBackup(
 /** 认不出来的原因（给人看的话）。 */
 enum class BackupError(val text: String) {
     NotBackup("这不是咕嘎画报的配置备份"),
-    TooNew("这份备份是更新的版本做的，先把应用升级到最新"),
-    Unreadable("备份文件读不出来"),
+    TooNew("备份来自更新的版本，需先升级应用"),
+    Unreadable("备份文件读取失败"),
 }
 
 /** 解析一份备份；不是 = [BackupError]。纯函数，有单测。 */
@@ -130,8 +130,8 @@ data class RestoreSummary(val sections: Int, val serversAdded: Int, val serversK
         add("设置已还原")
         if (danmakuServers > 0) add("弹幕服务器 $danmakuServers 台")
         if (tmdb) add("TMDB 令牌")
-        if (serversAdded > 0) add("新加 $serversAdded 台 Emby 服务器（要重新登录）")
-        if (serversKept > 0) add("$serversKept 台已经有了，没动")
+        if (serversAdded > 0) add("新加 $serversAdded 台 Emby 服务器 · 需重新登录")
+        if (serversKept > 0) add("$serversKept 台已存在")
     }.joinToString(" · ")
 }
 
@@ -217,7 +217,7 @@ data class WebDavConfig(val url: String, val user: String, val password: String)
 fun webDavFailure(status: Int?): String = when (status) {
     null -> "连不上 WebDAV 服务器"
     401, 403 -> "用户名或密码不对（HTTP $status）"
-    404 -> "这个地址下还没有备份（HTTP 404）"
+    404 -> "没有备份（HTTP 404）"
     405, 409 -> "文件夹不存在或不能写（HTTP $status）"
     507 -> "WebDAV 空间满了（HTTP 507）"
     else -> "WebDAV 服务器回了 HTTP $status"

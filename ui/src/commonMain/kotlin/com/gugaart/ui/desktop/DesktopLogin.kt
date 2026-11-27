@@ -171,14 +171,8 @@ fun DesktopLogin(today: Today, chrome: Boolean = false) {
         // 报头 = 窗口标题栏（没有会话时外壳不在，报头自己画在这里）
         if (!chrome) DesktopMasthead(today)
         forgetting?.let { s ->
-            val name = s.remark?.takeIf { it.isNotBlank() } ?: s.name
             PaperDialog("desktop-forget", { forgetting = null }, width = 52f) {
-                BasicText("移除「$name」", style = Guga.song(rsp(2.2f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                BasicText(
-                    "这台服务器和它保存的账号会从这台电脑上拿掉。服务器上的东西不动。",
-                    Modifier.padding(top = Guga.rem(1.4f)),
-                    style = Guga.song(rsp(1.45f), color = colors.dim, lineHeight = rsp(2.6f)),
-                )
+                BasicText("移除这台服务器？", style = Guga.song(rsp(2.2f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Row(Modifier.padding(top = Guga.rem(2.8f)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.8f))) {
                     DeskButton(
                         "移除",
@@ -262,7 +256,7 @@ private fun DeskServerList(model: LoginModel, flow: LoginFlow, onForget: (Stored
     DeskKick(if (servers.isNullOrEmpty()) "SERVERS · 还没有片库" else "SERVERS · 已保存的片库")
     if (servers.isNullOrEmpty()) {
         BasicText(
-            "这台电脑上还没有保存过服务器。添加一台，填好地址、登录一次，以后打开就直接进。",
+            "没有保存的服务器",
             Modifier.padding(top = Guga.rem(1.6f)).widthIn(max = Guga.rem(48f)),
             style = Guga.song(rsp(1.5f), color = colors.dim, lineHeight = rsp(2.8f)),
         )
@@ -276,12 +270,11 @@ private fun DeskServerList(model: LoginModel, flow: LoginFlow, onForget: (Stored
             DeskServerRow(
                 name = s.remark?.takeIf { it.isNotBlank() } ?: s.name,
                 sub = when {
-                    bad -> "连不上：地址也许换了"
-                    names.isEmpty() -> "还没有登录过"
+                    names.isEmpty() -> "未登录"
                     else -> names
                 },
                 status = when {
-                    model.entering == s.id -> "正在进……"
+                    model.entering == s.id -> "进入中…"
                     current -> if (ms != null && ms >= 0) "已连接 · $ms ms" else "已连接"
                     ms == null -> "…"
                     bad -> "连不上"
@@ -348,14 +341,16 @@ private fun DeskAddServer(model: LoginModel, flow: LoginFlow) {
         withFrameNanos { }
         runCatching { address.requestFocus() }
     }
-    val go = { if (model.found != null) model.next() else model.connect() }
+    val go = { model.connectThenNext() }
+    // 边打边找（P2-19）：停下来就自己去找
+    LaunchedEffect(model.address, model.scheme) { model.probeWhenIdle() }
     DeskKick("STEP 1 / 2 · 添加服务器")
     PaperField(
         "服务器地址",
         model.address,
         model::editAddress,
         Modifier.padding(top = Guga.rem(2f)).focusRequester(address),
-        placeholder = "你的服务器:端口，例如 nas.local:8096",
+        placeholder = "服务器:端口，如 nas.local:8096",
         keyboard = KeyboardType.Uri,
         ime = ImeAction.Go,
         onIme = go,
@@ -365,16 +360,16 @@ private fun DeskAddServer(model: LoginModel, flow: LoginFlow) {
     )
     BasicText(
         when {
-            model.probing -> "正在找这台服务器……"
-            model.addError != null -> "没连上：${model.addError}"
-            found != null -> listOfNotNull("找到了：${found.name}", model.foundInfo, if (found.accounts.isEmpty()) "需要登录" else "保存过 ${found.accounts.size} 个账号").joinToString(" · ")
-            else -> "局域网里的也行，带不带端口都行。填完按 Enter。"
+            model.probing -> "连接中…"
+            model.addError != null -> "连接失败：${model.addError}"
+            found != null -> listOfNotNull("已找到：${found.name}", model.foundInfo, if (found.accounts.isEmpty()) "需要登录" else "保存过 ${found.accounts.size} 个账号").joinToString(" · ")
+            else -> ""
         },
         Modifier.padding(top = Guga.rem(0.9f)).testTag(if (found != null) "desktop-login-found" else "desktop-login-add-note"),
         style = Guga.song(rsp(1.25f), color = if (model.addError != null) colors.seal else if (found != null) colors.ink else colors.dim, lineHeight = rsp(2.1f)),
         maxLines = 3,
     )
-    DeskOption("协议", "一般不用管：自动会先试 https，再试 http。") {
+    DeskOption("协议", "自动 = 先试 https，再试 http") {
         Segments(SCHEMES, model.scheme, {
             model.scheme = it
             model.editAddress(model.address)
@@ -469,9 +464,9 @@ private fun DeskSignIn(model: LoginModel) {
     val fail = model.error != null
     BasicText(
         when {
-            model.busy -> "正在登录……"
+            model.busy -> "登录中…"
             fail -> model.error.orEmpty()
-            else -> "密码只发给你的服务器；登录后这台电脑只保存令牌，放在系统的凭据管理器里。"
+            else -> "密码只发给你的服务器，本机只保存令牌"
         },
         Modifier.padding(top = Guga.rem(1.2f)).testTag(if (model.busy) "desktop-login-busy" else if (fail) "desktop-login-fail" else "desktop-login-note"),
         style = Guga.song(rsp(1.25f), color = if (fail) colors.seal else colors.dim, lineHeight = rsp(2.1f)),

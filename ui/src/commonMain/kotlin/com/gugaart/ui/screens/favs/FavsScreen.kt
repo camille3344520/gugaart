@@ -118,7 +118,7 @@ fun nextFavSort(key: String): String {
 
 /** 单集行的副行：「颜心记 · 第 1 季 · 看到 59%」。 */
 fun favEpisodeLine(t: Title): String =
-    listOfNotNull(t.seriesName, t.seasonNo?.let { "第 $it 季" }, if (t.progress > 0f) "看到 ${t.pct ?: 0}%" else if (t.played) "看完了" else null).joinToString(" · ")
+    listOfNotNull(t.seriesName, t.seasonNo?.let { "第 $it 季" }, if (t.progress > 0f) "看到 ${t.pct ?: 0}%" else if (t.played) "已看" else null).joinToString(" · ")
 
 /**
  * 收藏（设计稿 `p=favs`，路由 `Route.History(tab = "favorites")`——和上游同一个路由）：盖过章的都在这里。
@@ -151,7 +151,7 @@ fun FavsScreen() {
                 else -> {
                     val list = favs.of(tab)
                     when {
-                        list.isEmpty() -> BasicText("这一类还没有收藏。", Modifier.padding(vertical = 28.dp).testTag("favs-tab-empty"), style = Guga.song(type.caption, color = colors.dim))
+                        list.isEmpty() -> BasicText("没有收藏", Modifier.padding(vertical = 28.dp).testTag("favs-tab-empty"), style = Guga.song(type.caption, color = colors.dim))
                         tab == FavTab.Titles || tab == FavTab.Sets -> for (row in list.chunked(3)) {
                             Row(Modifier.fillMaxWidth().padding(top = 26.dp), horizontalArrangement = Arrangement.spacedBy(dimens.gutter)) {
                                 for (t in row) FavCard(t, { graph.open(t.id) }, Modifier.weight(1f))
@@ -168,7 +168,6 @@ fun FavsScreen() {
                             Rule()
                         }
                     }
-                    BasicText("—  在任何一页点「收藏」，片子就放进这里  —", Modifier.fillMaxWidth().padding(top = 36.dp), style = Guga.note(type.caption, colors.faint).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center), maxLines = 1)
                 }
             }
         }

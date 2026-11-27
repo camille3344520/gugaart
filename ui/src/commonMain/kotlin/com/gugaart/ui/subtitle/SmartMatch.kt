@@ -1,5 +1,6 @@
 package com.gugaart.ui.subtitle
 
+import com.gugaart.ui.player.cnNumber
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -14,6 +15,7 @@ import kotlin.math.roundToInt
  * | 项 | 分 | 说明 |
  * |---|---|---|
  * | 指纹精确 | +60 | 射手真发了 filehash / 迅雷 CID 命中 / 服务器 IsHashMatch **且片源不是 strm**（见下） |
+ * | 编号一致 | +40 | 两边都有番号式编号（ABP-811 = abp00811）且一样；**不一样直接扣到底（0 分）**；编号的字母不算片名 token |
  * | 片名 token | 0…+20 | 按覆盖率给分：交集 / 两边里较短的那一边的 token 数 |
  * | 季集一致 | +12 | 两边都写了季集且一样；**不一样直接扣到底（0 分，不进「最合适」）** |
  * | 年份 | +5 / −8 | 两边都写了年份：一样加，不一样减 |
@@ -60,6 +62,8 @@ data class NameParts(
     val source: String?,
     /** 发布组（小写）。 */
     val group: String?,
+    /** 番号式的编号，规范成「大写字母-去掉前导零的数字」：`abp00811` → `ABP-811`、`FC2-PPV-1234567`（1.5.1 subfix，[codeOf]）。 */
+    val code: String? = null,
 )
 
 /**
@@ -91,6 +95,9 @@ data class SmartFile(
     val effEpisode: Int? = parts.episode ?: episode
     val effYear: Int? = parts.year ?: year
 
+    /** 编号：名字（或手动查询词）里的；没写时用元数据片名里的（手动搜索时只认查询词）。 */
+    val effCode: String? = parts.code ?: if (manualQuery == null) name?.let { parseName(it).code } else null
+
     companion object {
         /** 从一次搜索的目标 + 条目信息拼出来（[langs] = 设置里的 `subtitleLangs`；[query] = 手动输入的词，null = 没改过）。 */
         fun of(target: SubtitleTarget, langs: List<String> = SmartMatch.DEFAULT_LANGS, query: String? = null): SmartFile = SmartFile(
@@ -116,6 +123,9 @@ object SmartMatch {
 
     // ---- 权重（改这里就是改规则；docs/subtitle-search.md §2.3 的表要和这里一致）----
     const val W_HASH = 60
+
+    /** 编号一样（`ABP-811` = `abp00811`）：单凭它就过门槛（1.5.1 subfix）；编号不一样和季集对不上一样，直接 0 分。 */
+    const val W_CODE = 40
     const val W_TITLE = 20
     const val W_EPISODE = 12
     const val W_YEAR = 5
@@ -147,7 +157,7 @@ object SmartMatch {
 
         // 1) 指纹：服务器源在 strm 上不算数（MeiamSub 读的是 .strm 文本，射手还无条件写 true）
         val exact = hit.match == SubMatch.Fingerprint && !(hit.source == SubSource.Server && file.isStrm)
-        if (hit.match == SubMatch.Fingerprint && !exact) reasons += "服务器说的指纹一致（strm 上不算数）"
+        if (hit.match == SubMatch.Fingerprint && !exact) reasons += "服务器标指纹一致，strm 不算"
 
         // 2) 季集：两边都写了又对不上 = 扣到底
         val seasonOff = file.effSeason != null && sub.season != null && file.effSeason != sub.season
@@ -156,6 +166,11 @@ object SmartMatch {
             val want = epLabel(file.effSeason, file.effEpisode)
             val got = epLabel(sub.season, sub.episode)
             return SmartScore(0, listOf("季集对不上（$want ≠ $got）"), exact)
+        }
+        // 2½) 编号：两边都有又不一样 = 扣到底（abp-811 的文件不要 abp-652 的字幕）
+        val fileCode = file.effCode
+        if (fileCode != null && sub.code != null && fileCode != sub.code) {
+            return SmartScore(0, listOf("编号对不上（$fileCode ≠ ${sub.code}）"), exact)
         }
 
         var pts = 0
@@ -173,6 +188,7 @@ object SmartMatch {
         pts += titlePts
 
         val matched = ArrayList<String>(6)
+        if (fileCode != null && sub.code == fileCode) { pts += W_CODE; matched += "编号" }
         if (titlePts > 0) matched += "片名"
 
         // 4) 年份
@@ -216,7 +232,7 @@ object SmartMatch {
             when {
                 diff <= 0.03 -> { pts += W_DURATION_CLOSE; reasons += "时长接近" }
                 diff <= 0.15 -> { pts += W_DURATION_NEAR; reasons += "时长略差" }
-                else -> { pts += W_DURATION_FAR; reasons += "时长差得远（可能只有片段）" }
+                else -> { pts += W_DURATION_FAR; reasons += "时长差得远" }
             }
         }
         // 11) 格式
@@ -341,7 +357,24 @@ private val RE_X = Regex("""(^|[^0-9])(\d{1,2})x(\d{1,3})([^0-9]|$)""", RegexOpt
 private val RE_SEASON_WORD = Regex("""season[ ._-]*(\d{1,2})""", RegexOption.IGNORE_CASE)
 private val RE_EPISODE_WORD = Regex("""episode[ ._-]*(\d{1,3})""", RegexOption.IGNORE_CASE)
 private val RE_CN_EP = Regex("""第\s*(\d{1,4})\s*[集话話期回]""")
-private val RE_CN_SEASON = Regex("""第\s*(\d{1,2})\s*季""")
+/** 「第2季」「第二季」（中文数字也认：迅雷上「头文字D第二季03」这种名字不少）。 */
+private val RE_CN_SEASON = Regex("""第\s*([0-9一二两三四五六七八九十]{1,3})\s*季""")
+
+/*
+ * 季不写成「第N季 / SxxEyy」的写法（《头文字D》的字幕名：「Second Stage 03」「4th.Stage_03」「[头文字D_第四部][Initial_D_Stage4]」）。
+ * 「Final Stage」不知道是第几季（要这部剧一共几季），不认。「Stage 03」这种空开的不认（「Final Stage - 03」的 03 是集号）。
+ */
+private val RE_ORDINAL_STAGE = Regex("""(?i)(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)[ ._-]*(?:stage|season)""")
+private val RE_NUM_STAGE = Regex("""(?i)(?:^|[^a-z0-9])(\d{1,2})(?:st|nd|rd|th)[ ._-]*(?:stage|season)""")
+private val RE_CN_PART = Regex("""第\s*([0-9一二两三四五六七八九十]{1,3})\s*部""")
+private val RE_STAGE_GLUED = Regex("""(?i)(?:^|[^a-z])stage(\d{1,2})(?![0-9])""")
+private val ORDINALS = listOf("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth")
+
+private fun stageSeason(s: String): Int? =
+    RE_ORDINAL_STAGE.find(s)?.groupValues?.get(1)?.let { ORDINALS.indexOf(it.lowercase()) + 1 }?.takeIf { it > 0 }
+        ?: RE_NUM_STAGE.find(s)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..99 }
+        ?: RE_CN_PART.find(s)?.groupValues?.get(1)?.let(::cnNumber)?.takeIf { it in 1..99 }
+        ?: RE_STAGE_GLUED.find(s)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..99 }
 private val RE_EP = Regex("""(^|[^a-z0-9])(?:ep[ ._-]*|e)(\d{1,3})([^0-9]|$)""", RegexOption.IGNORE_CASE)
 private val RE_S_ONLY = Regex("""(^|[^a-z0-9])s(\d{1,2})([^0-9]|$)""", RegexOption.IGNORE_CASE)
 private val RE_YEAR = Regex("""(^|[^0-9])((?:19|20)\d{2})([^0-9]|$)""")
@@ -400,7 +433,8 @@ fun parseName(raw: String): NameParts {
         se != null -> { season = se.groupValues[1].toIntOrNull(); episode = se.groupValues[2].toIntOrNull() }
         x != null -> { season = x.groupValues[2].toIntOrNull(); episode = x.groupValues[3].toIntOrNull() }
         else -> {
-            season = RE_CN_SEASON.find(s)?.groupValues?.get(1)?.toIntOrNull()
+            season = RE_CN_SEASON.find(s)?.groupValues?.get(1)?.let(::cnNumber)?.takeIf { it in 1..99 }
+                ?: stageSeason(s)
                 ?: RE_SEASON_WORD.find(s)?.groupValues?.get(1)?.toIntOrNull()
                 ?: RE_S_ONLY.find(s)?.groupValues?.get(2)?.toIntOrNull()
             episode = RE_CN_EP.find(s)?.groupValues?.get(1)?.toIntOrNull()
@@ -412,12 +446,14 @@ fun parseName(raw: String): NameParts {
     val resolution = RE_RES.find(s)?.let { it.groupValues[2] + "p" }
         ?: RE_UHD.find(s)?.let { when (it.groupValues[2].lowercase()) { "8k" -> "4320p"; else -> "2160p" } }
     val source = sourceOf(s)
+    val code = codeIn(noBrackets)
 
-    // 片名 token：分词以后丢掉数字、技术标签、年份、季集写法、发布组
+    // 片名 token：分词以后丢掉数字、技术标签、年份、季集写法、发布组、编号的字母部分（不然 ABP 开头的字幕都拿满片名分）
     val tokens = words(noBrackets).filterTo(LinkedHashSet<String>()) { w ->
         when {
             w.isEmpty() -> false
             w.all { it in '0'..'9' } -> false
+            code != null && w in code.words -> false
             w in NOISE -> false
             w.length == 1 && w in NOISE_SINGLE_CJK -> false
             w == group -> false
@@ -428,7 +464,58 @@ fun parseName(raw: String): NameParts {
             else -> true
         }
     }
-    return NameParts(tokens, year, season, episode, resolution, source, group)
+    return NameParts(tokens, year, season, episode, resolution, source, group, code?.code)
+}
+
+/**
+ * 名字里番号式的编号（`ABP-811`、`abp_811`、`ABP811`、`abp00811`、`300MIUM-123`、`FC2-PPV-1234567`），规范成「大写字母-去掉前导零的数字」；没有 = null。
+ * 括号里的不算（`[中字]ABP-811-C.srt` 认的是 ABP-811）。纯函数，有单测。
+ */
+fun codeOf(raw: String): String? {
+    var s = raw.trim()
+    while (true) {
+        val next = LANG_TAIL.replace(EXT_TAIL.replace(s, ""), "")
+        if (next == s) break
+        s = next
+    }
+    return codeIn(BRACKETS.replace(s, " "))?.code
+}
+
+/** 认出来的编号：[code] = 规范写法；[words] = 它在分词里占的小写 token（字母部分、带数字前缀的那一段），不再当片名。 */
+private class CodeHit(val code: String, val words: Set<String>)
+
+/*
+ * 「2–6 个字母（前面可以带最多 3 位数字）+ 可有可无的 - / _ / 空格 + 2–7 位数字」；FC2 的 `FC2-PPV-` 前缀单独认。
+ * 不算编号的：字母部分是技术 / 版本标签（ep、cd、part、vol、hdr、web、bd…，[NOISE] + [CODE_NOISE]）；数字是年份（1900–2099，年份优先）；
+ * 数字后面紧跟 p / i / k / bit / fps（分辨率、码率）；字母大小写混写（`Apollo-13`、`Hi10P` 是词，不是编号）；空格隔开的只认全大写（`ABP 811`，
+ * 不认 `Blade Runner 2049`）。点隔开的不认（`Apollo.13.1995`）。
+ */
+private val RE_CODE = Regex("""(?:^|[^A-Za-z0-9])((?:[Ff][Cc]2[-_ ]?)?)([0-9]{0,3})([A-Za-z]{2,6})([-_ ]?)([0-9]{2,7})(?![0-9])([A-Za-z]*)""")
+private val CODE_NOISE = setOf("hi", "ma", "ch", "bit", "bits", "fps", "hz", "mb", "gb", "kbps", "mbps", "mp", "ps", "av", "vc", "op", "ed", "sp", "ova", "oad", "ncop", "nced", "pv", "cm", "no", "nr", "s", "e", "x")
+private val CODE_UNIT_TAIL = setOf("p", "i", "k", "bit", "bits", "fps", "hz", "ch", "kbps", "mbps")
+
+private fun codeIn(s: String): CodeHit? {
+    for (m in RE_CODE.findAll(s)) {
+        val fc2 = m.groupValues[1]
+        val lead = m.groupValues[2]
+        val letters = m.groupValues[3]
+        val sep = m.groupValues[4]
+        val digits = m.groupValues[5]
+        val tail = m.groupValues[6]
+        val low = letters.lowercase()
+        if (low in NOISE || low in CODE_NOISE) continue
+        if (tail.lowercase() in CODE_UNIT_TAIL) continue
+        val upper = letters.all { it in 'A'..'Z' }
+        val lower = letters.all { it in 'a'..'z' }
+        if (!upper && !lower) continue
+        if (sep == " " && !upper) continue
+        if (digits.length == 4 && digits.toInt() in 1900..2099) continue
+        val number = digits.trimStart('0').ifEmpty { "0" }
+        val head = if (fc2.isNotEmpty()) "FC2-" + lead.uppercase() + letters.uppercase() else lead.uppercase() + letters.uppercase()
+        val words = setOfNotNull(low, (lead + letters).lowercase(), "fc2".takeIf { fc2.isNotEmpty() })
+        return CodeHit("$head-$number", words)
+    }
+    return null
 }
 
 private fun sourceOf(s: String): String? {

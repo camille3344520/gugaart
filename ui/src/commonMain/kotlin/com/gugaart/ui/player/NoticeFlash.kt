@@ -48,8 +48,8 @@ const val NOTICE_FLASH_MS = 4_000L
  */
 fun switchFailedLine(n: Notice?): String? {
     if (n == null || n.tone != NoticeTone.Warning) return null
-    Regex("^换到「(.+)」失败$").matchEntire(n.title.trim())?.let { return "换到「${it.groupValues[1]}」没成功，继续播放当前的" }
-    if (n.title.trim() == "切回本台失败") return "切回本台没成功，继续播放当前的"
+    Regex("^换到「(.+)」失败$").matchEntire(n.title.trim())?.let { return "换到「${it.groupValues[1]}」失败" }
+    if (n.title.trim() == "切回本台失败") return "切回本台失败"
     return null
 }
 
@@ -72,7 +72,11 @@ fun PlayerNoticeFlash(play: PlaySession, scale: Float, modifier: Modifier = Modi
         delay(NOTICE_FLASH_MS)
         if (shown == seq) shown = -1
     }
-    AnimatedVisibility(shown == seq && text.isNotEmpty(), modifier, enter = fadeIn(tween(260)), exit = fadeOut(tween(600))) {
+    val showing = shown == seq && text.isNotEmpty()
+    // P2-5：亮着的时候告诉别处（电视的格式说明先收起）
+    LaunchedEffect(showing) { play.noticeShowing = showing }
+    androidx.compose.runtime.DisposableEffect(play) { onDispose { play.noticeShowing = false } }
+    AnimatedVisibility(showing, modifier, enter = fadeIn(tween(260)), exit = fadeOut(tween(600))) {
         NoticeChip(text, scale, maxWidth)
     }
 }

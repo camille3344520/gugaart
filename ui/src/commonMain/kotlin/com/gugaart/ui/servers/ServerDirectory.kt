@@ -12,6 +12,7 @@ import com.gugugaga.core.EmbyHttp
 import com.gugugaga.core.KtorTransport
 import com.gugugaga.core.NO_RETRY
 import com.gugugaga.core.PublicSystemInfo
+import com.gugugaga.core.PublicInfoCache
 import com.gugugaga.core.StoredServer
 import com.gugugaga.core.Transport
 import com.gugugaga.core.apiBaseOf
@@ -19,6 +20,7 @@ import com.gugugaga.core.buildEmbyHeaders
 import com.gugugaga.core.currentTimeMillis
 import com.gugugaga.core.describeEmbyError
 import com.gugugaga.core.identityForServer
+import com.gugugaga.core.joinUrl
 import com.gugugaga.core.platformHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +67,9 @@ class ServerDirectory(
     @Volatile
     private var snapshot: SavedServers? = null
 
+    @Volatile
+    private var pinging = false
+
     private val _entries = MutableStateFlow<List<ServerEntry>>(emptyList())
     override val entries: StateFlow<List<ServerEntry>> = _entries.asStateFlow()
     private val lazyTransport: Transport by lazy { transport ?: KtorTransport(platformHttpClient()) }
@@ -76,20 +81,27 @@ class ServerDirectory(
     }
 
     override fun refreshPings() {
+        // 正在跑就不再叠一轮（顶栏胶囊和下拉列表会各叫一次）；30s 内同一条的结果由 PublicInfoCache 复用
+        if (pinging) return
+        pinging = true
         scope.launch {
-            val saved = session.saved()
-            snapshot = saved
-            if (saved.servers.isEmpty()) return@launch
-            pings.update { m -> m + saved.servers.associate { it.id to PingState.Checking } }
-            publish()
-            coroutineScope {
-                saved.servers.map { s ->
-                    async {
-                        val r = pingOne(s)
-                        pings.update { it + (s.id to r) }
-                        publish()
-                    }
-                }.awaitAll()
+            try {
+                val saved = session.saved()
+                snapshot = saved
+                if (saved.servers.isEmpty()) return@launch
+                pings.update { m -> m + saved.servers.associate { it.id to PingState.Checking } }
+                publish()
+                coroutineScope {
+                    saved.servers.map { s ->
+                        async {
+                            val r = pingOne(s)
+                            pings.update { it + (s.id to r) }
+                            publish()
+                        }
+                    }.awaitAll()
+                }
+            } finally {
+                pinging = false
             }
         }
     }
@@ -170,17 +182,23 @@ class ServerDirectory(
 
     /** 一台的 ping：公开端点，不带令牌；2 秒超时、不重试。任何失败都算离线。 */
     private suspend fun pingOne(server: StoredServer): PingState {
+        val apiBase = apiBaseOf(server.address)
+        val url = joinUrl(apiBase, "/System/Info/Public")
+        // 30s 内复用上一次的成功结果：连接探测 / 上一轮在线点已经问过同一条（1.5.1 perf-win2）
+        PublicInfoCache.get(url)?.let { return PingState.Online(PublicInfoCache.latencyOf(url) ?: 0) }
         val http = EmbyHttp(
             transport = lazyTransport,
-            apiBase = apiBaseOf(server.address),
+            apiBase = apiBase,
             headers = { buildEmbyHeaders(identityForServer(session.identity, server)) },
             timeoutMs = pingTimeoutMs,
             retry = NO_RETRY,
         )
         val mark = TimeSource.Monotonic.markNow()
         return try {
-            http.get<PublicSystemInfo>("/System/Info/Public")
-            PingState.Online(mark.elapsedNow().inWholeMilliseconds.toInt().coerceAtLeast(0))
+            val info = http.get<PublicSystemInfo>("/System/Info/Public")
+            val ms = mark.elapsedNow().inWholeMilliseconds.toInt().coerceAtLeast(0)
+            PublicInfoCache.put(url, info, ms)
+            PingState.Online(ms)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {

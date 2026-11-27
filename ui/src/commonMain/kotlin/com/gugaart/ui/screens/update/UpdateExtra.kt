@@ -183,13 +183,13 @@ fun UpdateExtra() {
  * macOS 的「装」= 打开下好的 `.dmg`、用户自己拖一次（decisions.md D-lead-8；设计稿 `design/macos/notes.md` §8 的那句话）。
  * 号外上照实写，主钮是「下载安装包」。
  */
-const val DMG_NOTE = "下载的是 .dmg：打开后把「咕咕嘎嘎」拖进「应用程序」替换旧的，再打开一次就好"
+const val DMG_NOTE = "下载的是 .dmg：打开后把「咕咕嘎嘎」拖进「应用程序」替换旧的"
 
 /**
  * 关于页「检查更新」下面那句：上一次检查的结果（已是最新 / 发现新版本 / 连不上更新服务器……，上游写的）。纯函数，有单测。
  * 1.3.x 的 iPhone 在这里写死「iOS 版暂不支持应用内检查更新」（那时 iOS 没有验签）；1.4.0 起 iOS 也验签（`update/Ed25519.kt`），三端一样。
  */
-fun aboutCheckNote(lastResult: String): String = lastResult.ifEmpty { "还没有检查过" }
+fun aboutCheckNote(lastResult: String): String = lastResult.ifEmpty { "未检查" }
 
 /** 这一版在 GitHub 上的发布页（侧载的号外打开它；仓库名只在 [com.gugaart.ui.update.GithubUpdate.REPO] 一处）。 */
 fun releasePage(version: String): String = "https://github.com/${com.gugaart.ui.update.GithubUpdate.REPO}/releases/tag/v$version"
@@ -201,7 +201,7 @@ private fun releaseCodeOf(state: UpdateState): Int = when (state) {
 }
 
 /** 侧载时号外下面那句话（D-lead-26，她的话）。 */
-const val SIDELOAD_HINT = "新版在 GitHub 的发布页上：下载 .ipa，用你平时自签的工具装上，覆盖安装就好。"
+const val SIDELOAD_HINT = "在 GitHub 发布页下载 .ipa，用自签工具覆盖安装"
 
 /**
  * 号外这张纸片（只画）。强制更新没有「稍后」，点外面 / 返回也收不掉。
@@ -226,9 +226,9 @@ fun ExtraSlip(view: ExtraView, permissionHint: Boolean, onUpdate: () -> Unit, on
                 val sub = when {
                     sideload -> listOfNotNull(SIDELOAD_HINT, view.meta.takeIf { it.isNotEmpty() }).joinToString("\n")
                     view.phase == ExtraPhase.Failed -> view.message
-                    permissionHint -> "请在系统设置里允许「咕咕嘎嘎」安装应用，再回来点一次。"
-                    view.phase == ExtraPhase.Permission -> "需要先允许这个应用安装更新。"
-                    view.forced && view.phase == ExtraPhase.Offer -> if (dmg) "这一版不能再用了。$DMG_NOTE。" else "这一版不能再用了。更新大约一分钟，登录和设置都会留着。"
+                    permissionHint -> "在系统设置里允许「咕咕嘎嘎」安装应用"
+                    view.phase == ExtraPhase.Permission -> "需要允许安装更新"
+                    view.forced && view.phase == ExtraPhase.Offer -> if (dmg) "这一版不能再用了。$DMG_NOTE。" else "这一版不能再用了。登录和设置会保留。"
                     dmg && (view.phase == ExtraPhase.Offer || view.phase == ExtraPhase.Ready) ->
                         listOfNotNull(view.meta.takeIf { it.isNotEmpty() }, DMG_NOTE, view.message).joinToString("\n")
                     else -> listOfNotNull(view.meta.takeIf { it.isNotEmpty() }, view.message).joinToString("\n")

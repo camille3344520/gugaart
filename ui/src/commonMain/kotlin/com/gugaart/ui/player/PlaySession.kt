@@ -21,7 +21,6 @@ import com.gugugaga.app.player.EmbyPlayerClient
 import com.gugugaga.app.player.Notice
 import com.gugugaga.app.player.PlayController
 import com.gugugaga.app.player.PlayRequest
-import com.gugugaga.app.player.PlaybackSettings
 import com.gugugaga.app.player.PlayerClient
 import com.gugugaga.app.player.PlayerDanmaku
 import com.gugugaga.app.player.PlayerDeps
@@ -30,6 +29,7 @@ import com.gugugaga.app.player.PlayerPlatform
 import com.gugugaga.app.player.PlayerPrefsStore
 import com.gugugaga.app.player.StrmSettings
 import com.gugugaga.app.session.AppSession
+import com.gugugaga.app.settings.playbackPrefs
 import com.gugugaga.app.settings.PerfPref
 import com.gugugaga.app.settings.uiSettings
 import com.gugugaga.app.ui.LocalGraph
@@ -89,6 +89,10 @@ class PlaySession internal constructor(
     var noticeSeq: Int by mutableIntStateOf(0)
         private set
 
+    /** 「换台失败」那一条小条正亮着（[PlayerNoticeFlash] 写）：电视上这时先收起格式徽章下面那行说明，两行不叠（审计 P2-5）。 */
+    var noticeShowing: Boolean by mutableStateOf(false)
+        internal set
+
     /** 来了一条通知（上游的 notify、画报自己的「换台失败」都走这里）。 */
     fun post(n: Notice) {
         notice = n
@@ -99,15 +103,41 @@ class PlaySession internal constructor(
     var subtitleWhy: String? by mutableStateOf(null)
         internal set
 
+    /** 用户在播放器里选过字幕的源（itemId|sourceId）：开播第一帧之后不再改选。 */
+    private val userChosenSources = HashSet<String>()
+
+    internal fun markSubtitleChosen(itemId: String, sourceId: String?) {
+        if (sourceId != null) userChosenSources += "$itemId|$sourceId"
+    }
+
+    internal fun hasUserChosenSubtitle(itemId: String, sourceId: String?): Boolean =
+        sourceId != null && "$itemId|$sourceId" in userChosenSources
+
     /** 用户在播放器里手动换了字幕之后要做的事（记进「上次的选择」）。 */
     internal var onSubtitleChosen: ((Int?) -> Unit)? = null
 
     /** 播放器里换字幕（面板、快捷键都走这里，不直接调控制器）：换，并且记下来。 */
     fun chooseSubtitle(index: Int?) {
+        val snap = controller.value
+        markSubtitleChosen(snap.itemId, snap.resolved?.mediaSource?.id)
         controller.selectSubtitle(index)
         subtitleWhy = "手动"
         onSubtitleChosen?.invoke(index)
     }
+
+    /** 记「这一集 + 这条字幕」的字幕时间（[rememberPlaySession] 接上本地存储；测试里没有 = 只改不记）。 */
+    internal var timing: SubtitleTimingSync? = null
+
+    /** 字幕时间改成 [ms]（面板、电视页边、键盘都走这里）：改，并且记下来。 */
+    fun setSubtitleTiming(ms: Long) {
+        val v = ms.coerceIn(-SUBTITLE_TIMING_LIMIT_MS, SUBTITLE_TIMING_LIMIT_MS)
+        controller.setSubtitleDelay(v)
+        val s = controller.value
+        timing?.remember(s.itemId, s.sourceId, s.subtitleIndex, v)
+    }
+
+    /** 字幕时间走一步（± [deltaMs]）。 */
+    fun stepSubtitleTiming(deltaMs: Long) = setSubtitleTiming(subtitleTimingNext(controller.value.subtitleDelayMs, deltaMs))
 }
 
 /**
@@ -127,6 +157,9 @@ val LocalDanmakuSlotOverride = staticCompositionLocalOf<(@Composable (com.guguga
  * Mac 壳用它把控制器接到系统的「正在播放」和媒体键（任务单 MP-6）。别的壳不设置。
  */
 val LocalPlaySessionSink = staticCompositionLocalOf<((PlaySession) -> Unit)?> { null }
+
+/** 验收运行器的测试缝（iOS `dmjit151`）：把这一页的 PlayerDanmaku 交给外面（手动搜 / 选弹幕）；应用里永远是 null = 不交。 */
+val LocalPlayerDanmakuSink = staticCompositionLocalOf<((com.gugugaga.app.player.PlayerDanmaku) -> Unit)?> { null }
 
 /**
  * 把 [AppGraph] 接成一个可播放的 [PlayController]。和上游 `PlayPage()` 的接法逐项对应；有意不同的三处见 ADR 0002 §4.1：
@@ -154,11 +187,14 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
         val remoteClient = handoff?.let { com.gugaart.ui.data.OtherServers.poolFor(g).clientNow(it.serverId) }
         val remote = if (handoff != null && remoteClient != null) RemoteSource(handoff.serverId, handoff.serverName, handoff.itemId, route.id, remoteClient) else null
         val remotePlayer = remote?.let { RemotePlay.playerClientOf(it.client) }
+        // P1-1：这一部记住的内核盖在全局首选上（剧按剧记；放着别台的源时认本台路由里那一条）
+        val filmItem = if (remote != null) route.id else restart?.itemId ?: route.id
+        val filmEngine = EngineMemory(g.deps.local).get(filmItem, g.queries.cachedItem(filmItem)?.seriesId)
         val controller = PlayController(
             PlayerDeps(
                 client = remotePlayer ?: home,
                 platform = platform,
-                playback = { PlaybackSettings.of(g.settings.value) },
+                playback = { playbackFor(g.settings.value, filmEngine) },
                 strm = { StrmSettings.of(g.settings.value) },
                 prefs = prefs,
                 scope = scope,
@@ -220,40 +256,61 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
     LaunchedEffect(play) {
         fun tracksOf(snap: com.gugugaga.app.player.PlayerSnapshot): List<SubTrack> {
             val emby = snap.resolved?.mediaSource?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }
-            if (emby.isNotEmpty()) return emby.map { SubTrack(it.index, it.language, it.title ?: it.displayTitle, it.isExternal == true) }
+            if (emby.isNotEmpty()) {
+                return emby.map { SubTrack(it.index, it.language, it.title ?: it.displayTitle, it.isExternal == true, it.isDefault == true) }
+            }
             // 1.3.1：Emby 流表空（《谷雨》这类源）→ 用内核 track-list 的内嵌轨，编号 = ordinal（和上游空表回落同一套）
             return play.controller.engineFlow.value?.tracks?.value?.subtitle.orEmpty().filter { !it.external }
-                .mapIndexed { i, t -> SubTrack(i, t.lang, t.label, false) }
+                .mapIndexed { i, t -> SubTrack(i, t.lang, t.label, false, t.isDefault) }
         }
         fun keyOf(snap: com.gugugaga.app.player.PlayerSnapshot): String = snap.item?.seriesId ?: snap.itemId
         play.onSubtitleChosen = { index ->
             val snap = play.controller.value
             memory.put(keyOf(snap), SubChoice.of(tracksOf(snap).firstOrNull { it.index == index }))
         }
-        var done: String? = null
+        val pickedNonEmpty = HashSet<String>()
+        val pickedAny = HashSet<String>()
         play.controller.snapshot.collect { snap ->
             val resolved = snap.resolved ?: return@collect
-            val item = snap.item ?: return@collect
-            // 等内核真的起来了（Ready：轨道表已经报上来）再选（用户 2026-11-15：「字幕有时候开关不灵敏，显示有，但是没有字幕，要开关一次才有」）。
-            // 以前一拿到播放信息就选：那时内核还没加载 / 正在加载，选择先挂起，内核的 load() 一开始就把挂起的选择清掉——
-            // 控制器记着「开」，内核里其实没开。换内核、重新协商也会再 load 一次，同样会丢。
+            snap.item ?: return@collect
             if (snap.phase != com.gugugaga.app.player.PlayPhase.Ready) return@collect
-            // _guard 带上内核轨数量：流表空的源要等 track-list 到了再选一次（第一次到时轨还没报上来）
-            val id = snap.itemId + "|" + resolved.mediaSource.id + "|" + (play.controller.engineFlow.value?.tracks?.value?.subtitle?.size ?: -1)
-            if (done == id) return@collect
-            done = id
-            // 这一集用的是字幕搜索搜来的字幕（subtitle/SubtitleSearchUi.kt）：不再自动改它
+            val sourceKey = snap.itemId + "|" + resolved.mediaSource.id
+            if (play.hasUserChosenSubtitle(snap.itemId, resolved.mediaSource.id)) return@collect
             if (com.gugaart.ui.subtitle.SubtitleSearchBoard.pinned == snap.itemId) return@collect
+            if (sourceKey in pickedNonEmpty) return@collect
+            if (snap.framedItemId == snap.itemId && sourceKey in pickedAny) return@collect
+            val tracks = tracksOf(snap)
+            val embyHasSubs = resolved.mediaSource.mediaStreams.any { it.type == "Subtitle" }
+            val engineTracksReported = play.controller.engineFlow.value?.tracks?.value != null
+            if (!embyHasSubs && !engineTracksReported && snap.framedItemId != snap.itemId) return@collect
+            pickedAny += sourceKey
+            if (embyHasSubs || tracks.isNotEmpty() || engineTracksReported) pickedNonEmpty += sourceKey
             if (explicit.value) {
                 play.subtitleWhy = null
                 return@collect
             }
-            val streams = resolved.mediaSource.mediaStreams
-            val audio = streams.firstOrNull { it.type == "Audio" && it.index == resolved.audioStreamIndex } ?: streams.firstOrNull { it.type == "Audio" && it.isDefault == true } ?: streams.firstOrNull { it.type == "Audio" }
-            val audioLang = audio?.language ?: play.controller.engineFlow.value?.tracks?.value?.audio?.firstOrNull()?.lang
-            val pick = pickSubtitle(gugaPrefs.value.subtitleDefault, memory.get(keyOf(snap)), audioLang, item.productionLocations, tracksOf(snap))
+            val langs = com.gugaart.ui.data.effectiveSubtitleLangs(
+                g.settings.value.playbackPrefs.subtitleLangs,
+                gugaPrefs.value.subLangsSeeded,
+            )
+            val pick = pickSubtitle(
+                gugaPrefs.value.subtitleDefault,
+                langs,
+                memory.get(keyOf(snap)),
+                tracks,
+            )
             play.subtitleWhy = pick.why
             if (snap.subtitleIndex != pick.index) play.controller.selectSubtitle(pick.index)
+        }
+    }
+    // 字幕时间：按「这一集 + 这条字幕」记；开播 / 换集 / 换字幕时放回记下的值（没记过 = 0；上游换集会清零）
+    val timingMemory = remember { SubtitleTimingMemory(g.deps.local) }
+    LaunchedEffect(play) {
+        val sync = SubtitleTimingSync(timingMemory)
+        play.timing = sync
+        play.controller.snapshot.collect { snap ->
+            if (snap.phase != com.gugugaga.app.player.PlayPhase.Ready) return@collect
+            sync.restore(snap.itemId, snap.sourceId, snap.subtitleIndex, snap.subtitleDelayMs)?.let(play.controller::setSubtitleDelay)
         }
     }
     // 字幕智能匹配（1.4.1 U2，subtitle/BestMatchUi.kt）：开播后这一集没有中文字幕 → 搜一次，指纹精确的自动加载（开关开着）或者提示一句；
@@ -311,6 +368,7 @@ fun rememberGugaDanmaku(play: PlaySession): PlayerDanmaku {
         )
     }
     DisposableEffect(d) { onDispose { d.dispose() } }
+    LocalPlayerDanmakuSink.current?.let { sink -> androidx.compose.runtime.LaunchedEffect(d) { sink(d) } }
     val settings by g.settings.state.collectAsState()
     val prefs = remember(settings) { parseDanmakuPrefsFromBlob(settings) }
     val pp by play.prefs.state.collectAsState()

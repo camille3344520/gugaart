@@ -46,7 +46,7 @@ internal fun BackupGroup() {
 
     SettingGroup("备份与还原", "BACKUP")
     BasicText(
-        "备份里有：全部设置、弹幕服务器、TMDB 令牌、Emby 服务器地址和用户名；不带登录令牌，还原后在上面重新登录一次。手机、电视、电脑三端通用。备份里有弹幕服务器的令牌，文件别外传。",
+        "含设置、弹幕服务器地址和令牌、TMDB 令牌、Emby 地址和用户名",
         Modifier.padding(vertical = 10.dp),
         style = Guga.note(Guga.type.caption, colors.dim),
         maxLines = 4,
@@ -66,7 +66,7 @@ internal fun BackupGroup() {
         SettingRow("导出到文件", note = "存一份 gugaart-backup.json", tag = "backup-export") {
             ActionWord(if (c.busy == "file-out") "导出中…" else "导出", { c.exportFile() }, enabled = c.busy == null)
         }
-        SettingRow("从文件还原", note = "选一份导出过的备份", tag = "backup-import") {
+        SettingRow("从文件还原", tag = "backup-import") {
             ActionWord(if (c.busy == "file-in") "读取中…" else "选文件", { c.importFile() }, enabled = c.busy == null)
         }
     }
@@ -77,7 +77,7 @@ internal fun BackupGroup() {
     var user by remember(saved) { mutableStateOf(saved.user) }
     var password by remember(saved) { mutableStateOf(saved.password) }
     val dirty = url != saved.url || user != saved.user || password != saved.password
-    SettingRow("WebDAV", note = "填文件夹地址（坚果云、Nextcloud、群晖……）；备份存成里面的 gugaart-backup.json", tag = "backup-dav")
+    SettingRow("WebDAV", note = "存为文件夹里的 gugaart-backup.json", tag = "backup-dav")
     InputLine(url, { url = it }, "https://dav.example.com/backup/", Modifier.fillMaxWidth().padding(start = 20.dp), tag = "backup-dav-url")
     InputLine(user, { user = it }, "用户名", Modifier.fillMaxWidth().padding(start = 20.dp), tag = "backup-dav-user")
     InputLine(password, { password = it }, "密码 / 应用密码", Modifier.fillMaxWidth().padding(start = 20.dp), secret = true, tag = "backup-dav-pass")

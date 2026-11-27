@@ -177,7 +177,7 @@ fun TvLogin(today: Today) {
                         if (com.gugaart.ui.wide.LocalWideNav.current.sessionExpired && session == null) {
                             Row(Modifier.padding(bottom = 14.dp).testTag("tv-login-expired"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                                 if (LocalGugaPrefs.current.showMascot) MascotPose("G10", 96.dp, label = "观影卡过期")
-                                BasicText("观影卡过期了：服务器不再认它（可能在别处改了密码）。选一台重新登录一次，收藏和进度都还在服务器上。", style = Guga.song(26.sp, FontWeight.SemiBold, colors.seal, lineHeight = 40.sp), maxLines = 2)
+                                BasicText("这张观影卡已失效；收藏和进度都还在服务器上", style = Guga.song(26.sp, FontWeight.SemiBold, colors.seal, lineHeight = 40.sp), maxLines = 2)
                             }
                         }
                         for ((i, s) in list.withIndex()) key(s.id) {
@@ -197,7 +197,7 @@ fun TvLogin(today: Today) {
                             val marked = groups.currentGroup == "srv-ops" && groups.current?.let { groups.groupOf(it) } == "srv-ops" && (side ?: list.first().id) == s.id
                             TvServerRow("server-${s.id}", s.remark?.takeIf { it.isNotBlank() } ?: s.name, note, number = if (i < 9) "0${i + 1}" else "${i + 1}", default = i == 0, marked = marked) { model.enter(s) }
                         }
-                        TvServerRow("server-add", "添加服务器", "地址、账号、密码一屏填完", icon = GuguIcon.Plus, default = list.isEmpty(), small = true) { model.openAdd() }
+                        TvServerRow("server-add", "添加服务器", "地址、账号、密码", icon = GuguIcon.Plus, default = list.isEmpty(), small = true) { model.openAdd() }
                         model.error?.let { BasicText(it, Modifier.padding(top = 24.dp), style = Guga.song(26.sp, color = colors.seal), maxLines = 2) }
                     }
                     Spacer(Modifier.width(TvLoginSpec.SIDE_GAP))
@@ -241,7 +241,7 @@ fun TvLogin(today: Today) {
                                 }
                             },
                             onKey = ::press,
-                            hint = "方向键走、确定输入；最左再按左回到输入框。",
+                            hint = null,
                         )
                     } else {
                         for (r in 0..TvKeyboard.ROWS.size) groups.remove("kb-$r")
@@ -294,19 +294,19 @@ private fun TvServerSide(s: StoredServer, model: LoginModel, current: Boolean, c
             when {
                 model.entering == s.id -> "连接中…"
                 current -> "已连接"
-                ms == null -> "正在量延迟…"
-                ms < 0 -> "连不上：地址也许换了"
+                ms == null -> "测速中…"
+                ms < 0 -> "连不上"
                 else -> "可连接 · $ms ms"
             },
         )
-        TvSideFact("地址", "已保存（这里不显示）")
+        TvSideFact("地址", "已保存")
         TvSideHead("这台服务器上的账号", "ACCOUNTS", Modifier.padding(top = 34.dp))
         for (a in s.accounts) key(a.userId) {
             val on = current && a.userId == currentUser
             TvSideRow("acct-${a.userId}", a.userName, if (on) "当前" else "用它进", mark = if (on) 2 else 1) { model.switchTo(s, a) }
         }
         TvSideRow("srv-login", "登录其他账号", null, icon = GuguIcon.Plus, chevron = true) { model.openLogin(model.targetOf(s), "") }
-        TvSideRow("srv-forget", if (forgetting) "再按一次确定：移除" else "从这台电视上移除", if (forgetting) "账号也一起拿掉" else null, icon = GuguIcon.X, danger = forgetting, onClick = onForget)
+        TvSideRow("srv-forget", if (forgetting) "再按一次确定：移除" else "从这台电视上移除", if (forgetting) "账号一并移除" else null, icon = GuguIcon.X, danger = forgetting, onClick = onForget)
     }
 }
 

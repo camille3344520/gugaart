@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -146,14 +147,14 @@ object DeskHomeSpec {
     const val SNAP_NEAR = 0.3f
 }
 
-/** 目录行 / 头条的副行：「第 5 集 · 江心白南霁风组队 · 余 18 分」「电影 · 2 小时 14 分 · 余 78 分」；没开始写「还没开始」。纯函数，有单测。 */
+/** 目录行 / 头条的副行：「第 5 集 · 江心白南霁风组队 · 余 18 分」「电影 · 2 小时 14 分 · 余 78 分」；没开始写「未看」。纯函数，有单测。 */
 fun deskTocSub(t: Title): String {
     val head = when {
         t.kind == Kind.Episode && t.episodeNo != null -> listOfNotNull("第 ${t.episodeNo} 集", t.name.takeIf { it.isNotEmpty() && it != t.seriesName })
         t.kind == Kind.Movie -> listOfNotNull("电影", t.runtimeSec?.let { Rules.minutes(it) })
         else -> listOf("剧集")
     }
-    val tail = if (t.progress <= 0f) "还没开始" else Rules.remaining(t.progress, t.runtimeSec) ?: "${t.pct}%"
+    val tail = if (t.progress <= 0f) "未看" else Rules.remaining(t.progress, t.runtimeSec) ?: "${t.pct}%"
     return (head + tail).joinToString(" · ")
 }
 
@@ -188,6 +189,8 @@ fun homeSnapTarget(scroll: Float, tocY: Float): Float? {
 fun DesktopHomeScreen(today: Today) {
     val load = rememberLoad("home") { loadHome(it) }
     com.gugaart.ui.screens.home.RefreshOnReturn(load)
+    // 冷启动测量（perf-win）：第一帧画出首页内容时记一条
+    com.gugaart.ui.data.BootContentMark(load.value != null)
     val data = load.value
     val forceLoading = LocalPreset.current.state == "load"
     when {
@@ -324,10 +327,10 @@ private fun DesktopHome(data: HomeData, today: Today, onRefresh: () -> Unit) {
                             val coverW = min(min(Guga.rem(DeskHomeSpec.COVER_MAX), coverByHeight), maxWidth * DeskHomeSpec.COVER_OF_COLUMN)
                             CoverFlow(
                                 flow,
-                                covers.map { it.art.poster },
+                                remember(covers) { covers.map { it.art.poster } },
                                 Modifier.align(Alignment.Center).offset(y = -Guga.rem(1.6f)),
                                 cardWidth = coverW,
-                                names = covers.map { it.displayName },
+                                names = remember(covers) { covers.map { it.displayName } },
                                 onClick = { i -> covers.getOrNull(i)?.let { graph.open(it.seriesId ?: it.id) } },
                             )
                         }
@@ -353,7 +356,7 @@ private fun DesktopHome(data: HomeData, today: Today, onRefresh: () -> Unit) {
                     // 右页：期号 / 片名 / 导语 / 续看 / 印章位 / 主编手记
                     Column(Modifier.weight(if (xl) DeskHomeSpec.RIGHT_XL else DeskHomeSpec.RIGHT).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                            IssueOdometer(flow.position, covers.size)
+                            IssueOdometer({ flow.position }, covers.size)
                             Spacer(Modifier.weight(1f))
                             Column(Modifier.padding(bottom = Guga.rem(1.4f)), horizontalAlignment = Alignment.End) {
                                 BasicText("COVER STORY · 今日封面", style = Guga.note(rsp(1.1f), colors.faint, letterSpacing = 0.24.em), maxLines = 1)
@@ -455,7 +458,7 @@ private fun DesktopHome(data: HomeData, today: Today, onRefresh: () -> Unit) {
                 first = false
                 when (s) {
                     is HomeSection.Resume -> Column(Modifier.padding(top = top).padding(horizontal = dimens.margin).anchor(s.key)) {
-                        DeskSection(s.number, "继续观看", "CONTINUE WATCHING") { SectionNote("${data.resumeTotal} 部在看", { graph.nav.navigate(Route.History()) }) }
+                        DeskSection(s.number, "继续观看", "CONTINUE WATCHING") { SectionNote("${data.resumeTotal} 部", { graph.nav.navigate(Route.History()) }) }
                         ResumeBlock(data.resume, xl)
                     }
                     is HomeSection.Latest -> Column(Modifier.padding(top = top).anchor(s.key)) {
@@ -572,6 +575,7 @@ private fun FoldTitle(first: Boolean, onClick: () -> Unit) {
     val colors = Guga.colors
     val press = rememberPressState()
     val bob = tocBob(first)
+    val bobAmp = Guga.rem(0.4f)
     val ink = if (first) colors.onInk else colors.ink
     Row(
         Modifier
@@ -583,7 +587,7 @@ private fun FoldTitle(first: Boolean, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(Guga.rem(0.9f)),
     ) {
         BasicText("片单", style = Guga.song(rsp(2f), FontWeight.Black, ink, letterSpacing = 0.2.em), maxLines = 1)
-        BasicText("↓", Modifier.offset(y = Guga.rem(0.4f) * bob), style = Guga.song(rsp(1.8f), FontWeight.Black, if (first) ink else colors.spot), maxLines = 1)
+        BasicText("↓", Modifier.graphicsLayer { translationY = bobAmp.toPx() * bob() }, style = Guga.song(rsp(1.8f), FontWeight.Black, if (first) ink else colors.spot), maxLines = 1)
         if (first) BasicText("往下看", style = Guga.song(rsp(1.45f), FontWeight.Bold, ink), maxLines = 1)
     }
 }

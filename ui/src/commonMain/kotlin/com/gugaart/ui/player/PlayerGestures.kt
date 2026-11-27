@@ -90,6 +90,7 @@ class GugaGestures(
     private val duration: () -> Double,
     /** 点一下画面：有面板就收面板，否则显隐控件。 */
     private val onSingleTap: () -> Unit,
+    private val stepMs: () -> Double = { STEP_MS },
 ) : SurfaceGestures {
     var hint: EdgeHint? by mutableStateOf(null)
         private set
@@ -120,8 +121,8 @@ class GugaGestures(
     override fun onDoubleTap(zone: TapZone) {
         if (locked()) return
         when (zone) {
-            TapZone.Left -> controller.seekBy(-STEP_MS)
-            TapZone.Right -> controller.seekBy(STEP_MS)
+            TapZone.Left -> controller.seekBy(-stepMs())
+            TapZone.Right -> controller.seekBy(stepMs())
             TapZone.Center -> controller.togglePlay()
         }
     }

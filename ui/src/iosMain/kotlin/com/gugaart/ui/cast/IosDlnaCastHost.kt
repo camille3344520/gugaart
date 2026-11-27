@@ -49,7 +49,7 @@ class IosDlnaCastHost : CastHost {
     private var problem: String? = null
 
     override fun emptyHint(): String? = problem
-        ?: "· iPhone 上还要允许「本地网络」（设置 › 隐私与安全性 › 本地网络 › 咕咕嘎嘎）。"
+        ?: " · 需允许本地网络：设置 › 隐私与安全性 › 本地网络"
 
     override suspend fun discover(timeoutMs: Long): List<CastDevice> {
         val locations = withContext(Dispatchers.IO) { ssdp(timeoutMs) }
@@ -62,7 +62,7 @@ class IosDlnaCastHost : CastHost {
         val locations = LinkedHashSet<String>()
         val s = socket(AF_INET, SOCK_DGRAM, 0)
         if (s < 0) {
-            problem = "· 这台设备开不了 UDP 套接字。"
+            problem = " · 无法打开 UDP 套接字"
             return locations
         }
         try {
@@ -81,8 +81,8 @@ class IosDlnaCastHost : CastHost {
             if (sent == 0) {
                 problem = when (lastErr) {
                     EHOSTUNREACH, ENETUNREACH, EPERM, EACCES ->
-                        "· iPhone 发不出找电视的组播包：自签的包多半没有苹果批的「组播」权利（已知问题），或者「本地网络」权限没开（设置 › 隐私与安全性 › 本地网络）。"
-                    else -> "· 找电视的组播包发不出去（错误 $lastErr）。"
+                        " · 组播包发不出：自签包可能没有组播权限，或本地网络权限未开"
+                    else -> " · 组播包发不出：错误 $lastErr"
                 }
                 return locations
             }

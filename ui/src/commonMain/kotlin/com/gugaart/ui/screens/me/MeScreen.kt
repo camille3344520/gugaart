@@ -98,7 +98,7 @@ private object MeSpec {
  */
 data class MeData(val played: Int?, val watching: Int, val favorites: Int?, val resume: List<Title>)
 
-/** 只读：看过（[countWatched]）、在看（继续观看）、收藏（盖过章的）。收藏只取 `TotalRecordCount`，不拉条目。 */
+/** 只读：已看（[countWatched]）、继续观看的条数（「记录」那一行）、收藏（盖过章的）。收藏只取 `TotalRecordCount`，不拉条目。 */
 suspend fun loadMe(client: EmbyClient): MeData {
     suspend fun count(types: List<String>, status: String): Int? = try {
         client.getItems(LibraryQuery(includeItemTypes = types, recursive = true, status = listOf(status), limit = 1)).totalRecordCount
@@ -160,6 +160,8 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
     var leaving by remember { mutableStateOf(false) }
     val scroll = rememberScrollState(LocalPreset.current.scroll)
     ReportScroll(scroll)
+    // P2-13：进了「我的」= 看到了读者证上的称号，导航上的小点清掉
+    androidx.compose.runtime.LaunchedEffect(Unit) { RankBoard.seen() }
 
     fun switchTo(server: StoredServer, account: StoredAccount) {
         if (busy != null) return
@@ -202,6 +204,26 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
             ReaderCard(s, today, data?.played, Modifier.padding(top = 26.dp))
             Stats(data)
             Rule()
+            // ---- 翻阅：记录 / 收藏紧跟在观影卡下面（P2-12：常用的不用往下翻一屏半），称号徽章墙往下挪
+            SectionHeader("常去", "SHORTCUTS", Modifier.padding(top = 26.dp))
+            var n = 0
+            PageRow(++n, "记录", data?.let { if (it.watching > 0) "${it.watching} 条" else "还没有" }) { graph.nav.navigate(Route.History()) }
+            val resume = data?.resume.orEmpty()
+            if (resume.isNotEmpty()) {
+                // 一带缩略图：往右滑出页边（右边不留页边，露出半张 = 还能滑）
+                Row(Modifier.padding(bottom = 18.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    for (t in resume.take(8)) {
+                        val press = rememberPressState()
+                        Column(Modifier.width(MeSpec.STRIP_THUMB).pressGraphics(press).pressable(press, label = t.displayName) { graph.open(t.id) }) {
+                            Thumb(t.art.thumb, t.displayName, MeSpec.STRIP_THUMB, progress = t.progress)
+                            BasicText(t.displayName, Modifier.padding(top = 8.dp), style = Guga.song(13.sp, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+            Rule()
+            PageRow(++n, "收藏", data?.favorites?.let { if (it > 0) "$it 部收藏" else "还没有收藏" }) { (onOpenFavs ?: { graph.nav.navigate(Route.History("favorites")) })() }
+            Rule()
             // 特别称号：一页两排六枚，左右滑翻页（拿到的排前面、彩色）；点一枚看拿法
             SectionHeader("特别称号", "SPECIAL", Modifier.padding(top = 26.dp), trailing = "${RankBoard.owned.size} / ${Specials.COUNT}")
             SpecialGrid(RankBoard.owned, Modifier.padding(top = 16.dp).testTag("me-specials"), columns = 6, badge = 46.dp, nameSize = 11.sp, rows = 2) { id -> RankBoard.special = SpecialNews(listOf(id), browse = true) }
@@ -242,27 +264,7 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
             }
             Rule()
             problem?.let { BasicText("没换成：$it", Modifier.padding(top = 10.dp), style = Guga.note(Guga.type.caption, colors.seal), maxLines = 2) }
-
-            // ---- 翻阅
-            SectionHeader("常去", "SHORTCUTS", Modifier.padding(top = 34.dp))
-            var n = 0
-            PageRow(++n, "记录", data?.let { if (it.watching > 0) "${it.watching} 条没看完" else "还没有" }) { graph.nav.navigate(Route.History()) }
-            val resume = data?.resume.orEmpty()
-            if (resume.isNotEmpty()) {
-                // 一带缩略图：往右滑出页边（右边不留页边，露出半张 = 还能滑）
-                Row(Modifier.padding(bottom = 18.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    for (t in resume.take(8)) {
-                        val press = rememberPressState()
-                        Column(Modifier.width(MeSpec.STRIP_THUMB).pressGraphics(press).pressable(press, label = t.displayName) { graph.open(t.id) }) {
-                            Thumb(t.art.thumb, t.displayName, MeSpec.STRIP_THUMB, progress = t.progress)
-                            BasicText(t.displayName, Modifier.padding(top = 8.dp), style = Guga.song(13.sp, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
-            Rule()
-            PageRow(++n, "收藏", data?.favorites?.let { if (it > 0) "$it 部收藏" else "还没有收藏" }) { (onOpenFavs ?: { graph.nav.navigate(Route.History("favorites")) })() }
-            Rule()
+            Spacer(Modifier.height(26.dp))
             if (onOpenSets != null) {
                 PageRow(++n, "合集", null, onOpenSets)
                 Rule()
@@ -275,11 +277,10 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
             // 底部安全区：末尾内容能滚到标签栏上方
             Spacer(Modifier.height(150.dp + dimens.tabLift))
         }
-        StatusBand(solid = scroll.value > 2)
+        StatusBand(solid = com.gugaart.ui.screens.scrolledPast(scroll, 2f))
         if (leaving) {
             ConfirmSheet(
-                title = "退出「${s.userName}」",
-                text = "这个账号会从这台设备上移除，下次要重新输入密码。服务器上的记录和收藏都留着。",
+                title = "退出登录？",
                 confirm = "退出登录",
                 onConfirm = {
                     leaving = false
@@ -331,12 +332,12 @@ private fun RankLine(played: Int, modifier: Modifier = Modifier) {
     }
 }
 
-/** 三格数字：看过 / 在看 / 收藏。还没取到 = 一道短横，不编数。 */
+/** 两格数字：已看 / 收藏（观看状态只有未看 / 已看，D-watch：不再有「在看」那一格）。还没取到 = 一道短横，不编数。 */
 @Composable
 private fun Stats(data: MeData?) {
     val colors = Guga.colors
     Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).testTag("me-stats")) {
-        val cells = listOf("看过" to data?.played, "在看" to data?.watching, "收藏" to data?.favorites)
+        val cells = listOf("已看" to data?.played, "收藏" to data?.favorites)
         for ((i, c) in cells.withIndex()) {
             if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(colors.line))
             Column(Modifier.weight(1f).padding(start = if (i == 0) 0.dp else 16.dp, top = 14.dp, bottom = 12.dp)) {

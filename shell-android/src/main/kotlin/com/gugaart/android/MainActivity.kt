@@ -194,16 +194,25 @@ class MainActivity : ComponentActivity() {
             StrictMode.setThreadPolicy(StrictMode.ThreadPolicy.Builder().detectNetwork().penaltyLog().build())
         }
         GlassPlatform.init(this)
+        val isTestBuild = BuildConfig.DEBUG || BuildConfig.MOCK_ACCOUNT.isNotEmpty()
+        if (tv && isTestBuild) {
+            com.gugaart.ui.tv.TvPerfTiming.enabled = true
+            com.gugaart.ui.tv.TvPerfTiming.postNextFrame = { cb ->
+                android.view.Choreographer.getInstance().postFrameCallback { nanos -> cb(nanos / 1_000_000L) }
+            }
+            com.gugaart.ui.tv.TvPerfTiming.log = { msg -> Log.i(TAG, msg) }
+            // 翻封面的性能探针（批次 tvflip）：--es flip3d off / bleed off|static|lowres|nograd / xfade off / clip off / border off / dim off / posters off / glow off / gov off / cardlayer on
+            Log.i(TAG, "[tvflip] " + com.gugaart.ui.tv.TvFlipProbe.apply { intent.getStringExtra(it) })
+        }
         enableEdgeToEdge()
-        val override = if (!BuildConfig.DEBUG) null else when (intent.getStringExtra("glass")) {
+        val override = if (!isTestBuild) null else when (intent.getStringExtra("glass")) {
             "live" -> GlassBackend.Live
             "gl" -> GlassBackend.ControlledGl
             "plates" -> GlassBackend.Plates
             "solid" -> GlassBackend.Solid
             else -> null
         }
-        val route = intent.getStringExtra("route")?.takeIf { BuildConfig.DEBUG }?.let(::parseRoute) ?: Route.Home
-
+        val route = intent.getStringExtra("route")?.takeIf { isTestBuild }?.let(::parseRoute) ?: Route.Home
         // 视频层在 Compose 视图下面
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
@@ -223,6 +232,11 @@ class MainActivity : ComponentActivity() {
         graph.log.sink = { level, message -> Log.i(PLAYER_TAG, "[$level] $message") }
         Log.i(TAG, "flavor=${BuildConfig.DEVICE_FLAVOR} api=${Build.VERSION.SDK_INT} mode=${deps.uiMode} secure=${deps.secureMode()} mock=${deps.debug.mockAccount != null} route=${route::class.simpleName}")
         installAndroidCrashGuard(graph)
+        // 冷启动「打开到首页出内容」：系统日志 ActivityTaskManager「Fully drawn … +N ms」（Android 的 TTFD），自己再记一行从进程起来算的毫秒
+        com.gugaart.ui.screens.home.HomeFirstContent.sink = {
+            runCatching { reportFullyDrawn() }
+            Log.i(TAG, "home content +${android.os.SystemClock.uptimeMillis() - android.os.Process.getStartUptimeMillis()} ms since process start")
+        }
         // 会话状态一行一条（不带账号和令牌）：设备上的脚本等 `session=SignedIn` 再继续
         appScope.launch {
             var last: SessionStatus? = null
@@ -296,6 +310,25 @@ class MainActivity : ComponentActivity() {
 
     /** 播放器显示时每个键先给它；返回是返回回调的事。遥控器 / 耳机上 Compose 不认识的键先换成播放器的媒体键。 */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        com.gugaart.ui.tv.TvPerfTiming.onAnyKey(event.eventTime)
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) {
+                val dir = when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> "UP"
+                    KeyEvent.KEYCODE_DPAD_DOWN -> "DOWN"
+                    KeyEvent.KEYCODE_DPAD_LEFT -> "LEFT"
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> "RIGHT"
+                    else -> null
+                }
+                if (dir != null) com.gugaart.ui.tv.TvPerfTiming.onDpadDown(event.eventTime, dir)
+            }
+            KeyEvent.ACTION_UP -> when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE ->
+                    com.gugaart.ui.tv.TvPerfTiming.onOkUp(event.eventTime)
+                KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE ->
+                    com.gugaart.ui.tv.TvPerfTiming.onBackUp(event.eventTime, appGraph?.nav?.route?.toString() ?: "?")
+            }
+        }
         if (event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
             if (event.action == KeyEvent.ACTION_DOWN) return true
             if (event.action == KeyEvent.ACTION_UP) {
@@ -389,18 +422,24 @@ class MainActivity : ComponentActivity() {
             AutoCloseable { runCatching { lock.release() } }
         }
         // 播放器里开播的提示（徽章下面那一行；徽章本身哪里都不变灰，decisions.md D-mac-6）要知道这台设备的屏幕能显示什么：HDR 类型（Display）+ 有没有杜比视界解码器（MediaCodecList）
-        com.gugaart.ui.player.DeviceAv.caps = runCatching {
-            @Suppress("DEPRECATION")
-            val types = windowManager.defaultDisplay.hdrCapabilities?.supportedHdrTypes?.toSet().orEmpty()
-            val dvDecoder = android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS).codecInfos
-                .any { info -> !info.isEncoder && info.supportedTypes.any { it.equals("video/dolby-vision", ignoreCase = true) } }
-            com.gugaart.ui.player.AvCaps(
-                hdr10 = android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in types,
-                hdr10Plus = android.view.Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS in types,
-                hlg = android.view.Display.HdrCapabilities.HDR_TYPE_HLG in types,
-                dolbyVision = android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION in types && dvDecoder,
-            )
-        }.getOrNull()
+        // MediaCodecList(ALL_CODECS) 跨进程枚举解码器较耗时，放到后台线程探测（只在开播 FormatFlash 时才读，不阻塞冷启动主线程）
+        @Suppress("DEPRECATION")
+        val hdrTypes = runCatching { windowManager.defaultDisplay.hdrCapabilities?.supportedHdrTypes?.toSet().orEmpty() }.getOrDefault(emptySet())
+        val appScopeForCaps = scope
+        if (appScopeForCaps != null) {
+            appScopeForCaps.launch(Dispatchers.Default) {
+                com.gugaart.ui.player.DeviceAv.caps = runCatching {
+                    val dvDecoder = android.media.MediaCodecList(android.media.MediaCodecList.ALL_CODECS).codecInfos
+                        .any { info -> !info.isEncoder && info.supportedTypes.any { it.equals("video/dolby-vision", ignoreCase = true) } }
+                    com.gugaart.ui.player.AvCaps(
+                        hdr10 = android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in hdrTypes,
+                        hdr10Plus = android.view.Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS in hdrTypes,
+                        hlg = android.view.Display.HdrCapabilities.HDR_TYPE_HLG in hdrTypes,
+                        dolbyVision = android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION in hdrTypes && dvDecoder,
+                    )
+                }.getOrNull()
+            }
+        }
         // 播放器里的网速：本应用一共收了多少字节（ExoPlayer / VLC / mpv 都在本进程里）；系统不给（UNSUPPORTED）就退回内核自己的估计
         com.gugaart.ui.player.NetTraffic.rxBytes = {
             android.net.TrafficStats.getUidRxBytes(android.os.Process.myUid()).takeIf { it != android.net.TrafficStats.UNSUPPORTED.toLong() }

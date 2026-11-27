@@ -18,6 +18,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -50,7 +54,6 @@ import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.rememberPresetScroll
 import com.gugaart.ui.screens.PageEnd
 import com.gugaart.ui.screens.open
-import com.gugaart.ui.screens.play
 import com.gugaart.ui.screens.toggleFavorite
 import com.gugaart.ui.screens.togglePlayed
 import com.gugaart.ui.theme.Guga
@@ -72,17 +75,20 @@ internal val EPISODE_BLEED = 430.dp
 @Immutable
 data class EpisodeNeighbours(val previous: Title?, val next: Title?)
 
-/** 在一季的分集里找前后两集。纯函数。 */
+/** 在一季的分集里找前后两集；未播出的（[Title.unaired]，放不了）跳过（op1137b）。纯函数，有单测。 */
 fun neighboursOf(episodes: List<Title>, id: String): EpisodeNeighbours {
     val at = episodes.indexOfFirst { it.id == id }
     if (at < 0) return EpisodeNeighbours(null, null)
-    return EpisodeNeighbours(episodes.getOrNull(at - 1), episodes.getOrNull(at + 1))
+    return EpisodeNeighbours(
+        episodes.subList(0, at).lastOrNull { !it.unaired },
+        episodes.subList(at + 1, episodes.size).firstOrNull { !it.unaired },
+    )
 }
 
 /** 这一季的分集（只读，`getEpisodes`）→ 前后两集。没有所属的剧 / 取不到 → 两边都空，这一栏不出现。 */
 suspend fun loadNeighbours(client: EmbyClient, episode: Title): EpisodeNeighbours {
     val series = episode.seriesId ?: return EpisodeNeighbours(null, null)
-    val list = client.getEpisodes(series, season = episode.seasonNo, o = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio"))).items.map { client.titleOf(it) }
+    val list = client.getEpisodes(series, season = episode.seasonNo, isMissing = false, o = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio"))).items.map { client.titleOf(it) }
     return neighboursOf(list, episode.id)
 }
 
@@ -106,7 +112,7 @@ fun sizeText(bytes: Long?): String? {
  * 「文件」一栏：视频 / 音轨 / 字幕 / 文件 四行，每一段都来自真实的媒体流，没有的那一段不写、整行没有内容就不出现
  * （docs/data-edge-cases.md §7）。纯函数。
  */
-fun mediaRows(source: MediaSourceInfo?): List<MediaRow> {
+fun mediaRows(source: MediaSourceInfo?, tracks: Boolean = true): List<MediaRow> {
     if (source == null) return emptyList()
     val streams = source.mediaStreams
     val v = streams.firstOrNull { it.type == "Video" }
@@ -114,15 +120,13 @@ fun mediaRows(source: MediaSourceInfo?): List<MediaRow> {
         listOfNotNull(specLine(source)?.substringBefore(" · "), it.codec?.uppercase(), it.videoRange?.trim()?.takeIf { r -> r.isNotEmpty() && r != "SDR" }, fps(it.realFrameRate ?: it.averageFrameRate)).joinToString(" · ")
     }
     fun names(type: String) = streams.filter { it.type == type }.map { s ->
-        val row = streamRow(s)
-        val tag = listOfNotNull(if (type == "Subtitle") (if (s.isExternal == true) "外挂" else "内封") else null, if (type == "Subtitle") s.codec?.uppercase() else null, "默认".takeIf { s.isDefault == true && type == "Audio" }).joinToString(" ")
-        if (tag.isEmpty()) row.name else "${row.name}（$tag）"
+        com.gugaart.ui.data.trackName(s).line
     }
     val file = listOfNotNull(source.container?.lowercase()?.takeIf { it.isNotEmpty() }, sizeText(source.size)).joinToString(" · ")
     return listOfNotNull(
         video?.takeIf { it.isNotEmpty() }?.let { MediaRow("视频", it) },
-        names("Audio").takeIf { it.isNotEmpty() }?.let { MediaRow("音轨", it.joinToString(" · ")) },
-        names("Subtitle").takeIf { it.isNotEmpty() }?.let { MediaRow("字幕", it.joinToString(" · ")) },
+        names("Audio").takeIf { tracks && it.isNotEmpty() }?.let { MediaRow("音轨", it.joinToString("　/　")) },
+        names("Subtitle").takeIf { tracks && it.isNotEmpty() }?.let { MediaRow("字幕", it.joinToString("　/　")) },
         file.takeIf { it.isNotEmpty() }?.let { MediaRow("文件", it) },
     )
 }
@@ -160,6 +164,11 @@ fun EpisodeScreen(episode: Title, day: Int) {
     val art = episode.art.copy(backdrop = episode.art.still ?: episode.art.backdrop)
     val where = listOfNotNull(episode.seriesName, episode.seasonNo?.let { "第 $it 季" })
     val no = episode.episodeNo
+    // 版本 / 音轨 / 字幕（1.5.1，和电影详情同一组）：选中的版本决定徽章、文件那几行和开播；音轨 / 字幕跟着版本走
+    val sources = rememberSourcesState(episode)
+    val source = sources.selected?.mediaSource ?: episode.sources.firstOrNull()
+    val picks = rememberTrackPicks(source)
+    var sheet by remember(episode.id) { mutableStateOf(preset.state?.takeIf { it == "ver" || it == "audio" || it == "sub" }) }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("episode-phone")) {
@@ -169,11 +178,11 @@ fun EpisodeScreen(episode: Title, day: Int) {
                 framing = Framing(0.5f, 0.3f),
                 caption = when {
                     episode.art.still != null -> (listOf("本集剧照") + where).joinToString(" · ")
-                    bleedSourceOf(art) == BleedSource.Backdrop -> "没有分集图 · 用剧照代替"
-                    bleedSourceOf(art) == BleedSource.PosterBlur -> "没有剧照 · 用海报虚化代替"
+                    bleedSourceOf(art) == BleedSource.Backdrop -> "剧照"
+                    bleedSourceOf(art) == BleedSource.PosterBlur -> "海报"
                     else -> null
                 },
-                scrollPx = scroll.value.toFloat(),
+                scrollPx = { scroll.value.toFloat() },
             ) {
                 Column(Modifier.align(Alignment.BottomStart).padding(horizontal = dimens.margin).padding(bottom = 4.dp).fillMaxWidth()) {
                     Kicker(where + listOfNotNull(no?.let { "第 $it 集" }))
@@ -189,7 +198,7 @@ fun EpisodeScreen(episode: Title, day: Int) {
                     val facts = listOfNotNull(
                         episode.runtimeSec?.let { "时长" to Rules.minutes(it) },
                         premiereText(episode.premiere)?.let { "首播" to it },
-                        (if (played) "已看过" else if (episode.progress > 0f) "看到 ${episode.pct ?: 0}%" else "还没看").let { "" to it },
+                        (if (played) "已看" else if (episode.progress > 0f) "看到 ${episode.pct ?: 0}%" else "未看").let { "" to it },
                     )
                     facts.forEachIndexed { i, (label, value) ->
                         if (i > 0) Spacer(Modifier.weight(1f))
@@ -198,13 +207,18 @@ fun EpisodeScreen(episode: Title, day: Int) {
                     }
                 }
                 Rule()
-                FormatBadgeRow(formatBadges(episode.sources.firstOrNull(), null, null), 1.15f, Modifier.padding(top = 16.dp), notes = false)
-                PrimaryButton(
-                    (if (episode.progress > 0f) "续看" else "播放") + (no?.let { " 第 $it 集" }.orEmpty()),
-                    { graph.play(episode.id, episode.positionSec?.times(1000)) },
-                    Modifier.padding(top = 18.dp).fillMaxWidth(),
-                    progress = episode.progress,
-                    trailing = if (episode.progress > 0f && episode.positionSec != null && episode.runtimeSec != null) "${Rules.clock(episode.positionSec * 1000)} / ${Rules.clock(episode.runtimeSec * 1000)}" else episode.runtimeSec?.let { Rules.clock(it * 1000) },
+                FormatBadgeRow(formatBadges(source, null, null), 1.15f, Modifier.padding(top = 16.dp), notes = false)
+                PlayRow(
+                    { m ->
+                        PrimaryButton(
+                            (if (episode.progress > 0f) "续看" else "播放") + (no?.let { " 第 $it 集" }.orEmpty()),
+                            { graph.playback.play(sources.playRoute(episode.positionSec?.times(1000), picks.audioIndex, picks.subtitleIndex)) },
+                            m,
+                            progress = episode.progress,
+                            trailing = if (episode.progress > 0f && episode.positionSec != null && episode.runtimeSec != null) "${Rules.clock(episode.positionSec * 1000)} / ${Rules.clock(episode.runtimeSec * 1000)}" else episode.runtimeSec?.let { Rules.clock(it * 1000) },
+                        )
+                    },
+                    restart = if (episode.progress > 0f) ({ graph.playback.play(sources.playRoute(0L, picks.audioIndex, picks.subtitleIndex)) }) else null,
                 )
                 ActionsRow(
                     fav,
@@ -217,15 +231,16 @@ fun EpisodeScreen(episode: Title, day: Int) {
                     { graph.togglePlayed(chrome, episode.id, played) },
                     Modifier.padding(top = 14.dp),
                 )
+                // 版本 / 音轨 / 字幕：一组收起来的行，点开是贴底的纸片；紧跟在收藏 / 已看下面（P2-11），简介往后放
+                TrackPickerGroup(sources, picks, { sheet = it }, Modifier.padding(top = 18.dp))
                 if (episode.overview.isEmpty()) {
-                    BasicText("服务器上没有这一集的简介。", Modifier.padding(top = 22.dp).testTag("episode-no-overview"), style = Guga.note(type.lead * 0.94f, colors.faint), maxLines = 1)
+                    BasicText("没有简介", Modifier.padding(top = 22.dp).testTag("episode-no-overview"), style = Guga.note(type.lead * 0.94f, colors.faint), maxLines = 1)
                 } else {
                     Overview(Rules.fold(episode.overview, PHONE_FOLD_CHARS), Modifier.padding(top = 18.dp))
                 }
 
-                // ---- 文件：来自真实的媒体流，没有就整栏不出现
-                val source = episode.sources.firstOrNull()
-                val rows = mediaRows(source)
+                // ---- 文件：来自真实的媒体流，没有就整栏不出现（音轨 / 字幕在上面那一组里，这里只写视频和文件）
+                val rows = mediaRows(source, tracks = false)
                 if (rows.isNotEmpty()) {
                     SectionHeader("文件", "MEDIA", Modifier.padding(top = 30.dp), trailing = "${episode.sources.size} 个版本")
                     for (r in rows) {
@@ -265,11 +280,12 @@ fun EpisodeScreen(episode: Title, day: Int) {
         }
         BackRow(
             no?.let { "第 $it 集" } ?: episode.name,
-            solid = scroll.value > solidAt,
+            solid = com.gugaart.ui.screens.scrolledPast(scroll, solidAt),
             onBack = { graph.nav.backOrHome() },
             favorite = fav,
             onFavorite = { graph.toggleFavorite(chrome, episode.id, fav) },
         )
+        TrackPickerSheets(sheet, sources, picks) { sheet = null }
     }
 }
 

@@ -53,7 +53,7 @@ fun CastPanelBody(play: PlaySession) {
         val active = Cast.active
         if (active != null) {
             val st = Cast.status
-            BasicText("正在「${active.name}」上放", Modifier.padding(top = 10.dp), style = Guga.song(p.body, FontWeight.Bold, colors.ink), maxLines = 2)
+            BasicText("正在「${active.name}」上播放", Modifier.padding(top = 10.dp), style = Guga.song(p.body, FontWeight.Bold, colors.ink), maxLines = 2)
             BasicText(
                 listOfNotNull(castStateWord(st), st?.positionSec?.let { pos -> hms(pos) + (st.durationSec?.let { " / " + hms(it) } ?: "") }).joinToString(" · "),
                 Modifier.padding(top = 6.dp).testTag("cast-status"),
@@ -65,23 +65,23 @@ fun CastPanelBody(play: PlaySession) {
             PanelLink("退 10 秒") { Cast.seekBy(g.scope, -10) }
             PanelLink("进 30 秒") { Cast.seekBy(g.scope, 30) }
             PanelSection("结束")
-            PanelLink("结束投屏，在这里接着放") { Cast.stop(g.scope, play, resume = true) }
+            PanelLink("结束投屏，在本机继续") { Cast.stop(g.scope, play, resume = true) }
             PanelLink("结束投屏") { Cast.stop(g.scope, play, resume = false) }
         } else {
-            PanelSection(if (Cast.searching) "正在找电视…" else "同一个网络里的电视")
+            PanelSection(if (Cast.searching) "搜索电视中…" else "同一网络里的电视")
             for (d in Cast.devices) {
                 PanelOption(d.name, false, {
                     val client = session?.client ?: return@PanelOption
                     Cast.start(g.scope, play, client, d)
                 }, note = d.model)
             }
-            if (!Cast.searching) PanelLink(if (Cast.devices.isEmpty()) "再找一遍" else "重新找一遍") { scope.launch { Cast.search() } }
+            if (!Cast.searching) PanelLink("重新搜索") { scope.launch { Cast.search() } }
         }
         Cast.message?.let { BasicText(it, Modifier.padding(top = 12.dp).testTag("cast-message"), style = Guga.note(p.note, colors.dim), maxLines = 5) }
         // M2-13：Mac 上找了半天一台都没有时，多半句「本地网络」权限的提示（只加字，不加按钮；Windows / 手机不变）
         val macHint = if (!Cast.searching && Cast.devices.isEmpty()) castLocalNetworkHint(LocalDesktopHost.current.platformName) else null
         BasicText(
-            "用的是 DLNA：电视和这台设备要连同一个网络，电视上打开「投屏 / DLNA / 无线投屏」。投屏时电视自己放原片，弹幕不会投过去；电视放不了的格式会提示。" + (macHint ?: ""),
+            "DLNA：需在同一网络，电视开启投屏；弹幕不投到电视" + (macHint ?: ""),
             Modifier.padding(top = 16.dp).testTag("cast-dlna-note"),
             style = Guga.note(p.note, colors.faint),
             maxLines = 5,
@@ -91,4 +91,4 @@ fun CastPanelBody(play: PlaySession) {
 
 /** M2-13（P-mac-15 文案，D-lead-15）：只有 macOS 才有这句「本地网络」权限提示；别的端返回 null。纯函数，有单测。 */
 fun castLocalNetworkHint(platformName: String): String? =
-    if (platformName == "macOS") "· 也可能是没有本地网络权限，去系统设置 › 隐私与安全性 › 本地网络里打开。" else null
+    if (platformName == "macOS") " · 或没有本地网络权限：系统设置 › 隐私与安全性 › 本地网络" else null

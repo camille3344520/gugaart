@@ -80,12 +80,7 @@ internal fun DesktopPipNote(onBack: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().background(DesktopPlayerSpec.PIP_PAPER).testTag("player-pip-note"), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = Guga.rem(46f)).padding(horizontal = Guga.rem(3f)), horizontalAlignment = Alignment.CenterHorizontally) {
             BasicText("PICTURE IN PICTURE · 画中画", style = Guga.song(rsp(1.05f), FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
-            BasicText("画面在小窗里", Modifier.padding(top = Guga.rem(1f), bottom = Guga.rem(1.2f)), style = Guga.song(rsp(3.2f), FontWeight.Black, letterSpacing = 0.1.em), maxLines = 1)
-            BasicText(
-                "这一集正在画中画窗口里继续放，字幕跟着过去了；弹幕留在这一页，回来接着飘。小窗是系统的：拖到哪个角都行，别的应用盖不住它。",
-                style = Guga.song(rsp(1.4f), color = colors.dim, lineHeight = rsp(2.5f)).copy(textAlign = TextAlign.Center),
-                maxLines = 4,
-            )
+            BasicText("画面在小窗里", Modifier.padding(top = Guga.rem(1f)), style = Guga.song(rsp(3.2f), FontWeight.Black, letterSpacing = 0.1.em), maxLines = 1)
             Box(Modifier.padding(top = Guga.rem(2.4f))) {
                 DButton("回到这里", onBack, icon = null, small = true, tag = "player-pip-back")
             }

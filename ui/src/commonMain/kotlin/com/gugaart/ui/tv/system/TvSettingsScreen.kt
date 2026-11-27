@@ -96,7 +96,15 @@ fun TvSettings(section: String?, today: Today) {
 
     // `Route.Settings("licenses")`（菜单 / 关于页的那一行）= 「关于」分区 + 开源许可那一列已经推开
     val openLicenses = section == com.gugaart.ui.screens.settings.OpenSourceLicenses.KEY
-    var current by remember { mutableStateOf(if (openLicenses) GugaSection.About else GugaSection.of(section) ?: GugaSection.Look) }
+    val openDiag = section == GugaSection.Diagnostics.key
+    val initialSec = when {
+        openLicenses || openDiag -> GugaSection.About
+        else -> GugaSection.of(section) ?: GugaSection.Account
+    }
+    var current by remember { mutableStateOf(initialSec) }
+    var advOpen by remember { mutableStateOf(initialSec.advanced || openLicenses || openDiag) }
+    var diagOpen by remember { mutableStateOf(openDiag || preset.state == "diag") }
+    var queriesCleared by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf(preset.state?.takeIf { it.startsWith("pick:") }?.removePrefix("pick:") ?: TV_LICENSES.takeIf { openLicenses }) }
     var confirming by remember { mutableStateOf<String?>(null) }
     // 系统安全存储里的两条密钥（弹幕服务器地址、TMDB 令牌）：上游的 SecretsStore，和手机 / 电脑读写的是同一份
@@ -159,7 +167,7 @@ fun TvSettings(section: String?, today: Today) {
     val otherStore = com.gugaart.ui.servers.currentOtherServersPrefs(serverSwitcher)
     val otherPrefs by otherStore.prefs.collectAsState()
     val savedServers by serverSwitcher.entries.collectAsState()
-    val rows = remember(current, settings, prefs, status, secrets, dmServers, backup.webdav, backup.pending, backup.message, backup.busy, traktState, traktPrefs, traktSync, traktMessage, traktCalendar.second, fonts, otherPrefs, savedServers) {
+    val rows = remember(current, settings, prefs, status, secrets, dmServers, backup.webdav, backup.pending, backup.message, backup.busy, traktState, traktPrefs, traktSync, traktMessage, traktCalendar.second, fonts, otherPrefs, savedServers, diagOpen, queriesCleared) {
         tvSettingRows(
             current, settings, prefs, g, store, secrets,
             saveSecret = { tmdb, dm -> g.scope.launch { g.secrets.save(tmdbToken = tmdb, danmakuApiUrl = dm) } },
@@ -174,6 +182,10 @@ fun TvSettings(section: String?, today: Today) {
                     g.secrets.load()
                 }
             },
+            diagOpen = diagOpen,
+            queriesCleared = queriesCleared,
+            onToggleDiag = { diagOpen = !diagOpen },
+            onClearQueries = { queriesCleared = true },
         )
     }
     val focusRows = rows.filter { it.focusable }
@@ -199,9 +211,13 @@ fun TvSettings(section: String?, today: Today) {
     var edited by remember { mutableStateOf(false) }
 
     // 焦点到哪个分区，右页就翻到哪个分区
+    val navSections = remember(advOpen) {
+        if (advOpen) GugaSection.PRIMARY + GugaSection.Advanced + GugaSection.ADVANCED_CHILDREN
+        else GugaSection.PRIMARY + GugaSection.Advanced
+    }
     val cur = groups.current
-    LaunchedEffect(cur) {
-        if (cur?.startsWith("sec-") == true) GugaSection.entries.firstOrNull { "sec-${it.key}" == cur }?.let { if (it != current) { current = it; groups.forget("rows"); confirming = null } }
+    LaunchedEffect(cur, navSections) {
+        if (cur?.startsWith("sec-") == true) navSections.firstOrNull { "sec-${it.key}" == cur }?.let { if (it != current) { current = it; groups.forget("rows"); confirming = null } }
         if (cur?.startsWith("row-") == true && cur != "row-$confirming") confirming = null
     }
     fun closePicker() {
@@ -262,7 +278,7 @@ fun TvSettings(section: String?, today: Today) {
                     Column(Modifier.width(620.dp)) {
                         BasicText("${current.title} · ${edit.label}", Modifier.padding(bottom = 22.dp), style = Guga.song(38.sp, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         TvField(edit.english.ifEmpty { edit.label }, if (edit.secret && !reveal) "•".repeat(draft.length) else draft, active = true, hint = edit.hint)
-                        for (line in listOfNotNull(edit.note, "${draft.length} 个字符" + if (draft.length > 22) "（只显示末尾 22 个）" else "", "按「保存」写回；按返回键不改。")) {
+                        for (line in listOfNotNull(edit.note, "${draft.length} 个字符" + if (draft.length > 22) " · 只显示末尾 22 个" else "")) {
                             BasicText(line, style = Guga.song(24.sp, color = colors.dim, lineHeight = 38.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
@@ -292,17 +308,42 @@ fun TvSettings(section: String?, today: Today) {
                     )
                 }
             } else Row(Modifier.fillMaxSize().padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = 26.dp)) {
-                // ---- 左页：九个分区 ----
-                TvGroup("sections", GugaSection.entries.map { "sec-${it.key}" }, horizontal = false, default = "sec-${current.key}")
+                // ---- 左页：六个主要分区 + 折叠「高级」 ----
+                TvGroup("sections", navSections.map { "sec-${it.key}" }, horizontal = false, default = "sec-${current.key}")
                 Column(Modifier.width(440.dp)) {
-                    for (s in GugaSection.entries) {
+                    for (s in navSections) {
                         val on = s == current
-                        TvBlockFocus("sec-${s.key}", { groups.enter("rows", g.focus) }, Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }, label = s.title, default = on && panel == null) { focused ->
+                        val isAdvParent = s == GugaSection.Advanced
+                        val isAdvChild = s in GugaSection.ADVANCED_CHILDREN
+                        TvBlockFocus(
+                            "sec-${s.key}",
+                            {
+                                if (isAdvParent) {
+                                    advOpen = !advOpen
+                                    if (!advOpen && current in GugaSection.ADVANCED_CHILDREN) current = GugaSection.Advanced
+                                } else {
+                                    groups.enter("rows", g.focus)
+                                }
+                            },
+                            Modifier.fillMaxWidth().drawBehind {
+                                drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
+                                if (isAdvChild) drawRect(colors.seal, Offset(0f, 0f), androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height))
+                            },
+                            label = s.title,
+                            default = on && panel == null,
+                        ) { focused ->
                             val ink = if (focused) colors.onInk else if (on) colors.spot else colors.ink
-                            Row(Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically) {
-                                BasicText(s.number, Modifier.width(64.dp), style = Guga.numeral(25.sp, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot), maxLines = 1)
-                                BasicText(s.title, Modifier.weight(1f), style = Guga.song(30.sp, FontWeight.Bold, ink), maxLines = 1)
-                                Icon(GuguIcon.ChevronRight, ink.copy(alpha = if (on) 1f else 0.5f), 26.dp)
+                            val rowHeight = if (isAdvChild) 64.dp else 84.dp
+                            Row(
+                                Modifier.fillMaxWidth().height(rowHeight).padding(start = if (isAdvChild) 52.dp else 26.dp, end = 26.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (!isAdvParent && !isAdvChild) {
+                                    BasicText(s.number, Modifier.width(64.dp), style = Guga.numeral(25.sp, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot), maxLines = 1)
+                                }
+                                BasicText(s.title, Modifier.weight(1f), style = Guga.song(if (isAdvChild) 27.sp else 30.sp, FontWeight.Bold, ink), maxLines = 1)
+                                val arrow = if (isAdvParent && advOpen) GuguIcon.ChevronDown else GuguIcon.ChevronRight
+                                Icon(arrow, ink.copy(alpha = if (on) 1f else 0.5f), 26.dp)
                             }
                         }
                     }
@@ -311,7 +352,7 @@ fun TvSettings(section: String?, today: Today) {
                 // ---- 右页：这一分区的行 ----
                 Column(Modifier.weight(1f).padding(end = if (picked != null || ordering != null || panel != null) 604.dp else 0.dp)) {
                     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                        BasicText(current.number, style = Guga.numeral(36.sp, colors.spot), maxLines = 1)
+                        if (current.number.isNotEmpty()) BasicText(current.number, style = Guga.numeral(36.sp, colors.spot), maxLines = 1)
                         BasicText(current.title, style = Guga.song(38.sp, FontWeight.Black), maxLines = 1)
                         BasicText(current.english, Modifier.padding(top = 10.dp), style = Guga.numeral(20.sp, colors.spot, letterSpacing = androidx.compose.ui.unit.TextUnit(0.24f, androidx.compose.ui.unit.TextUnitType.Em)), maxLines = 1)
                         Box(Modifier.weight(1f).height(1.dp).background(colors.line))
@@ -389,7 +430,6 @@ fun TvSettings(section: String?, today: Today) {
                         if (!picked.multi) closePicker()
                     }
                 }
-                BasicText(if (picked.multi) "确定 = 勾选 / 去掉；返回收起。" else "确定选中并收起；返回不改。", Modifier.padding(top = 30.dp), style = Guga.song(21.sp, color = colors.faint), maxLines = 1)
             }
         } else if (panel != null) {
             // ---- 开源许可：右边页边（纸面）的一列，只读；上下翻看，返回 / 左收起 ----
@@ -417,12 +457,7 @@ fun TvSettings(section: String?, today: Today) {
                     held = null
                     reset()
                 }
-                BasicText(
-                    if (held != null) "上下移动；确定放下，返回 = 放回原处。" else "确定拿起一项，上下移动，再按确定放下；返回收起。",
-                    Modifier.padding(top = 30.dp).testTag(if (held != null) "tv-order-held" else "tv-order-idle"),
-                    style = Guga.song(21.sp, color = if (held != null) colors.seal else colors.faint),
-                    maxLines = 1,
-                )
+                // 电视不显示按键提示（不再写「确定 = 拿起 / 放下」）：拿起的那一行自己会变样（TvOrderRow 的 held）
             }
         } else groups.remove("picker")
     }
@@ -563,12 +598,14 @@ private fun TvLicensesPanel(modifier: Modifier, groups: TvGroups) {
             }
         }
         val below = items.drop(first + LICENSES_VISIBLE).count { it is TvLicenseItem.Line }
-        BasicText(
-            if (below > 0) "⌄ 下面还有 $below 项 · 返回收起" else com.gugaart.ui.screens.settings.OpenSourceLicenses.footer(platform) ?: "返回收起。",
-            Modifier.padding(top = 24.dp),
-            style = Guga.song(21.sp, color = colors.faint),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        (if (below > 0) "⌄ 下面还有 $below 项" else com.gugaart.ui.screens.settings.OpenSourceLicenses.footer(platform))?.let {
+            BasicText(
+                it,
+                Modifier.padding(top = 24.dp),
+                style = Guga.song(21.sp, color = colors.faint),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }

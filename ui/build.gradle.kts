@@ -119,3 +119,12 @@ tasks.withType<Test>().configureEach {
     // 全量 40 多个类、几百个测试在同一个 JVM 里跑完会一直攒着。换 JVM = 这些本机内存整块还给系统；多出的启动开销每次几秒。
     forkEvery = 6
 }
+
+// 性能排查（1.5.1）：-Pgugaart.composeReports=true 才出 Compose 编译器的报告 / 指标（build/compose_reports、build/compose_metrics，
+// 哪些参数不稳定、哪些函数不可跳过）；平时不出。报告不算编译的输出，构建缓存命中时不会生成：要配 `:ui:compileKotlinDesktop --rerun`。
+if (providers.gradleProperty("gugaart.composeReports").orNull == "true") {
+    composeCompiler {
+        reportsDestination = layout.buildDirectory.dir("compose_reports")
+        metricsDestination = layout.buildDirectory.dir("compose_metrics")
+    }
+}

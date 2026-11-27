@@ -8,6 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -51,8 +53,10 @@ fun RollingNumber(value: Float, style: TextStyle, modifier: Modifier = Modifier,
         for (d in digits) {
             Layout(
                 content = {
-                    BasicText(d.now.toString(), style = style, maxLines = 1)
-                    BasicText(d.next.toString(), style = style, maxLines = 1)
+                    // 电视上 150 sp 的字在屏幕上 300 px，超过字形图集的上限，每帧按路径重画；放进离屏层后滚动只是挪层（探针 odolayer）
+                    val glyph = if (com.gugaart.ui.tv.TvFlipProbe.odoLayer) Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen } else Modifier
+                    BasicText(d.now.toString(), glyph, style = style, maxLines = 1)
+                    BasicText(d.next.toString(), glyph, style = style, maxLines = 1)
                 },
                 modifier = Modifier.clipToBounds(),
             ) { measurables, constraints ->
@@ -75,11 +79,13 @@ fun RollingNumber(value: Float, style: TextStyle, modifier: Modifier = Modifier,
  * 字号来自 `Guga.type.issue`（手机 66 / 电脑 96 / 电视 150）。
  */
 @Composable
-fun IssueOdometer(position: Float, total: Int, modifier: Modifier = Modifier) {
+fun IssueOdometer(position: () -> Float, total: Int, modifier: Modifier = Modifier) {
     val colors = Guga.colors
     val type = Guga.type
     Row(modifier, verticalAlignment = Alignment.Bottom) {
-        RollingNumber(position.coerceIn(0f, (total - 1).coerceAtLeast(0).toFloat()) + 1f, Guga.numeral(type.issue))
+        // 位置在这里才读（1.5.1 性能）：翻页动画每帧只重组这只里程表，不连带整个首页
+        val at = position().coerceIn(0f, (total - 1).coerceAtLeast(0).toFloat())
+        RollingNumber((if (com.gugaart.ui.tv.TvFlipProbe.odometer) at else at.roundToInt().toFloat()) + 1f, Guga.numeral(type.issue))
         Box(Modifier.padding(start = 6.dp, bottom = with(androidx.compose.ui.platform.LocalDensity.current) { (type.issue.toPx() * 0.2f).toDp() })) {
             BasicText("/ ${total.toString().padStart(2, '0')}", style = Guga.numeral(type.issue * 0.23f, colors.dim), maxLines = 1)
         }

@@ -89,7 +89,7 @@ fun friendlyError(e: Throwable): String {
     // 上游 :core 已经把服务器的应答分好类了：先按它的类别走，认不出来的再看原文
     if (e is EmbyException) {
         when (e.kind) {
-            EmbyException.Kind.Unauthorized -> return "登录失效了，重新登录一次"
+            EmbyException.Kind.Unauthorized -> return "登录失效"
             EmbyException.Kind.Timeout -> return "服务器没有应答"
             else -> Unit
         }
@@ -97,15 +97,21 @@ fun friendlyError(e: Throwable): String {
     val name = e::class.simpleName.orEmpty()
     val msg = e.message.orEmpty()
     return when {
-        msg.contains("401") || msg.contains("Unauthorized", ignoreCase = true) -> "登录失效了，重新登录一次"
+        msg.contains("401") || msg.contains("Unauthorized", ignoreCase = true) -> "登录失效"
         name.contains("Timeout", ignoreCase = true) || msg.contains("timeout", ignoreCase = true) -> "服务器没有应答"
-        msg.contains("Network", ignoreCase = true) -> "网络断开了"
+        msg.contains("Network", ignoreCase = true) -> "网络断开"
         else -> "片库没连上"
     }
 }
 
 /** 整页错误是哪一种（设计稿 `errors` 的三张通知）：断网、片库没有应答、读者证过期。 */
 enum class ErrorKind { Offline, Server, Auth }
+
+/**
+ * 服务器没有应答时整页错误的标题（1.5.1 审计 P2-2，三端一致）：直接写「连不上「服务器名」」；比喻放在她那一句（台词 `server`）。
+ * 没有名字写「连不上服务器」。纯函数，有单测。
+ */
+fun unreachableTitle(server: String?): String = "连不上" + (server?.trim()?.takeIf { it.isNotEmpty() }?.let { "「$it」" } ?: "服务器")
 
 /** [friendlyError] 的那句话属于哪一种整页错误。纯函数，有单测。 */
 fun errorKindOf(message: String): ErrorKind = when {
@@ -130,6 +136,7 @@ fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load
     val account = session?.let { "${it.serverId}/${it.userId}" }
     val site = currentCompositeKeyHash
     val keyList = keys.toList()
+    val offMain = com.gugaart.ui.idle.LocalIdleClock.current != null
     // 回到这一页：先拿上次的内容（LoadCache），随后照常重新取
     @Suppress("UNCHECKED_CAST")
     val load = remember { Load<T>().also { l -> (LoadCache.get(listOf(account, site) + keyList) as T?)?.let { l.value = it; l.account = account; l.valueKeys = keyList } } }
@@ -147,7 +154,7 @@ fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load
         load.account = account
         load.refreshing = true
         try {
-            val v = loader(client)
+            val v = if (offMain) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { loader(client) } else loader(client)
             load.value = v
             load.valueKeys = keyList
             load.error = null

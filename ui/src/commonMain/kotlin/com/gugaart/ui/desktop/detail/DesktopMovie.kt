@@ -21,7 +21,6 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -65,6 +64,7 @@ import com.gugaart.ui.screens.detail.SourceProgress
 import com.gugaart.ui.screens.detail.SourceRowText
 import com.gugaart.ui.screens.detail.SourceTags
 import com.gugaart.ui.screens.detail.rememberSourcesState
+import com.gugaart.ui.screens.detail.rememberTrackPicks
 import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.toggleFavorite
 import com.gugaart.ui.screens.togglePlayed
@@ -87,19 +87,11 @@ data class PickOption(val name: String, val note: String, val index: Int = -1, v
 /** 版本的一项（1.5.0「源」）：名字 = Emby 给这个版本起的名（没有 → 规格头一段），小字 = 「4K · HDR10 · DTS-HD MA · 直连」，带小签。 */
 fun versionOption(r: SourceRowText): PickOption = PickOption(r.title, r.spec, source = r)
 
-/** 音轨：「AAC stereo (默认)」+「AAC · 2 声道 · 中文」。纯函数。 */
-fun audioOption(s: MediaStream): PickOption = PickOption(
-    (s.displayTitle ?: s.title)?.trim()?.takeIf { it.isNotEmpty() } ?: s.codec?.uppercase() ?: "未命名",
-    listOfNotNull(s.codec?.uppercase(), s.channels?.let { "$it 声道" }, s.language?.takeIf { it.isNotEmpty() && it != "und" }).joinToString(" · "),
-    s.index,
-)
+/** 音轨：「国语 · AAC 2.0」+ 小签「默认」（P1-2，[com.gugaart.ui.data.trackName]）。纯函数。 */
+fun audioOption(s: MediaStream): PickOption = com.gugaart.ui.data.trackName(s).let { n -> PickOption(n.text, n.tags.joinToString(" · "), s.index) }
 
-/** 字幕：「Chinese (SRT)」+「SRT · 外挂」。纯函数。 */
-fun subtitleOption(s: MediaStream): PickOption = PickOption(
-    (s.displayTitle ?: s.title)?.trim()?.takeIf { it.isNotEmpty() } ?: s.codec?.uppercase() ?: "未命名",
-    listOfNotNull(s.codec?.uppercase(), if (s.isExternal == true) "外挂" else "内封").joinToString(" · "),
-    s.index,
-)
+/** 字幕：「中文（简体）· SRT」+ 小签「默认」「外挂」（P1-2）。纯函数。 */
+fun subtitleOption(s: MediaStream): PickOption = com.gugaart.ui.data.trackName(s).let { n -> PickOption(n.text, n.tags.joinToString(" · "), s.index) }
 
 /**
  * 电影详情（设计稿 `p=movie`）：剧照从窗口顶端铺到 66 % 屏高；海报压在渐隐处（悬停时朝鼠标倾）；
@@ -126,19 +118,19 @@ fun DesktopMovie(movie: Title, today: Today) {
     // 版本 = 「源」（本台的版本 + 没被合并的重复片）：先列条目自带的，重复片到了接在下面；选中的决定音轨 / 字幕 / 徽章 / 开播
     val sources = rememberSourcesState(movie)
     val source = sources.selected?.mediaSource ?: movie.sources.firstOrNull()
-    val audios = remember(source) { source?.mediaStreams.orEmpty().filter { it.type == "Audio" }.map(::audioOption) }
-    val subs = remember(source) { listOf(PickOption("关闭", "")) + com.gugaart.ui.player.chineseSubtitlesFirst(source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" }).map(::subtitleOption) }
-    var audio by remember(source) { mutableIntStateOf(0) }
-    // 字幕默认 = 第一条（有的话）；「关闭」排在最前
-    var sub by remember(source) { mutableIntStateOf(if (subs.size > 1) 1 else 0) }
+    // 音轨 / 字幕：和手机详情页同一份状态（screens/detail/TrackPickers.kt）——音轨默认 = 标了默认的那条，字幕「关闭」排在最前、
+    // 默认 = 中文优先的第一条；开播只带用户点过的；换版本回到默认
+    val picks = rememberTrackPicks(source)
+    val audios = picks.audios
+    val subs = picks.subs
     var openPick by remember { mutableStateOf(if (state == "ver") "ver" else null) }
 
     val playNow = {
         graph.playback.play(
             sources.playRoute(
                 resumeMs = movie.positionSec?.takeIf { movie.progress > 0f }?.times(1000),
-                audio = audios.getOrNull(audio)?.index?.takeIf { audios.size > 1 },
-                subtitle = subs.getOrNull(sub)?.index?.takeIf { subs.size > 2 || sub == 0 },
+                audio = picks.audioIndex,
+                subtitle = picks.subtitleIndex,
             ),
         )
     }
@@ -192,7 +184,7 @@ fun DesktopMovie(movie: Title, today: Today) {
                     BasicText("「$lead」", Modifier.padding(bottom = Guga.rem(1.6f)).testTag("d-tagline"), style = Guga.song(rsp(1.8f), lineHeight = rsp(3.06f)), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 // 片源的效果徽章（跟着选中的版本 / 音轨走；用户 2026-11-16：「影片详情页也可以打上对应的图标」）
-                FormatBadgeRow(formatBadges(source, audios.getOrNull(audio)?.index, null), Guga.rem(6f).value / 44f, Modifier.padding(bottom = Guga.rem(1.6f)), notes = false)
+                FormatBadgeRow(formatBadges(source, audios.getOrNull(picks.audio)?.index, null), Guga.rem(6f).value / 44f, Modifier.padding(bottom = Guga.rem(1.6f)), notes = false)
             },
         )
         Row(Modifier.padding(horizontal = m).padding(top = Guga.rem(2.4f)).fillMaxWidth()) {
@@ -219,15 +211,15 @@ fun DesktopMovie(movie: Title, today: Today) {
                 Column(Modifier.padding(top = Guga.rem(2.8f)).zIndex(1f).testTag("d-pickers")) {
                     Rule(strong = true)
                     val rows = sources.sources
-                    val versions = rows.map { versionOption(sources.rowText(it)) }.ifEmpty { listOf(PickOption("默认版本", "媒体信息还没取到")) }
+                    val versions = rows.map { versionOption(sources.rowText(it)) }.ifEmpty { listOf(PickOption("默认版本", "没有媒体信息")) }
                     // 有别的服务器参与时这一栏叫「源」，每行前面是服务器名；单子最后是别台的进展（B2-UI）
                     PickRow(
                         sources.sectionTitle, versions, rows.indexOfFirst(sources::isSelected).coerceIn(0, versions.lastIndex), openPick == "ver",
                         { openPick = if (openPick == "ver") null else "ver" }, { i -> rows.getOrNull(i)?.let(sources::pick); openPick = null }, force = state == "ver",
                         footer = { SourceProgress(sources, rsp(1.15f), Guga.rem(0.55f), Modifier.padding(horizontal = Guga.rem(1.6f), vertical = Guga.rem(0.8f)), lineGap = Guga.rem(0.4f)) },
                     )
-                    if (audios.isNotEmpty()) PickRow("音轨", audios, audio.coerceIn(0, audios.lastIndex), openPick == "audio", { openPick = if (openPick == "audio") null else "audio" }, { audio = it; openPick = null })
-                    PickRow("字幕", subs, sub.coerceIn(0, subs.lastIndex), openPick == "sub", { openPick = if (openPick == "sub") null else "sub" }, { sub = it; openPick = null })
+                    if (audios.isNotEmpty()) PickRow("音轨", audios, picks.audio.coerceIn(0, audios.lastIndex), openPick == "audio", { openPick = if (openPick == "audio") null else "audio" }, { picks.audio = it; openPick = null })
+                    PickRow("字幕", subs, picks.sub.coerceIn(0, subs.lastIndex), openPick == "sub", { openPick = if (openPick == "sub") null else "sub" }, { picks.sub = it; openPick = null })
                 }
                 DOverview(movie.overview, Modifier.padding(top = Guga.rem(3.6f)))
                 Column(Modifier.padding(top = Guga.rem(3.2f))) {
@@ -260,7 +252,7 @@ fun DesktopMovie(movie: Title, today: Today) {
         if (movie.people.isNotEmpty()) {
             n++
             Column(mark("cast").padding(top = Guga.rem(DetailSpec.SECTION))) {
-                DSec("0$n", "演职人员", "CAST & CREW", Modifier.padding(horizontal = m), trailing = "${movie.people.size} 位" + if (movie.people.any { it.photo == null }) " · 没有照片的用姓氏代替" else "")
+                DSec("0$n", "演职人员", "CAST & CREW", Modifier.padding(horizontal = m), trailing = "${movie.people.size} 位")
                 DCastRow(movie.people, { graph.open(it.id) })
             }
         }
@@ -269,7 +261,7 @@ fun DesktopMovie(movie: Title, today: Today) {
         if (com.gugaart.ui.screens.detail.showStills(stills)) {
             n++
             Column(mark("stills").padding(top = Guga.rem(DetailSpec.SECTION))) {
-                DSec("0$n", "剧照", "STILLS", Modifier.padding(horizontal = m), trailing = "${stills.size} 张 · 点开看大图，← → 换一张")
+                DSec("0$n", "剧照", "STILLS", Modifier.padding(horizontal = m), trailing = "${stills.size} 张")
                 DStills(stills)
             }
         }

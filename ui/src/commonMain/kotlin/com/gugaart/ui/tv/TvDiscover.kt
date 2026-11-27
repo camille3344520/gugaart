@@ -37,7 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.gugaart.ui.Today
 import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.HatchPlate
-import com.gugaart.ui.components.spot
+import com.gugaart.ui.components.rememberSpotColor
 import com.gugaart.ui.data.Framing
 import com.gugaart.ui.data.Kind
 import com.gugaart.ui.data.Rules
@@ -150,8 +150,8 @@ fun TvDiscoverScreen(today: Today) {
         Column(Modifier.fillMaxSize().testTag("tv-discover-state")) {
             TvPageHeader("发现", "DISCOVER", today)
             when {
-                data != null -> TvStateView("tv-discover-empty", "捧白纸", "这台服务器上还没有内容", "片架上是空的。往服务器里放几部片子，再回来。")
-                load.error != null -> TvStateView("tv-discover-error", if (load.error!!.contains("网络")) "拔掉的电源插头" else "摊手", load.error!!, "稍等一下再试；一直不行就换一条线路。", action = "再试一次", onAction = load::retry)
+                data != null -> TvStateView("tv-discover-empty", "捧白纸", "这台服务器上还没有内容", null)
+                load.error != null -> TvStateView("tv-discover-error", if (load.error!!.contains("网络")) "拔掉的电源插头" else "摊手", load.error!!, null, action = "再试一次", onAction = load::retry)
                 load.showSkeleton -> TvStateView("tv-discover-loading", "摆稿纸", "正在排片", MascotLines.pick("wall.loading", hour = LocalHour.current, seed = today.day))
             }
         }
@@ -163,7 +163,8 @@ fun TvDiscoverScreen(today: Today) {
     val focusedRank = groups.current?.takeIf { it.startsWith("new-") }?.removePrefix("new-")?.toIntOrNull()
     val shown = focusedRank?.let { chart.getOrNull(it) } ?: pick
     val poster = rememberImage(shown.art.poster, keepPrevious = true)
-    LaunchedEffect(poster) { chrome.spot = poster?.spot(tv = true) }
+    val tvSpot = rememberSpotColor(poster, tv = true)
+    LaunchedEffect(tvSpot) { chrome.spot = tvSpot }
     groups.edge = { from, dir -> tvDiscoverEdge(from, dir, groups::has) }
 
     TvGroupsRoot(groups, Modifier.testTag("tv-discover")) {
@@ -243,7 +244,7 @@ fun TvDiscoverScreen(today: Today) {
             }
             // ---- 下：高分榜（评分前 40 部里每次随机抽 10 部）----
             if (data.top.isNotEmpty()) {
-                TvSectionHeader("高分", "TOP RATED", number = "贰", trailing = listOfNotNull("评分前 $TOP_POOL · 每次随机抽", tvDecadeRange(data.decades), data.total.takeIf { it > 0 }?.let { "片库共 $it 部" }).joinToString(" · "))
+                TvSectionHeader("高分", "TOP RATED", number = "贰", trailing = listOfNotNull("评分前 $TOP_POOL · 随机", tvDecadeRange(data.decades), data.total.takeIf { it > 0 }?.let { "片库共 $it 部" }).joinToString(" · "))
                 TvLeadRow("disc-top", data.top, { "top-${it.id}" }, TvDiscoverSpec.CARD_W, 250.dp, Modifier.padding(top = 14.dp), gap = 28.dp) { t, key, _ ->
                     TvLandscapeCard(
                         image = t.art.thumb ?: t.art.backdrop ?: t.art.poster,

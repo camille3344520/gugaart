@@ -63,17 +63,18 @@ internal fun deskErrorCopy(kind: ErrorKind, server: String?): DeskErrorCopy {
         ErrorKind.Offline -> DeskErrorCopy(
             "OFFLINE · 暂停放映", "放映机", "连不上网",
             // 上游把「没收到任何应答」归成一类（断网、域名解析不了、连接被拒）：分不清是这台电脑断网还是服务器不在，两种都说
-            "连不上${name}：可能是这台电脑的网络断了，也可能是服务器关机或者换了地址。网络回来以后点一下「重试」，就接着放。",
+            "连不上${name}：网络断开，或服务器关机、换了地址",
             "拔掉的电源插头", "没有收到服务器的应答",
         )
+        // P2-2：标题直接写「连不上「服务器名」」；「这家片库没开门」这类比喻挪进她那一句（台词 `server`）
         ErrorKind.Server -> DeskErrorCopy(
-            "SERVER · 片库没有应答", "这家片库", "没开门",
-            "${name}迟迟没有应答。可能是服务器休眠了、正忙着，或者网络太慢。稍等一下再试；一直不行就换一条线路。",
+            "SERVER · 片库没有应答", "连不上", server?.trim()?.takeIf { it.isNotEmpty() }?.let { "「$it」" } ?: "服务器",
+            "${name}没有应答：服务器休眠、繁忙，或网络太慢",
             "摊手", "请求超时 / 服务器出错",
         )
         ErrorKind.Auth -> DeskErrorCopy(
             "SESSION · 观影卡过期", "观影卡", "过期了",
-            "服务器说这张观影卡不能用了（可能在别处改了密码，或者管理员收回了）。重新登录一次就好，收藏和进度都还在服务器上。",
+            "这张观影卡已失效；收藏和进度都还在服务器上",
             "捧白纸", "401 Unauthorized · 令牌已失效",
         )
     }
@@ -95,6 +96,7 @@ internal fun DeskNotice(kind: ErrorKind, copy: DeskErrorCopy, actions: List<Desk
                 Modifier.padding(top = Guga.rem(1.6f)).testTag("desktop-error-h1"),
                 style = Guga.song(rsp(DeskErrorSpec.H1), FontWeight.Black, letterSpacing = 0.08.em, lineHeight = rsp(DeskErrorSpec.H1_LINE)),
                 maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
             BasicText(
                 copy.lead,
@@ -128,8 +130,14 @@ internal fun DeskNotice(kind: ErrorKind, copy: DeskErrorCopy, actions: List<Desk
                         .padding(start = Guga.dimens.gutter * 2, top = Guga.rem(1f), bottom = Guga.rem(1f))
                         .testTag("desktop-error-mascot"),
                 ) {
-                    // 只有她，不配台词：台词表里「断线」那几句说的是「架上的还能翻」（手机首页有旧版面垫着的时候用），整页错误时架上没有东西可翻
+                    // 断网 / 过期只有她，不配台词：台词表里「断线」那几句说的是「架上的还能翻」（手机首页有旧版面垫着的时候用），整页错误时架上没有东西可翻
                     MascotPoseNamed(copy.pose, Guga.rem(DeskErrorSpec.POSE))
+                    // 服务器没有应答：标题是直话，比喻归她说（P2-2）
+                    if (kind == ErrorKind.Server && prefs.mascotSpeaks) {
+                        com.gugaart.ui.mascot.MascotLines.pick("server", hour = com.gugaart.ui.mascot.LocalHour.current, seed = 0)?.let {
+                            BasicText(it, Modifier.padding(top = Guga.rem(1.6f)).testTag("desktop-error-line"), style = Guga.song(rsp(1.6f), color = colors.dim).copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic))
+                        }
+                    }
                 }
             }
         }

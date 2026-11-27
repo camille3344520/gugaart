@@ -94,7 +94,7 @@ fun PersonPhone(data: PersonData) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("person-phone")) {
             // 肖像：脸在上半部，取景靠上
-            FullBleed(Art(backdrop = p.art.poster), PERSON_BLEED, framing = Framing(0.5f, 0.12f), caption = if (p.art.poster != null) "肖像 · ${p.name}" else null, scrollPx = scroll.value.toFloat()) {
+            FullBleed(Art(backdrop = p.art.poster), PERSON_BLEED, framing = Framing(0.5f, 0.12f), caption = if (p.art.poster != null) "肖像 · ${p.name}" else null, scrollPx = { scroll.value.toFloat() }) {
                 Column(Modifier.align(Alignment.BottomStart).padding(horizontal = dimens.margin).padding(bottom = 6.dp)) {
                     BasicText("人物 · PROFILE", style = Guga.kicker(), maxLines = 1)
                     // 长的外文名降一号、允许两行，不裁字
@@ -122,7 +122,7 @@ fun PersonPhone(data: PersonData) {
                 // 没有小传：不编生平
                 if (p.overview.isEmpty()) {
                     BasicText(
-                        "服务器上还没有${p.name}的小传。下面只列你片库里有的作品。",
+                        "没有小传，只列片库里的作品",
                         Modifier.padding(top = 14.dp),
                         style = Guga.song(type.lead * 0.96f, color = colors.faint, lineHeight = type.leadLine * 0.92f).copy(fontStyle = FontStyle.Italic),
                     )
@@ -141,7 +141,7 @@ fun PersonPhone(data: PersonData) {
                             TitleLogo(w.title.name, w.title.art.logo, 180.dp, 60.dp, Modifier.align(Alignment.BottomStart).padding(12.dp))
                         }
                         BasicText(listOfNotNull(w.role, w.title.year?.toString(), w.title.rating?.let { "$it 分" }).joinToString(" · "), Modifier.padding(top = 10.dp), style = Guga.song(type.caption * 1.1f, color = colors.dim))
-                        BasicText("片库里只有这一部。点开看看同剧的演员。", Modifier.padding(top = 6.dp), style = Guga.song(type.caption, color = colors.faint).copy(fontStyle = FontStyle.Italic))
+                        BasicText("片库里只有这一部", Modifier.padding(top = 6.dp), style = Guga.song(type.caption, color = colors.faint).copy(fontStyle = FontStyle.Italic))
                     }
                 } else {
                     val acting = data.works.count { !it.behind }
@@ -195,7 +195,7 @@ fun PersonPhone(data: PersonData) {
             }
             Spacer(Modifier.height(72.dp))
         }
-        BackRow(p.name, solid = scroll.value > solidAt, onBack = { graph.nav.backOrHome() })
+        BackRow(p.name, solid = com.gugaart.ui.screens.scrolledPast(scroll, solidAt), onBack = { graph.nav.backOrHome() })
     }
 }
 

@@ -227,8 +227,8 @@ object TraktService {
     /** 连接：拿设备码，一直问到用户授权、码过期或用户取消（取消 = 这个协程被取消）。返回给人看的结果。 */
     /** [openPage]：拿到码后在浏览器里打开授权页（手机 / 电脑；电视不给）。 */
     suspend fun connect(openPage: (String) -> Unit = {}): String {
-        val g = graph ?: return "还没准备好"
-        if (!app.configured) return "这一版没有带 Trakt 应用"
+        val g = graph ?: return "未就绪"
+        if (!app.configured) return "这一版不支持 Trakt"
         val code = try {
             client().deviceCode()
         } catch (e: CancellationException) {
@@ -268,7 +268,7 @@ object TraktService {
                 }
             }
             _state.value = TraktState.Disconnected
-            return "码过期了，重新开始"
+            return "码已过期"
         } finally {
             if (_state.value is TraktState.Waiting) _state.value = tokens?.let { TraktState.Connected(it.user) } ?: TraktState.Disconnected
         }
@@ -393,7 +393,7 @@ object TraktService {
 
     /** Trakt 上看过的 → Emby 里标成已看（只标没看过的）。返回给人看的结果。 */
     suspend fun syncToEmby(client: EmbyClient): String {
-        val tk = token() ?: return "还没连接 Trakt"
+        val tk = token() ?: return "未连接 Trakt"
         _syncMessage.value = "同步中…"
         val msg = try {
             val c = client()
@@ -401,15 +401,15 @@ object TraktService {
             val shows = c.watched(tk, "shows")
             if (movies == null || shows == null) {
                 onUnauthorized()
-                "Trakt 的授权过期了，重新连接"
+                "Trakt 授权已过期"
             } else {
                 val n = markWatched(client, movies, shows)
-                if (n == 0) "都同步过了" else "同步好了：在 Emby 里标了 $n 个已看"
+                if (n == 0) "已是最新" else "已同步：在 Emby 标记 $n 个已看"
             }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            "同步没有成功，稍后再试"
+            "同步失败"
         }
         _syncMessage.value = msg
         return msg

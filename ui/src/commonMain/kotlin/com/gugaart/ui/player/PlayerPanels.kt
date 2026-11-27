@@ -50,7 +50,7 @@ fun stepped(v: Double, delta: Double, min: Double, max: Double): Double = (((v +
  * 页边面板的内容。每个面板的条目都取自上游已有的功能（`PlayController` 的命令、上游弹幕面板的设置键），不增不减；这里只管排版。
  */
 @Composable
-fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danmaku: PlayerDanmaku, slots: PlayerSlots, art: Art, positionMs: Double, close: () -> Unit) {
+fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danmaku: PlayerDanmaku, slots: PlayerSlots, art: Art, positionMs: () -> Double, close: () -> Unit) {
     val g = LocalGraph.current
     val controller = play.controller
     val colors = Guga.colors
@@ -58,15 +58,17 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
         PlayerPanel.Eps -> EpisodePanel(snap)
         PlayerPanel.Sub -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-sub")) {
             PanelHeader(panel)
-            // 字幕智能匹配（1.4.1 U2）：「找到完全对得上的字幕：… · 用上这条」/「已自动加载：… · 撤销」，没有就不占地方
+            // 字幕智能匹配（1.4.1 U2）：「找到精确匹配的字幕：… · 用上」/「已自动加载：… · 撤销」，没有就不占地方
             com.gugaart.ui.subtitle.AutoBestPanelLine(play)
             PanelOption("关", snap.subtitleIndex == null, { play.chooseSubtitle(null) })
             // 中文字幕排前面（简体 → 中文 → 繁体 → 其他）
             for (t in orderedSubtitles(snap)) {
                 // 没名字的字幕上游已经给了「未命名」这类标签；同名的靠徽标区分
-                PanelOption(t.label, t.index == snap.subtitleIndex, { play.chooseSubtitle(t.index) }, note = t.badge)
+                val n = trackLabel(snap, t, "Subtitle")
+                PanelOption(n.text, t.index == snap.subtitleIndex, { play.chooseSubtitle(t.index) }, note = n.tags.joinToString(" · ").ifEmpty { null })
             }
-            PanelStepper("延迟", "${snap.subtitleDelayMs / 1000}.${(kotlin.math.abs(snap.subtitleDelayMs) % 1000) / 100} 秒", { controller.setSubtitleDelay(snap.subtitleDelayMs - 100) }, { controller.setSubtitleDelay(snap.subtitleDelayMs + 100) })
+            // 字幕时间（审计批次 P）：带正负号；按「这一集 + 这条字幕」记住（SubtitleTiming.kt）
+            if (snap.subtitleIndex != null) SubtitleTimingRow(snap.subtitleDelayMs, play::stepSubtitleTiming) { play.setSubtitleTiming(0) }
             // 字幕样式的两行快调（1.4.1）：字号、字体；和 设置 › 字幕与音轨 › 字幕样式 同一个键，引擎即时生效（RememberSubtitleStyleApply）
             SubtitleQuickRows()
             // 字幕搜索（1.4.0，docs/subtitle-search.md）：面板收起，左边出搜索栏（画面在右边照常放）
@@ -77,8 +79,8 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
         }
         PlayerPanel.Audio -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-audio")) {
             PanelHeader(panel)
-            if (snap.audio.isEmpty()) BasicText("这个版本只有一条音轨。", Modifier.padding(top = 10.dp), style = Guga.song(Guga.player.body, color = colors.dim))
-            for (t in snap.audio) PanelOption(t.label, t.selected, { t.index?.let(controller::selectAudio) }, note = t.badge)
+            if (snap.audio.isEmpty()) BasicText("只有一条音轨", Modifier.padding(top = 10.dp), style = Guga.song(Guga.player.body, color = colors.dim))
+            for (t in snap.audio) trackLabel(snap, t, "Audio").let { n -> PanelOption(n.text, t.selected, { t.index?.let(controller::selectAudio) }, note = n.tags.joinToString(" · ").ifEmpty { null }) }
         }
         PlayerPanel.Speed -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-speed")) {
             PanelHeader(panel)
@@ -121,24 +123,31 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 }
                 com.gugaart.ui.screens.detail.SourceProgress(sources, t.note, 5.dp * t.k, Modifier.padding(top = 7.dp * t.k, start = 15.dp * t.k), lineGap = 3.dp * t.k)
             }
-            // 着色器增强（Anime4K / FSR）：只有 mpv 系内核 + 能写文件的平台才画；选择记在画报自己的键里，点完立即应用（RememberShaderApply）
+            // 着色器增强（Anime4K / FSR）：只有 mpv 系内核 + 能写文件的平台才画；按片记住（RememberShaderApply），不影响别的片子
             val shaderEngine by controller.engineFlow.collectAsState()
             val shaderStore = com.gugaart.ui.screens.settings.rememberGugaStore()
             val shaderPrefs by shaderStore.prefs.collectAsState()
             val shaderHost = com.gugaart.ui.data.LocalFontImport.current
+            val shaderKey = com.gugaart.ui.data.shaderItemKey(snap.item?.seriesId, snap.itemId)
+            val activeShader = shaderPrefs.shaderFor(shaderKey)
             if (shaderEntryVisible(shaderEngine?.shaders != null, shaderHost != null)) {
                 PanelSection("着色器增强")
-                for (s in ShaderPreset.entries) PanelOption(s.label, shaderPrefs.shader == s, { shaderStore.update { it.copy(shader = s) } }, note = s.note)
+                for (s in ShaderPreset.entries) PanelOption(s.label, activeShader == s, { shaderStore.update { it.withItemShader(shaderKey, s) } }, note = s.note)
             }
         }
         PlayerPanel.Core -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("panel-core")) {
             PanelHeader(panel)
-            // 自动 · EXO · VLC · MPV（只列这台设备上真有的）；选了 = 存成首选引擎，在当前位置用它接着放
-            val pref = currentEnginePref(g)
+            // 自动 · EXO · VLC · MPV（只列这台设备上真有的）；选了 = 只对这一部生效（按片记住，P1-1），在当前位置用它接着放
+            val settingsNow by g.settings.state.collectAsState()
+            val global = remember(settingsNow) { currentEnginePref(g) }
+            val pref = remember(settingsNow, snap.itemId, PlayerRestart.tick) { filmEnginePref(play, g) }
             val running = engineShort(snap.engineId)
-            for (o in remember(play) { coreOptionsFor(play, g) }) {
+            val options = remember(play) { coreOptionsFor(play, g) }
+            for (o in options) {
                 PanelOption(o.label, o.pref == pref, { PlayerRestart.switchEngine(play, g, o.pref) }, note = if (o.pref == com.gugugaga.app.player.EnginePref.Auto) "现在 $running" else o.note)
             }
+            // 这一部和默认不一样时，底下一行「设为默认」：点了才改全局首选
+            if (pref != global) PanelLink("设为默认") { setEngineDefault(play, g, pref) }
         }
         PlayerPanel.Dm -> {
             val settings by danmaku.settingsState.collectAsState()
@@ -162,16 +171,19 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 PanelSection("粗细")
                 for (w in DanmakuWeight.entries) PanelOption(w.label, s.weight == w, { danmaku.updateRender("weight" to JsonPrimitive(w.id)) })
                 PanelSection("弹幕源")
-                // 匹配状态（上游的徽标文字：「赘婿 (2021) · 第5集 · 1,234 条」/ 没配置 / 没匹配到）；点它 = 左边滑出弹幕来源（候选 + 手动搜索）
-                PanelLink(DanmakuSeasonGuard.status(snap.itemId) ?: slots.danmakuStatus?.invoke() ?: "还没有匹配") {
+                val danmakuConfigured = com.gugaart.ui.danmaku.rememberDanmakuConfigured()
+                val danmakuUnconfigured = (danmaku.state.phase == com.gugugaga.danmaku.match.DanmakuPhase.Unconfigured || !danmakuConfigured) &&
+                    LocalDanmakuSlotOverride.current == null &&
+                    DanmakuPickerBoard.stateOverride == null
+                PanelLink(DanmakuSeasonGuard.status(snap.itemId) ?: slots.danmakuStatus?.invoke() ?: if (danmakuUnconfigured) "未配置" else "未匹配") {
+                    close()
+                    if (danmakuUnconfigured) g.nav.navigate(Route.Settings("danmaku")) else DanmakuPickerBoard.open = true
+                }
+                PanelLink("换弹幕 / 手动搜索") {
                     close()
                     DanmakuPickerBoard.open = true
                 }
-                PanelLink("不对？换一个 / 手动搜索") {
-                    close()
-                    DanmakuPickerBoard.open = true
-                }
-                if (danmaku.query.hasPeaks) PanelLink("跳到下一个高能点") { danmaku.nextPeak(positionMs)?.let { controller.seekTo(it) } }
+                if (danmaku.query.hasPeaks) PanelLink("跳到下一个高能点") { danmaku.nextPeak(positionMs())?.let { controller.seekTo(it) } }
             }
         }
         PlayerPanel.Cast -> com.gugaart.ui.cast.CastPanelBody(play)
@@ -185,8 +197,22 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 BasicText("第 ${next.indexNumber ?: ""} 集", Modifier.padding(top = 8.dp), style = Guga.note(t.option, colors.spot), maxLines = 1)
                 BasicText(next.name, style = Guga.song(t.option * 1.08f, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Rules.ticksToSec(next.runTimeTicks)?.let { BasicText(Rules.minutes(it), Modifier.padding(top = 2.dp), style = Guga.song(t.note, color = colors.dim), maxLines = 1) }
-                if (snap.autoNext == AutoNextState.Counting) BasicText("片尾放完自动播放", Modifier.padding(top = 8.dp), style = Guga.song(t.note, color = colors.dim), maxLines = 1)
-                PrimaryButton("立即播放", { controller.playNext() }, Modifier.padding(top = 10.dp).fillMaxWidth())
+                // P1-3：进了片尾标记倒数 10 秒（「下一集 · 8」），旁边「取消」= 不再自动接（上游 cancelAutoNext）
+                val left = rememberNextCountdown(play, snap, positionMs, snap.resolved?.durationMs?.toDouble() ?: 0.0)
+                val cancel: @Composable (Modifier) -> Unit = { m ->
+                    com.gugaart.ui.components.TextLink("取消", {
+                        controller.cancelAutoNext()
+                        close()
+                    }, m.testTag("next-cancel"), color = colors.dim)
+                }
+                if (Guga.dimens.uiMode == com.gugugaga.ds.theme.UiMode.Phone) {
+                    // 手机横屏的页边只有 160：按钮占满一行（不带图标，「下一集 · 8」不被截断），「取消」在它下面靠右
+                    PrimaryButton(nextButtonLabel(left), { controller.playNext() }, Modifier.padding(top = 10.dp).fillMaxWidth().testTag("next-play"), icon = null)
+                    cancel(Modifier.align(androidx.compose.ui.Alignment.End))
+                } else androidx.compose.foundation.layout.Row(Modifier.padding(top = 10.dp).fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    PrimaryButton(nextButtonLabel(left), { controller.playNext() }, Modifier.weight(1f).testTag("next-play"))
+                    cancel(Modifier.padding(start = 12.dp))
+                }
             }
         }
     }

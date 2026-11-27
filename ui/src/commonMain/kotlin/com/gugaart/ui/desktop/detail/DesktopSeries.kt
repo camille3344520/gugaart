@@ -1,6 +1,11 @@
 package com.gugaart.ui.desktop.detail
 
 import com.gugaart.ui.desktop.deskFocusRing
+import com.gugaart.ui.components.OutlineTag
+import com.gugaart.ui.desktop.DeskButton
+import com.gugaart.ui.desktop.PaperDialog
+import com.gugaart.ui.screens.detail.seasonMarkCopy
+import com.gugaart.ui.screens.detail.wholeMarkCopy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -31,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -67,6 +73,7 @@ import com.gugaart.ui.data.Season
 import com.gugaart.ui.data.Title
 import com.gugaart.ui.data.rememberLoad
 import com.gugaart.ui.data.titleOf
+import com.gugaart.ui.data.getItemShared
 import com.gugaart.ui.desktop.DesktopContextMenu
 import com.gugaart.ui.desktop.DesktopPage
 import com.gugaart.ui.mascot.EditorNote
@@ -175,6 +182,10 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
     var season by remember(head) { mutableStateOf(initialSeason(head.copy(seasons = seasons), preset.season ?: selected?.seasonNo)) }
     var page by remember(head) { mutableIntStateOf(preset.episodePage) }
     var open by remember { mutableStateOf(state == "seasons") }
+    // P0-3：整季标已看 / 未看先弹确认框（截图预置 `markseason` 直接打开）
+    var markSeason by remember { mutableStateOf(state == "markseason") }
+    // 「整部已看 / 整部未看」也先确认（照 P0-3）
+    var markAll by remember { mutableStateOf(state == "markall") }
     var sel by remember(head) { mutableStateOf(selected?.id) }
     val slice = rememberLoad("episodes", series.id, season?.id, page) { loadEpisodes(it, series.id, season?.id, page) }
     val episodes = slice.value?.episodes
@@ -203,7 +214,7 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
         val i = seasons.indexOfFirst { it.id == season?.id }
         seasons.getOrNull(i + d)?.takeIf { i >= 0 }?.let(::pick)
     }
-    val playNow = { target?.let { graph.play(it.id, it.positionSec?.takeIf { _ -> it.progress > 0f }?.times(1000)) } ?: episodes?.firstOrNull()?.let { graph.play(it.id) } ?: Unit }
+    val playNow = { target?.let { graph.play(it.id, it.positionSec?.takeIf { _ -> it.progress > 0f }?.times(1000)) } ?: episodes?.firstOrNull { !it.unaired }?.let { graph.play(it.id) } ?: Unit }
     val toggleFav = {
         graph.toggleFavorite(chrome, series.id, fav)
         voice.say(MascotLines.pick(if (fav) "fav.off" else "fav.on", hour = hour, seed = series.id.hashCode() + today.day))
@@ -219,6 +230,7 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
         "cast" -> "cast"
         else -> if (selected != null) "eps" else null
     }
+    Box(Modifier.fillMaxSize()) {
     DetailScaffold("desktop-series", anchor) { mark ->
         DHero(
             series,
@@ -237,7 +249,7 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
                     DButton(label, { playNow() }, Modifier.weight(1f, fill = false), trailing = time, progress = if (chosen != null) chosen.progress else head.upNext?.progress ?: 0f, tag = "d-cta")
                     DAction("收藏", toggleFav, tag = "d-fav")
                     SealSlot(fav, size = Guga.rem(3.6f))
-                    DAction("整部已看", { graph.togglePlayed(chrome, series.id, allSeen) }, tag = "d-all-seen") { ProofTick(allSeen, size = Guga.rem(1.4f)) }
+                    DAction("整部已看", { markAll = true }, tag = "d-all-seen") { ProofTick(allSeen, size = Guga.rem(1.4f)) }
                     // Trakt 追更（连着 Trakt 才有）
                     com.gugaart.ui.components.rememberTraktFollow(series.id)?.let { f ->
                         DAction(if (f.following) "已追更" else "追更", f.toggle, tag = "d-follow") { Icon(if (f.following) GuguIcon.Check else GuguIcon.Plus, colors.ink, Guga.rem(1.6f)) }
@@ -309,7 +321,7 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
                     SeasonRuler(seasons, season, head.upNext?.seasonNo, ::pick, Modifier.weight(1f))
                     DKbd("[ ] 换季", Modifier.padding(bottom = Guga.rem(0.8f)))
                 } else Spacer(Modifier.weight(1f))
-                DBox({ season?.let { s -> graph.togglePlayed(chrome, s.id, seasonSeen) } }, label = "本季全部标为已看", tag = "d-season-seen") {
+                DBox({ if (season != null) markSeason = true }, label = "本季全部标为已看", tag = "d-season-seen") {
                     ProofTick(seasonSeen, size = Guga.rem(1.4f))
                     BasicText("本季全部标为已看", style = Guga.song(rsp(1.35f), FontWeight.SemiBold), maxLines = 1)
                 }
@@ -342,7 +354,7 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
             when {
                 episodes == null && slice.error != null -> ErrorView(slice.error!!, slice::retry)
                 episodes == null -> DGrid(List(4) { it }, 4, gapY = Guga.rem(2.8f)) { Skeleton(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) }
-                episodes.isEmpty() && expected <= 0 -> BasicText("这一季还没有分集。", Modifier.padding(vertical = Guga.rem(4f)), style = Guga.song(rsp(1.3f), color = colors.faint), maxLines = 1)
+                episodes.isEmpty() && expected <= 0 -> BasicText("没有分集", Modifier.padding(vertical = Guga.rem(4f)), style = Guga.song(rsp(1.3f), color = colors.faint), maxLines = 1)
                 else -> {
                     // 这一页一张分集图都没有 → 换成目录行（不拿整部剧的同一张图顶几十次）
                     val rows = episodes.none { it.art.still != null }
@@ -369,7 +381,7 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
                             } else EpisodeCard(e, series, e.id == (sel ?: head.upNext?.id), { sel = e.id }, fallback = com.gugaart.ui.screens.detail.episodeStillFallback(e.episodeNo, seriesStills, series.art.backdrop))
                         }
                     }
-                    if (missing > 0) BasicText("这一页还有 $missing 集没取到，滚到这里时再向服务器取。", Modifier.padding(top = Guga.rem(2f)).testTag("d-ep-missing"), style = Guga.song(rsp(1.2f), color = colors.faint), maxLines = 1)
+                    if (missing > 0) BasicText("还有 $missing 集未加载", Modifier.padding(top = Guga.rem(2f)).testTag("d-ep-missing"), style = Guga.song(rsp(1.2f), color = colors.faint), maxLines = 1)
                 }
             }
         }
@@ -377,7 +389,7 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
         // ---- 02 演职人员
         if (series.people.isNotEmpty()) {
             Column(mark("cast").padding(top = Guga.rem(DetailSpec.SECTION))) {
-                DSec("02", "演职人员", "CAST & CREW", Modifier.padding(horizontal = m), trailing = "${series.people.size} 位" + if (series.people.any { it.photo == null }) " · 没有照片的用姓氏代替" else "")
+                DSec("02", "演职人员", "CAST & CREW", Modifier.padding(horizontal = m), trailing = "${series.people.size} 位")
                 DCastRow(series.people, { graph.open(it.id) })
             }
         }
@@ -387,13 +399,43 @@ private fun SeriesBody(head: SeriesHead, today: Today, selected: Title?) {
         var sec = if (series.people.isNotEmpty()) 3 else 2
         if (stillsShown) {
             Column(mark("stills").padding(top = Guga.rem(DetailSpec.SECTION))) {
-                DSec("0$sec", "剧照", "STILLS", Modifier.padding(horizontal = m), trailing = "${stills.size} 张 · 点开看大图，← → 换一张")
+                DSec("0$sec", "剧照", "STILLS", Modifier.padding(horizontal = m), trailing = "${stills.size} 张")
                 DStills(stills)
             }
             sec++
         }
         DSimilar(series, "0$sec")
         DEnd(listOfNotNull(series.name, series.year?.toString()).joinToString(" · "), Modifier.padding(horizontal = m))
+    }
+    season?.takeIf { markSeason }?.let { s ->
+        MarkDialog("desktop-mark-season", seasonMarkCopy(s, toPlayed = !seasonSeen), { markSeason = false }) { graph.togglePlayed(chrome, s.id, seasonSeen) }
+    }
+    if (markAll) {
+        MarkDialog("desktop-mark-all", wholeMarkCopy(series.name, toPlayed = !allSeen), { markAll = false }) { graph.togglePlayed(chrome, series.id, allSeen) }
+    }
+    }
+}
+
+/** 整季 / 整部标已看、未看之前的确认框（P0-3）：标题 + 后果一句 + 取消 / 标为已看（未看）。确认之后才写服务器（和 Trakt）。 */
+@Composable
+private fun MarkDialog(tag: String, copy: com.gugaart.ui.screens.detail.SeasonMarkCopy, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val colors = Guga.colors
+    PaperDialog(tag, onDismiss = onDismiss, width = 44f) {
+        BasicText(copy.title, style = Guga.song(rsp(2.6f), FontWeight.Black, letterSpacing = 0.06.em), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        copy.note?.let { BasicText(it, Modifier.padding(top = Guga.rem(1f)), style = Guga.song(rsp(1.35f), color = colors.dim), maxLines = 1) }
+        Row(Modifier.fillMaxWidth().padding(top = Guga.rem(2.8f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.2f), Alignment.End)) {
+            DeskButton("取消", onDismiss, icon = null, small = true, outline = true)
+            DeskButton(
+                copy.confirm,
+                {
+                    onDismiss()
+                    onConfirm()
+                },
+                Modifier.testTag("$tag-ok"),
+                icon = null,
+                small = true,
+            )
+        }
     }
 }
 
@@ -459,7 +501,8 @@ private fun EpisodeCard(e: Title, series: Title, current: Boolean, onClick: () -
     val hover = rememberHover()
     val press = rememberPressState()
     val no = e.episodeNo ?: 0
-    Column(Modifier.fillMaxWidth().hover(hover).contextClick(e).deskFocusRing(press).pressable(press, label = "第 $no 集 ${e.name}", onClick = onClick).testTag(if (current) "d-ep-card-cur" else "d-ep-card")) {
+    // 未播出（op1137b）：置灰、不响应点击（右键菜单也不出）、校对格换成「未播出」小签
+    Column(Modifier.fillMaxWidth().alpha(if (e.unaired) com.gugaart.ui.theme.GugaColors.UNAVAILABLE_ALPHA else 1f).hover(hover).then(if (e.unaired) Modifier else Modifier.contextClick(e)).deskFocusRing(press).pressable(press, enabled = !e.unaired, label = "第 $no 集 ${e.name}", onClick = onClick).testTag(if (e.unaired) "d-ep-card-unaired" else if (current) "d-ep-card-cur" else "d-ep-card")) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).border(1.dp, colors.line)) {
             val zoom = if (hover.value) 1.04f else 1f
             CoverImage(e.art.still ?: fallback, Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom; clip = false }, Framing(0.5f, 0.35f), alpha = if (seen) 0.6f else 1f) {
@@ -473,7 +516,7 @@ private fun EpisodeCard(e: Title, series: Title, current: Boolean, onClick: () -
                 BasicText(e.name, style = Guga.song(rsp(1.55f), FontWeight.Bold, if (current || hover.value) colors.spot else colors.ink, lineHeight = rsp(2.2f)), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 BasicText(subOf(e, series, current), style = Guga.note(rsp(1.2f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            TickButton(seen, "第 $no 集") { graph.togglePlayed(chrome, e.id, seen) }
+            if (e.unaired) OutlineTag("未播出", rsp(1.1f), 1.dp, colors.dim) else TickButton(seen, "第 $no 集") { graph.togglePlayed(chrome, e.id, seen) }
         }
         if (e.overview.isNotEmpty()) BasicText(e.overview, Modifier.padding(top = Guga.rem(0.8f)), style = Guga.song(rsp(1.3f), color = colors.dim, lineHeight = rsp(2.15f)), maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
@@ -490,14 +533,14 @@ private fun EpisodeLine(e: Title, series: Title, current: Boolean, onClick: () -
     val press = rememberPressState()
     val no = e.episodeNo ?: 0
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().hover(hover).contextClick(e).deskFocusRing(press).pressable(press, label = "第 $no 集 ${e.name}", onClick = onClick).padding(vertical = Guga.rem(1.2f)).testTag("d-ep-line"), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().alpha(if (e.unaired) com.gugaart.ui.theme.GugaColors.UNAVAILABLE_ALPHA else 1f).hover(hover).then(if (e.unaired) Modifier else Modifier.contextClick(e)).deskFocusRing(press).pressable(press, enabled = !e.unaired, label = "第 $no 集 ${e.name}", onClick = onClick).padding(vertical = Guga.rem(1.2f)).testTag(if (e.unaired) "d-ep-line-unaired" else "d-ep-line"), verticalAlignment = Alignment.CenterVertically) {
             EpisodeNo(no.toString(), 2.2f, seen, current, Modifier.width(Guga.rem(5.6f)))
             Spacer(Modifier.width(Guga.rem(1.2f)))
             Column(Modifier.weight(1f)) {
                 BasicText(e.name, style = Guga.song(rsp(1.5f), FontWeight.Bold, if (current || hover.value) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 BasicText(subOf(e, series, current), style = Guga.note(rsp(1.2f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            TickButton(seen, "第 $no 集") { graph.togglePlayed(chrome, e.id, seen) }
+            if (e.unaired) OutlineTag("未播出", rsp(1.1f), 1.dp, colors.dim) else TickButton(seen, "第 $no 集") { graph.togglePlayed(chrome, e.id, seen) }
         }
         Rule()
     }
@@ -522,7 +565,7 @@ private fun EpisodePanel(e: Title, series: Title, season: Season?, resuming: Boo
     val seen = chrome.isPlayed(e.id, e.played && e.progress <= 0f)
     val no = e.episodeNo ?: 0
     // 规格：分集列表不带媒体流，展开时单取这一集（只读）
-    val full = rememberLoad("episode-full", e.id) { c -> c.titleOf(c.getItem(e.id)) }
+    val full = rememberLoad("episode-full", e.id) { c -> c.titleOf(c.getItemShared(e.id)) }
     val tech = mediaRows(full.value?.sources?.firstOrNull())
     Column(modifier.testTag("d-ep-panel")) {
         Rule(strong = true)
@@ -554,10 +597,10 @@ private fun EpisodePanel(e: Title, series: Title, season: Season?, resuming: Boo
                     style = Guga.note(rsp(1.3f), colors.faint),
                     maxLines = 1,
                 )
-                BasicText(e.overview.ifEmpty { "服务器上没有这一集的简介。" }, Modifier.padding(top = Guga.rem(1.4f), bottom = Guga.rem(2f)), style = Guga.song(rsp(1.5f), color = if (e.overview.isEmpty()) colors.faint else colors.dim, lineHeight = rsp(2.8f)), maxLines = 5, overflow = TextOverflow.Ellipsis)
+                BasicText(e.overview.ifEmpty { "没有简介" }, Modifier.padding(top = Guga.rem(1.4f), bottom = Guga.rem(2f)), style = Guga.song(rsp(1.5f), color = if (e.overview.isEmpty()) colors.faint else colors.dim, lineHeight = rsp(2.8f)), maxLines = 5, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Guga.rem(2f))) {
                     DButton(if (e.progress > 0f) "续看" else "播放这一集", { graph.play(e.id, e.positionSec?.takeIf { e.progress > 0f }?.times(1000)) }, small = true, tag = "d-ep-play")
-                    if (e.progress > 0f || resuming) DButton("从头看", { graph.play(e.id, 0L) }, small = true, line = true, icon = GuguIcon.RotateCcw, tag = "d-ep-restart")
+                    if (e.progress > 0f || resuming) DButton("从头播放", { graph.play(e.id, 0L) }, small = true, line = true, icon = GuguIcon.RotateCcw, tag = "d-ep-restart")
                     DAction(if (seen) "改成未看" else "标记已看", { graph.togglePlayed(chrome, e.id, seen) }, tag = "d-ep-seen") { ProofTick(seen, size = Guga.rem(1.4f)) }
                 }
                 if (tech.isNotEmpty()) {
@@ -579,7 +622,7 @@ internal fun DOverview(text: String, modifier: Modifier = Modifier) {
     val colors = Guga.colors
     val box = modifier.widthIn(max = Guga.rem(86f))
     when {
-        text.isEmpty() -> BasicText("服务器上没有这部片子的简介。", box.testTag("d-overview-none"), style = Guga.song(rsp(2.2f), color = colors.faint, lineHeight = rsp(3.96f)), maxLines = 2)
+        text.isEmpty() -> BasicText("没有简介", box.testTag("d-overview-none"), style = Guga.song(rsp(2.2f), color = colors.faint, lineHeight = rsp(3.96f)), maxLines = 2)
         text.length < DetailSpec.SHORT -> {
             val cap = dropCapLength(text)
             Row(box.testTag("d-overview-short"), verticalAlignment = Alignment.CenterVertically) {

@@ -218,6 +218,8 @@ fun TvChrome(route: Route, modifier: Modifier = Modifier) {
                                     }
                                 } else {
                                     Icon(item.icon, Color.White.copy(alpha = if (on) 1f else TvRailSpec.IDLE_ALPHA), TvRailSpec.ICON, strokeWidth = if (on) 2.2f else 1.9f)
+                                    // 「记录」（读者证在这一页）有没看的称号（P2-13）：图标右上一个朱红点（和右边「当前页」那一点分开）
+                                    if (!on && item == TvRailItem.History && com.gugaart.ui.screens.me.RankBoard.unseen) Box(Modifier.align(Alignment.TopEnd).offset(x = (-6).dp, y = 6.dp).size(7.dp).background(colors.seal, CircleShape).testTag("tv-rail-me-dot"))
                                     // 当前页：朱红小圆点（固定朱红，不跟专色——电视的焦点 / 记号都是固定色）
                                     if (on) Box(Modifier.align(Alignment.CenterEnd).offset(x = 4.dp).size(7.dp).background(colors.seal, CircleShape))
                                 }

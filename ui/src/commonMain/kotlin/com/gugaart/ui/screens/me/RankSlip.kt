@@ -32,7 +32,9 @@ import com.gugaart.ui.screens.update.extraView
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.ui.LocalGraph
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import com.gugugaga.app.platform.localUtcOffsetMs
 
 /** 称号纸片的几个数。 */
@@ -52,6 +54,16 @@ fun rankHead(news: RankNews): Pair<String, String> = when {
 }
 
 /**
+ * 数一次看完的记录、算出拿到了哪些特别称号：都不在界面线程上做。几千条记录 × 四十八个称号的题材匹配（不分大小写的 contains）
+ * 原来跑在根上的 LaunchedEffect 里 = 主线程（1.5.1 性能批次：手机 release 包采样，Mock 167 部的记录就占主线程约 70 ms，
+ * 记录越多越久；每次从播放器回来也再来一遍）。
+ */
+internal suspend fun rankFacts(load: suspend () -> WatchFacts): Pair<WatchFacts, List<String>> = withContext(Dispatchers.Default) {
+    val facts = load()
+    facts to Specials.unlocked(facts)
+}
+
+/**
  * 称号这件事挂在根上的一处（不在播放画面上；号外在的时候先让号外）：
  * - [live]（应用里）：登录后、每次从播放器回来后过 [RankSpec.CHECK_DELAY_MS] 取一次看完的记录（[loadWatchFacts]，只读）：
  *   看过几部比上次报的级高 → 出等级纸片（[rankNews]）；新拿到特别称号 → 出特别称号纸片（[specialNews]，等级的先出）；
@@ -68,6 +80,8 @@ fun RankHost(live: Boolean, tv: Boolean) {
         LaunchedEffect(s.serverId, s.userId) {
             val account = RankStore.accountOf(s.serverId, s.userId)
             RankBoard.count = RankStore(g.deps.local).lastCount(account)
+            // P2-13 的小点：重启以后还在（进了「我的」才清）
+            RankBoard.restoreDot(RankStore(g.deps.local), account)
             RankBoard.owned = SpecialStore(g.deps.local).announced(account).orEmpty()
             // 报头展示哪个称号：每次打开应用（每个账号）挑一次，从播放器回来不重挑
             if (RankBoard.featuredFor != account) {
@@ -85,8 +99,8 @@ fun RankHost(live: Boolean, tv: Boolean) {
         // 根上这一处只在不播放时在组合里：从播放器回来 = 重新进组合 = 再数一次
         LaunchedEffect(s.serverId, s.userId) {
             delay(RankSpec.CHECK_DELAY_MS)
-            val facts = try {
-                loadWatchFacts(s.client, ::localUtcOffsetMs)
+            val (facts, unlocked) = try {
+                rankFacts { loadWatchFacts(s.client, ::localUtcOffsetMs) }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -102,14 +116,22 @@ fun RankHost(live: Boolean, tv: Boolean) {
             // 报头那枚称号：部数涨了就浮出「+N 部」，进度线往前走
             RankBoard.counted(total, store.lastCount(account))
             store.setLastCount(account, total)
-            if (news != null) RankBoard.open(RankNews(news, total, first = before == null))
+            // P2-13：第一次检查不弹纸片，只在「我的」上标小点；以后升级再弹
+            when (rankAnnounce(firstCheck = before == null, hasNews = news != null)) {
+                RankAnnounce.Slip -> RankBoard.open(RankNews(news!!, total))
+                RankAnnounce.Dot -> RankBoard.showDot(store, account)
+                RankAnnounce.None -> Unit
+            }
             // 特别称号：新拿到的出一张纸片（第一次检查：一次报出已经拿到的）
             val specials = SpecialStore(g.deps.local)
-            val unlocked = Specials.unlocked(facts)
             val fresh = specialNews(specials.announced(account), unlocked)
             specials.mark(account, unlocked)
             RankBoard.owned = specials.announced(account).orEmpty()
-            if (fresh != null) RankBoard.special = fresh.copy(owned = RankBoard.owned.size)
+            when (rankAnnounce(firstCheck = fresh?.first == true, hasNews = fresh != null)) {
+                RankAnnounce.Slip -> RankBoard.special = fresh!!.copy(owned = RankBoard.owned.size)
+                RankAnnounce.Dot -> RankBoard.showDot(store, account)
+                RankAnnounce.None -> Unit
+            }
             // 最近拿到的称号：新拿到的排到最前，报头换成最新的那个（第一次检查：特别称号在前、等级最新）
             val ranksGained = if (news != null) ((before ?: (level - 1)).coerceAtLeast(0) + 1..level).map(::rankKey) else emptyList()
             val specialsGained = fresh?.ids.orEmpty().map(::specialKey)

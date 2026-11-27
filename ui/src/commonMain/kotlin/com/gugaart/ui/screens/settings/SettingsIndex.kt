@@ -6,7 +6,6 @@ import com.gugaart.ui.data.GugaSettingsStore
 import com.gugaart.ui.data.MascotPref
 import com.gugugaga.app.player.StrmSettings
 import com.gugugaga.app.settings.AUDIO_LANGS
-import com.gugugaga.app.settings.SUBTITLE_MODE_CHOICES
 import com.gugugaga.app.settings.SettingsSection
 import com.gugugaga.app.settings.SubtitleContext
 import com.gugugaga.app.settings.keysFromCodes
@@ -17,33 +16,46 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /*
- * 设置页的纯逻辑：九个分区的目录、目录页每行下面那句「现在是什么」、步进器在一组档位里走一步。
+ * 设置页的纯逻辑：六个主要分区 + 折叠「高级」的目录、目录页每行下面那句「现在是什么」、步进器在一组档位里走一步。
  * 设置项本身（键名、默认值、取值范围）全部是上游的（`app/settings/`），这里只决定画报怎么分区、怎么排。
  */
 
 /**
- * 画报的九个分区（设计稿 `p=settings`）。[key] = 路由 `Route.Settings(section)` 的那一段：能和上游对上的用上游的键
- * （appearance / interface / playback / danmaku / cache / account / about），上游把 strm 和字幕音轨并在「播放」里，
- * 画报按设计稿拆成两个分区（`strm` / `subtitles`）——只是页面怎么分，**存的还是上游那些键**。
- * 上游的「扩展」分区只有一项「恢复默认设置」，画报放在「缓存」的「维护」下面（`extensions` 也落到这里）。
+ * 画报的六个主要分区 + 折叠「高级」（P2-18）。
+ * [key] = 路由 `Route.Settings(section)` 的那一段：兼容旧路由 `interface` → [Appearance]、`extensions` → [Cache]、
+ * `strm` / `cache` / `about` / `diagnostics` → 归在「高级」下。
  */
-enum class GugaSection(val key: String, val title: String, val english: String) {
-    Look("appearance", "外观", "LOOK"),
-    Layout("interface", "界面", "LAYOUT"),
+enum class GugaSection(
+    val key: String,
+    val title: String,
+    val english: String,
+    val advanced: Boolean = false,
+) {
+    Account("account", "账号与服务器", "ACCOUNT"),
     Playback("playback", "播放", "PLAYBACK"),
-    Strm("strm", "strm 直链", "DIRECT LINK"),
     Subs("subtitles", "字幕与音轨", "SUBS & AUDIO"),
     Danmaku("danmaku", "弹幕", "DANMAKU"),
-    Cache("cache", "缓存", "CACHE"),
-    Account("account", "账号与服务器", "ACCOUNT"),
-    About("about", "关于与检查更新", "ABOUT");
+    Appearance("appearance", "外观与界面", "APPEARANCE"),
+    Backup("backup", "备份与同步", "BACKUP"),
+    Advanced("advanced", "高级", "ADVANCED", advanced = true),
+    Strm("strm", "strm 直链", "DIRECT LINK", advanced = true),
+    Cache("cache", "缓存", "CACHE", advanced = true),
+    About("about", "关于", "ABOUT", advanced = true),
+    Diagnostics("diagnostics", "诊断", "DIAGNOSTICS", advanced = true);
 
-    /** 「03」。 */
-    val number: String get() = (ordinal + 1).toString().padStart(2, '0')
+    /** 「01」..「06」；高级子项不编号。 */
+    val number: String get() = if (advanced) "" else (PRIMARY.indexOf(this) + 1).toString().padStart(2, '0')
 
     companion object {
+        /** 目录页 / 侧栏常驻的六个分区。 */
+        val PRIMARY: List<GugaSection> = listOf(Account, Playback, Subs, Danmaku, Appearance, Backup)
+
+        /** 「高级」折叠区展开后列出的子页（手机目录 / 桌面左栏 / 电视左页）。 */
+        val ADVANCED_CHILDREN: List<GugaSection> = listOf(Strm, Cache, About)
+
         fun of(key: String?): GugaSection? = when (key) {
             null, "" -> null
+            "interface" -> Appearance
             "extensions" -> Cache
             else -> entries.firstOrNull { it.key == key }
         }
@@ -57,33 +69,49 @@ class SummaryFacts(
     val account: Pair<String, String>? = null,
     val appVersion: String = "",
     val cache: String? = null,
+    val danmakuConfigured: Boolean = true,
+    val webdavConfigured: Boolean = false,
+    val hasIdleHome: Boolean = false,
 )
 
 private val PROXY_MODE = mapOf("auto" to "自动", "direct" to "始终直连", "proxy" to "始终经代理")
 
 fun proxyModeLabel(mode: String): String = PROXY_MODE[mode] ?: "自动"
 
-/** 目录页一行下面那句话：写**当前值**（没有单一值的写一句说明）。播放 / 弹幕 / 账号 / 关于 / 缓存直接用上游排好的那句。 */
+/** 目录页「播放」一行里的内核：自动 / EXO / VLC / MPV / 外部播放器（审计 P2-3：不叫「引擎」）。纯函数。 */
+fun engineSummaryLabel(id: String?): String = when (id) {
+    "exoplayer" -> "EXO"
+    "vlc" -> "VLC"
+    "mpv" -> "MPV"
+    "external" -> "外部播放器"
+    "web" -> "WEB"
+    else -> "自动"
+}
+
+/** 目录页一行下面那句话：写**当前值**。 */
 fun sectionSummary(section: GugaSection, f: SummaryFacts): String {
     val ctx = SubtitleContext(f.settings, com.gugugaga.app.settings.ThemePref.Dark, com.gugugaga.app.settings.PerfPref.Auto, f.account, f.appVersion, f.cache)
     return when (section) {
-        GugaSection.Look -> "深色 · " + if (f.prefs.spotColorFollowsCover) "主题色跟随海报" else "主题色固定朱红"
-        GugaSection.Layout -> "首页与详情页的显示方式"
-        GugaSection.Playback -> settingsSubtitle(SettingsSection.Playback, ctx).substringBefore(" · ") + " · " + if (f.settings.playbackPrefs.autoPlayNext) "自动下一集" else "不自动下一集"
+        GugaSection.Account -> settingsSubtitle(SettingsSection.Account, ctx)
+        // 审计 P2-3：叫「内核」，不叫「引擎」
+        GugaSection.Playback -> "内核 " + engineSummaryLabel(f.settings.playbackPrefs.engine) + " · " + if (f.settings.playbackPrefs.autoPlayNext) "自动下一集" else "不自动下一集"
+        // 「开播字幕」的值（自动 / 跟随上次 / 关闭）；前面带首选音轨语言
+        GugaSection.Subs -> {
+            val p = f.settings.playbackPrefs
+            val audioFirst = keysFromCodes(AUDIO_LANGS, p.audioLangs).firstOrNull()?.let { k -> AUDIO_LANGS.firstOrNull { it.key == k }?.label }.orEmpty()
+            listOfNotNull(audioFirst.takeIf { it.isNotEmpty() }?.let { "音轨$it" }, "开播字幕 " + f.prefs.subtitleDefault.label).joinToString(" · ")
+        }
+        GugaSection.Danmaku -> if (!f.danmakuConfigured) "未配置" else settingsSubtitle(SettingsSection.Danmaku, ctx)
+        GugaSection.Appearance -> if (f.prefs.spotColorFollowsCover) "主题色跟随海报" else "主题色固定朱红"
+        GugaSection.Backup -> if (f.webdavConfigured) "WebDAV 已配置" else "本地 · WebDAV"
+        GugaSection.Advanced -> if (f.hasIdleHome) "strm 直链 · 闲置 · 缓存 · 诊断" else "strm 直链 · 缓存 · 诊断"
         GugaSection.Strm -> {
             val s = StrmSettings.of(f.settings)
             proxyModeLabel(s.strmProxyMode) + " · " + if (s.preferStrmTarget) "优先直连" else "经 Emby 中转"
         }
-        GugaSection.Subs -> {
-            val p = f.settings.playbackPrefs
-            val first = keysFromCodes(AUDIO_LANGS, p.audioLangs).firstOrNull()?.let { k -> AUDIO_LANGS.firstOrNull { it.key == k }?.label }.orEmpty()
-            val mode = SUBTITLE_MODE_CHOICES.firstOrNull { it.id == p.subtitleMode }?.label?.substringBefore('（') ?: "智能"
-            (if (first.isNotEmpty()) "${first}优先 · " else "") + "字幕$mode"
-        }
-        GugaSection.Danmaku -> settingsSubtitle(SettingsSection.Danmaku, ctx)
         GugaSection.Cache -> settingsSubtitle(SettingsSection.Cache, ctx)
-        GugaSection.Account -> settingsSubtitle(SettingsSection.Account, ctx)
-        GugaSection.About -> f.appVersion
+        GugaSection.About -> f.appVersion.ifEmpty { "版本 · 更新 · 许可" }
+        GugaSection.Diagnostics -> "设备 ID · 令牌存储 · 界面数据缓存"
     }
 }
 

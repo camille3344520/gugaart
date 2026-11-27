@@ -89,6 +89,15 @@ object IdleRules {
     fun shouldFlip(idleMs: Long, sinceFlipMs: Long, enabled: Boolean, visible: Boolean, count: Int, busy: Boolean): Boolean =
         enabled && visible && count > 1 && !busy && idleMs >= FLIP_RESUME_MS && sinceFlipMs >= FLIP_EVERY_MS
 
+    /**
+     * 封面自动翻页这一刻该不该跑着（1.5.1 主理人定的）：[enabled] = 设置里开着；[pageShown] = 首页露着；
+     * [windowFocused] = 窗口在前台（电脑：失焦 / 最小化 = false；手机、电视：应用退到后台、锁屏 = 窗口失去焦点 = false）；
+     * [reducedMotion] = 系统要求减少动态效果。任一条不满足就停（Windows 上没人看着的首页每 5 秒翻一期：解图 + 玻璃重画，空转约 6 % 的一个核）。
+     * 恢复时从头计时：下一次翻在正常间隔之后，不补翻。纯函数，有单测。
+     */
+    fun flipRunning(enabled: Boolean, pageShown: Boolean, windowFocused: Boolean, reducedMotion: Boolean): Boolean =
+        enabled && pageShown && windowFocused && !reducedMotion
+
     /** 自动翻到哪一张：下一张，到头回第一张。 */
     fun nextPage(current: Int, count: Int): Int = if (count <= 0) 0 else (current + 1) % count
 
@@ -99,12 +108,18 @@ object IdleRules {
 /**
  * 封面自动翻页（三端的首页各放一个）。[visible] = 封面那一屏正露着；[flip] = 翻到第几张（电视还要同步自己的 `want`）。
  * 设置 › 首页 ›「封面自动翻页」关了、或者没有 [LocalIdleClock]（测试）= 什么都不做。播放器后面没有首页（那时首页不在组合里），所以不会偷偷翻。
+ * 窗口不在前台 / 最小化 / 应用在后台 / 系统减少动态效果时也停（[IdleRules.flipRunning]）：停 = 这一段协程拿掉，回来时重新起、从头计时。
  */
 @Composable
 fun CoverAutoFlip(flow: CoverFlowState, visible: () -> Boolean, flip: (Int) -> Unit = { flow.animateTo(it) }) {
     val clock = LocalIdleClock.current ?: return
-    if (!LocalGugaPrefs.current.coverAutoFlip) return
-    if (!LocalPageShown.current) return
+    val running = IdleRules.flipRunning(
+        enabled = LocalGugaPrefs.current.coverAutoFlip,
+        pageShown = LocalPageShown.current,
+        windowFocused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused,
+        reducedMotion = com.gugugaga.ds.physics.LocalMotionPrefs.current.reducedMotion,
+    )
+    if (!running) return
     val seen = rememberUpdatedState(visible)
     val go = rememberUpdatedState(flip)
     LaunchedEffect(flow, clock) {

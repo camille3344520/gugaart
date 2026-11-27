@@ -50,10 +50,10 @@ object ItemManage {
     }
 
     /** 让服务器重新刮削这一条；返回给用户看的一句话。 */
-    suspend fun refresh(g: AppGraph, id: String): String = run(g, "已让服务器刷新元数据，过一会儿再打开就是新的") { refreshItem(id) }
+    suspend fun refresh(g: AppGraph, id: String): String = run(g, "已请求刷新元数据") { refreshItem(id) }
 
     /** 让服务器重新扫描这一条的文件（新加的集、换过的文件）。 */
-    suspend fun scan(g: AppGraph, id: String): String = run(g, "已让服务器扫描文件") { scanItem(id) }
+    suspend fun scan(g: AppGraph, id: String): String = run(g, "已请求扫描文件") { scanItem(id) }
 
     /** 从服务器删除（连媒体文件）。成功返回 null；失败返回原因。 */
     suspend fun delete(g: AppGraph, t: Title): String? {
@@ -80,7 +80,7 @@ object ItemManage {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            "没成功：" + describeEmbyError(e)
+            "失败：" + describeEmbyError(e)
         }
     }
 }

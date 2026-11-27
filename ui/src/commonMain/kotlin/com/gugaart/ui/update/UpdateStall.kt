@@ -20,7 +20,7 @@ object UpdateStall {
     /** 交给安装器之后多久还没有回音才算被放下了（安装确认弹出来要几百毫秒）。 */
     const val GRACE_MS = 1_500L
 
-    const val MESSAGE = "安装没有完成（安装确认被关掉或放到了后台）。点「再试一次」接着装，不用重新下载。"
+    const val MESSAGE = "安装没有完成；重试不用重新下载"
 
     /** 上游状态机听安装结果的那个回调（经 [GithubUpdate.wrap] 截下来）。 */
     private var listener: ((InstallOutcome) -> Unit)? = null

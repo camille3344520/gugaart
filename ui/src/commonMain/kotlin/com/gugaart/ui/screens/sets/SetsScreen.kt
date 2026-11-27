@@ -186,10 +186,10 @@ fun SetScreen(set: Title, day: Int) {
                 caption = when {
                     borrowed != null -> "剧照 · 取自《${borrowed.name}》"
                     bleedSourceOf(art) == BleedSource.Backdrop -> "剧照 · 合集背景图"
-                    bleedSourceOf(art) == BleedSource.PosterBlur -> "没有剧照 · 用海报虚化代替"
+                    bleedSourceOf(art) == BleedSource.PosterBlur -> "海报"
                     else -> null
                 },
-                scrollPx = scroll.value.toFloat(),
+                scrollPx = { scroll.value.toFloat() },
             ) {
                 Column(Modifier.align(Alignment.BottomStart).padding(horizontal = dimens.margin).padding(bottom = 4.dp).fillMaxWidth()) {
                     Kicker(listOfNotNull("合集", data.count.takeIf { it > 0 }?.let { "$it 部" }, data.years))
@@ -258,7 +258,7 @@ fun SetScreen(set: Title, day: Int) {
                         Skeleton(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(62.dp))
                         Rule()
                     }
-                    members.isEmpty() -> BasicText("这套合集里还没有影片。", Modifier.padding(vertical = 24.dp), style = Guga.song(type.caption, color = colors.dim))
+                    members.isEmpty() -> BasicText("没有影片", Modifier.padding(vertical = 24.dp), style = Guga.song(type.caption, color = colors.dim))
                     else -> members.forEachIndexed { i, m ->
                         val played = chrome.isPlayed(m.id, m.played)
                         MemberRow(i + 1, m, played, { graph.open(m.id) }, { graph.togglePlayed(chrome, m.id, played) })
@@ -269,7 +269,7 @@ fun SetScreen(set: Title, day: Int) {
             }
             Spacer(Modifier.height(72.dp))
         }
-        BackRow(set.name, solid = scroll.value > solidAt, onBack = { graph.nav.backOrHome() }, favorite = fav, onFavorite = { graph.toggleFavorite(chrome, set.id, fav) })
+        BackRow(set.name, solid = com.gugaart.ui.screens.scrolledPast(scroll, solidAt), onBack = { graph.nav.backOrHome() }, favorite = fav, onFavorite = { graph.toggleFavorite(chrome, set.id, fav) })
     }
 }
 

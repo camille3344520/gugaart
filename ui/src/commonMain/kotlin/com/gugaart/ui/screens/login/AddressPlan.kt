@@ -71,6 +71,6 @@ fun addressPreview(plan: AddressPlan?): String {
     plan.error?.let { return it }
     val first = plan.urls.firstOrNull() ?: return ""
     val retry = plan.urls.getOrNull(1)?.let { "　连不上再试 ${it.substringBefore("://")}" }.orEmpty()
-    val creds = if (plan.strippedCredentials) "　（已去掉地址里的账号密码）" else ""
+    val creds = if (plan.strippedCredentials) "　· 已去掉地址里的账号密码" else ""
     return "将连接 $first$retry$creds"
 }

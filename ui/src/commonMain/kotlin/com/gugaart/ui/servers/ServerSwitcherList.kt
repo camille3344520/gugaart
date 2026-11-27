@@ -142,15 +142,14 @@ fun pingText(p: PingState): String? = when (p) {
 
 /** 界面上的几句话（三端同一份）。 */
 object ServerSwitchCopy {
-    const val OFFLINE = "连不上这台服务器，没有切换"
-    fun failed(reason: String) = "没有切换：$reason"
+    const val OFFLINE = "连不上，未切换"
+    fun failed(reason: String) = "未切换：$reason"
     const val NEEDS_LOGIN = "要重新登录"
-    const val CURRENT_CANNOT_DELETE = "正在用的这台不能删：先换到别的服务器"
-    const val SEARCH_HINT = "搜名字、备注、地址，拼音首字母也行"
-    const val NO_MATCH = "没有对得上的服务器"
+    const val CURRENT_CANNOT_DELETE = "正在用，不能删除"
+    const val SEARCH_HINT = "名字、备注、地址"
+    const val NO_MATCH = "没有结果"
     const val ADD = "添加服务器"
-    fun deleteTitle(name: String) = "删除「$name」？"
-    const val DELETE_TEXT = "这台服务器和保存在这台设备上的账号会被移除；服务器上的片子和记录都不受影响。"
+    fun deleteTitle() = "移除这台服务器？"
 }
 
 /**
@@ -482,7 +481,7 @@ private fun ServerRow(state: ServerListState, e: ServerEntry, index: Int, look: 
             }
             ServerRowText(e, spec, Modifier.weight(1f), dim = busy, withPort = withPort)
         }
-        val note = if (busy) "正在切换……" else state.noteOf(e)
+        val note = if (busy) "切换中…" else state.noteOf(e)
         if (note != null) {
             BasicText(
                 note,
@@ -521,14 +520,13 @@ private fun ManageStrip(state: ServerListState, e: ServerEntry, look: ServerList
                 }
             }
             ManageStage.Rename -> {
-                BasicText("备注（留空 = 用服务器名「${e.name}」）", Modifier.padding(top = spec.rowPad * 0.6f), style = Guga.song(spec.sub, color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                BasicText("备注 · 留空 = 「${e.name}」", Modifier.padding(top = spec.rowPad * 0.6f), style = Guga.song(spec.sub, color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 InputLine(state.draft, { state.draft = it }, e.name, Modifier.padding(top = spec.rowPad * 0.4f), tag = "server-note-input")
                 ManageButtons(look, "保存", { state.saveNote(e) }, danger = false) { state.closeManage() }
             }
             ManageStage.Delete -> {
-                BasicText(ServerSwitchCopy.deleteTitle(serverTitle(e)), Modifier.padding(top = spec.rowPad * 0.6f), style = Guga.song(spec.title * 0.94f, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText(ServerSwitchCopy.DELETE_TEXT, Modifier.padding(top = spec.rowPad * 0.4f).testTag("server-delete-text"), style = Guga.song(spec.sub, color = colors.dim, lineHeight = spec.sub * 1.55f), maxLines = 3)
-                ManageButtons(look, "删除", { state.delete(e) }, danger = true) { state.closeManage() }
+                BasicText(ServerSwitchCopy.deleteTitle(), Modifier.padding(top = spec.rowPad * 0.6f), style = Guga.song(spec.title * 0.94f, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ManageButtons(look, "移除", { state.delete(e) }, danger = true) { state.closeManage() }
             }
         }
     }
@@ -570,13 +568,13 @@ private fun ManageButtons(look: ServerListLook, confirm: String, onConfirm: () -
     val colors = Guga.colors
     if (look == ServerListLook.Desktop) {
         Row(Modifier.fillMaxWidth().padding(top = Guga.rem(1.2f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1f), Alignment.End)) {
-            DeskButton("算了", onCancel, icon = null, small = true, outline = true)
+            DeskButton("取消", onCancel, icon = null, small = true, outline = true)
             DeskButton(confirm, onConfirm, Modifier.testTag("server-manage-confirm"), icon = null, small = true, danger = danger)
         }
     } else {
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
             TextLink(confirm, onConfirm, Modifier.testTag("server-manage-confirm"), color = if (danger) colors.seal else colors.ink)
-            TextLink("算了", onCancel, color = colors.dim)
+            TextLink("取消", onCancel, color = colors.dim)
         }
     }
 }

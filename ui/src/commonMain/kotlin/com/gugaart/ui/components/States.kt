@@ -19,7 +19,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import com.gugaart.ui.data.ErrorKind
+import com.gugaart.ui.data.errorKindOf
+import com.gugaart.ui.data.unreachableTitle
 import com.gugaart.ui.mascot.LineFacts
+import com.gugaart.ui.servers.currentServerTitle
 import com.gugaart.ui.mascot.LocalGugaPrefs
 import com.gugaart.ui.mascot.LocalHour
 import com.gugaart.ui.mascot.MascotLines
@@ -91,11 +95,18 @@ fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
     val offline = message.contains("网络")
     // 登录失效 = 读者证过期：她捧白纸（G10）
     val expired = message.contains("登录失效")
+    // 服务器没有应答（P2-2）：标题直接写「连不上「服务器名」」，比喻放在她那一句
+    val server = errorKindOf(message) == ErrorKind.Server
+    val serverName = if (server) currentServerTitle() else null
     StateView(
         "state-error",
         if (offline) "拔掉的电源插头" else if (expired) "捧白纸" else "摊手",
-        message,
-        if (offline) MascotLines.pick("offline", hour = LocalHour.current, seed = 0) else "稍等一下再试；一直不行就换一条线路。",
+        if (server) unreachableTitle(serverName) else message,
+        when {
+            offline -> MascotLines.pick("offline", hour = LocalHour.current, seed = 0)
+            server -> MascotLines.pick("server", hour = LocalHour.current, seed = 0)
+            else -> null
+        },
         modifier,
         "再试一次",
         onRetry,
@@ -111,7 +122,7 @@ fun OfflineBar(modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
     val colors = Guga.colors
     Row(modifier.fillMaxWidth().padding(horizontal = Guga.dimens.margin).padding(bottom = 10.dp).testTag("offline-bar"), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicText("断线", Modifier.background(colors.seal).padding(horizontal = 6.dp, vertical = 2.dp), style = Guga.song(Guga.type.kicker, FontWeight.Black, colors.ink, letterSpacing = 0.2.em), maxLines = 1)
-        BasicText("连不上服务器，先放上次缓存的片单", Modifier.weight(1f), style = Guga.song(Guga.type.caption, color = colors.dim), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        BasicText("连不上服务器，显示缓存的片单", Modifier.weight(1f), style = Guga.song(Guga.type.caption, color = colors.dim), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         if (onRetry != null) TextLink("重试", onRetry)
     }
 }

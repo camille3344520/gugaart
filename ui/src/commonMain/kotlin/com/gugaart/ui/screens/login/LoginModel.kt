@@ -20,7 +20,11 @@ import com.gugugaga.core.isSameAddress
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/** 边打边找：地址停下这么久没再改就探测（P2-19）。 */
+const val PROBE_PAUSE_MS = 600L
 
 /** 登录流程的三步（设计稿 `servers`：列表 → 添加 / 找到 → 登录 / 登录中 / 密码不对）。 */
 enum class LoginStep { List, Add, Login }
@@ -153,10 +157,34 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
     }
 
     fun editAddress(v: String) {
+        // 地址改了：上一次（旧地址的）探测作废，结果不能落到新地址上
+        if (probing) cancel()
         address = v
         found = null
         foundInfo = null
         addError = null
+        nextWhenFound = false
+    }
+
+    /** 点了「下一步：登录」但还没找到：找到了直接进登录这一步（P2-19）。 */
+    private var nextWhenFound = false
+
+    /**
+     * 边打边找（1.5.1 审计 P2-19）：地址停下 [PROBE_PAUSE_MS] 没再改就自己探测一次。界面在地址 / 协议变了时调
+     * （`LaunchedEffect(address, scheme)` 里：再改一个字，上一次等待就被取消）。
+     */
+    suspend fun probeWhenIdle() {
+        if (found != null || probing || addressInput(address, scheme).isEmpty()) return
+        delay(PROBE_PAUSE_MS)
+        connect()
+    }
+
+    /** 「下一步：登录」（添加服务器只有这一个按钮，P2-19）：找到了就进登录；还在找 / 还没找 = 找到了直接进。 */
+    fun connectThenNext() {
+        if (found != null) return next()
+        if (addressInput(address, scheme).isEmpty()) return
+        nextWhenFound = true
+        connect()
     }
 
     /** 「连接」：上游的探测（协议 / `/emby` 前缀 / 延迟 / 服务器名和版本）。 */
@@ -166,7 +194,8 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
         cancel()
         probing = true
         addError = null
-        job = scope.launch {
+        var mine: Job? = null
+        mine = scope.launch {
             try {
                 val r = session.testServer(input)
                 val known = session.saved().servers.firstOrNull { isSameAddress(it.address, r.address) }
@@ -176,10 +205,17 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
                 throw e
             } catch (e: Exception) {
                 addError = describeEmbyError(e)
+                nextWhenFound = false
             } finally {
-                probing = false
+                // 被新的探测顶掉的那一次不改「正在找」
+                if (job === mine) probing = false
+            }
+            if (nextWhenFound && found != null) {
+                nextWhenFound = false
+                next()
             }
         }
+        job = mine
     }
 
     /** 「下一步：登录」。 */
@@ -237,7 +273,7 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
                 throw e
             } catch (e: Exception) {
                 if (e is EmbyException && e.kind == EmbyException.Kind.Unauthorized) {
-                    openLogin(targetOf(s), a.userName, "「${a.userName}」的登录已失效，重新输一次密码。")
+                    openLogin(targetOf(s), a.userName, "「${a.userName}」的登录已失效")
                 } else if (isUnreachable(e)) {
                     latency[s.id] = -1L
                     if (step == LoginStep.Login) error = describeEmbyError(e)

@@ -1,5 +1,7 @@
 package com.gugaart.ui.danmaku
 
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import com.gugugaga.app.settings.SecretKeys
 import com.gugugaga.core.KeyValueStore
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -167,5 +169,22 @@ class RelaySecureStore(private val real: KeyValueStore) : KeyValueStore {
     override suspend fun remove(key: String) {
         real.remove(key)
         if (key == SecretKeys.DANMAKU_API_URL) DanmakuServers.primaryChanged()
+    }
+}
+
+@androidx.compose.runtime.Composable
+fun rememberDanmakuConfigured(): Boolean {
+    val g = com.gugugaga.app.ui.LocalGraph.current
+    val dmServers by DanmakuServers.state.collectAsState()
+    val secrets by g.secrets.state.collectAsState()
+    androidx.compose.runtime.LaunchedEffect(g) {
+        g.secrets.load()
+        DanmakuServers.bind(g.deps.secure, g.deps.debug.defaultSecrets?.danmakuApiUrl)
+        DanmakuServers.load()
+    }
+    return when {
+        dmServers != null -> dmServers!!.isNotEmpty()
+        secrets != null -> secrets!!.danmakuApiUrl.isNotBlank()
+        else -> true
     }
 }

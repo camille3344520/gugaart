@@ -194,7 +194,8 @@ fun DrawScope.drawHeatColumns(heat: FloatArray, frac: Float, baseY: Float, maxPx
  */
 @Composable
 fun Timeline(
-    positionMs: Double,
+    /** 现在的位置（读法；1.5.1 性能：时钟只在这一格里读）。 */
+    positionMs: () -> Double,
     durationMs: Double,
     heat: FloatArray,
     marks: List<Double>,
@@ -205,7 +206,7 @@ fun Timeline(
 ) {
     val colors = Guga.colors
     var drag by remember { mutableStateOf<Double?>(null) }
-    val shown = drag ?: positionMs
+    val shown = drag ?: positionMs()
     val dur = rememberUpdatedState(durationMs)
     Row(modifier.fillMaxWidth().height(48.dp).testTag("player-timeline"), verticalAlignment = Alignment.Bottom) {
         BasicText(Rules.clock(shown.toLong()), Modifier.width(58.dp).padding(bottom = 2.dp), style = Guga.numeral(13.sp), maxLines = 1)
@@ -360,12 +361,77 @@ fun PanelStepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -
     }
 }
 
+/**
+ * 字幕时间一行（三端统一）：「字幕时间」− 值 +；不是 0 时多一个「复位」。− / + 点一下 0.1 秒，按住连续调，按满 2 秒每次 0.5 秒。
+ * 手机横屏的页边窄：名字和「复位」一行，− 值 + 一行。
+ */
 @Composable
-private fun StepKey(icon: GuguIcon, label: String, onClick: () -> Unit) {
+fun SubtitleTimingRow(ms: Long, onStep: (Long) -> Unit, onReset: () -> Unit) {
+    val colors = Guga.colors
+    val t = Guga.player
+    val narrow = Guga.dimens.uiMode == com.gugugaga.ds.theme.UiMode.Phone
+    val label: @Composable () -> Unit = { BasicText("字幕时间", style = Guga.song(t.label, color = colors.dim), maxLines = 1) }
+    val reset: @Composable () -> Unit = {
+        if (ms != 0L) {
+            val press = rememberPressState()
+            Box(Modifier.padding(start = 8.dp * t.k).heightIn(min = 36.dp * t.k).pressable(press, label = "复位", onClick = onReset).testTag("subtitle-timing-reset"), contentAlignment = Alignment.Center) {
+                BasicText("复位", Modifier.pressGraphics(press).border(1.dp, colors.dim).padding(horizontal = 8.dp * t.k, vertical = 3.dp * t.k), style = Guga.song(t.note, color = colors.ink), maxLines = 1)
+            }
+        }
+    }
+    val keys: @Composable () -> Unit = {
+        StepKey(GuguIcon.Minus, "字幕时间 减", { onStep(-100) }, onHold = { held -> onStep(-subtitleTimingStep(held)) })
+        BasicText(
+            subtitleTimingText(ms),
+            Modifier.width(60.dp * t.k).testTag("subtitle-timing-value"),
+            style = Guga.song(t.option, FontWeight.Bold).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+            maxLines = 1,
+        )
+        StepKey(GuguIcon.Plus, "字幕时间 加", { onStep(100) }, onHold = { held -> onStep(subtitleTimingStep(held)) })
+    }
+    if (narrow) {
+        Column(Modifier.fillMaxWidth().padding(top = 6.dp).testTag("subtitle-timing")) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+                label()
+                Spacer(Modifier.weight(1f))
+                reset()
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) { keys() }
+        }
+    } else {
+        Row(Modifier.fillMaxWidth().heightIn(min = 40.dp * t.k).testTag("subtitle-timing"), verticalAlignment = Alignment.CenterVertically) {
+            label()
+            reset()
+            Spacer(Modifier.weight(1f))
+            keys()
+        }
+    }
+}
+
+@Composable
+private fun StepKey(icon: GuguIcon, label: String, onClick: () -> Unit, onHold: ((heldMs: Long) -> Unit)? = null) {
     val colors = Guga.colors
     val press = rememberPressState()
     val k = Guga.player.k
-    Box(Modifier.size(36.dp * k).pressable(press, label = label, onClick = onClick), contentAlignment = Alignment.Center) {
+    // 按住连续调：按下 400 ms 之后每 100 ms 走一步（走多少由 onHold 按按了多久定）；连续调过了，松手那一下不再算一次点
+    var repeated by remember { mutableStateOf(false) }
+    if (onHold != null) {
+        val hold by rememberUpdatedState(onHold)
+        androidx.compose.runtime.LaunchedEffect(press.pressed) {
+            if (!press.pressed) return@LaunchedEffect
+            repeated = false
+            kotlinx.coroutines.delay(SUBTITLE_TIMING_HOLD_START_MS)
+            var held = SUBTITLE_TIMING_HOLD_START_MS
+            while (true) {
+                repeated = true
+                hold(held)
+                kotlinx.coroutines.delay(SUBTITLE_TIMING_HOLD_TICK_MS)
+                held += SUBTITLE_TIMING_HOLD_TICK_MS
+            }
+        }
+    }
+    val click = { if (repeated) repeated = false else onClick() }
+    Box(Modifier.size(36.dp * k).pressable(press, label = label, onClick = click), contentAlignment = Alignment.Center) {
         Box(Modifier.pressGraphics(press).size(26.dp * k).border(1.dp, colors.dim), contentAlignment = Alignment.Center) { Icon(icon, colors.ink, 12.dp * k) }
     }
 }
@@ -390,6 +456,31 @@ fun PanelLink(text: String, onClick: () -> Unit) {
     Rule()
 }
 
+
+/** 快进 / 快退动态步长图标（旋转箭头内居中显示秒数）。 */
+@Composable
+fun SeekStepIcon(
+    forward: Boolean,
+    seconds: Int,
+    tint: Color,
+    size: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    val fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { (size * 0.34f).toSp() }
+    Box(modifier.size(size), contentAlignment = Alignment.Center) {
+        Icon(if (forward) GuguIcon.RotateCw else GuguIcon.RotateCcw, tint, size)
+        BasicText(
+            seconds.toString(),
+            Modifier.padding(top = size * 0.06f),
+            style = Guga.numeral(fontSize, tint).copy(
+                fontWeight = FontWeight.Bold,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Normal,
+                lineHeight = fontSize,
+            ),
+            maxLines = 1,
+        )
+    }
+}
 /** 百分比的写法。 */
 fun pct(v: Double): String = "${(v * 100).roundToInt()}%"
 

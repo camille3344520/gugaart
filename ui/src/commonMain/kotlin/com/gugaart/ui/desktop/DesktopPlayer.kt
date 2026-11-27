@@ -46,7 +46,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -61,7 +63,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
+import com.gugaart.ui.components.holdTouches
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -102,10 +106,12 @@ import com.gugaart.ui.player.HeatSpec
 import com.gugaart.ui.player.drawHeatColumns
 import com.gugaart.ui.player.heatDots
 import com.gugaart.ui.player.rateLabel
+import com.gugaart.ui.player.SeekStepIcon
 import com.gugaart.ui.player.specOf
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.detail.specLine
 import com.gugaart.ui.theme.Guga
+import com.gugugaga.app.nav.Route
 import com.gugugaga.app.player.AutoNextState
 import com.gugugaga.app.player.ControlsVisibility
 import com.gugugaga.app.player.DanmakuHost
@@ -195,17 +201,25 @@ fun chapterAt(ms: Double, introEndMs: Double?, creditsStartMs: Double?): String?
 @Composable
 fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val g = LocalGraph.current
+    // P2-9：能选的内核不到两个（macOS 只有 MPV）时不显示「内核」
+    val coreVisible = remember(play) { com.gugaart.ui.player.coreWordVisible(com.gugaart.ui.player.coreOptionsFor(play, g)) }
     val controller = play.controller
     val colors = Guga.colors
     val preset = LocalPreset.current
     val scope = rememberCoroutineScope()
     val snap by controller.snapshot.collectAsState()
-    val clock by controller.clock.collectAsState()
+    // 时钟（每 250 ms 走一下）不在这一层读（1.5.1 性能）：只在时间、时间轴、暂停那一格里读，整个播放页不跟着每一下重组
+    val clock = controller.clock.collectAsState()
+    val clockDuration = remember(clock) { androidx.compose.runtime.derivedStateOf { clock.value.durationMs } }
     val engine by controller.engineFlow.collectAsState()
     com.gugaart.ui.player.RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（ShaderApply.kt）
     val settings by danmaku.settingsState.collectAsState()
     val appSettings by g.settings.state.collectAsState()
     val prefs by play.prefs.state.collectAsState()
+    val danmakuConfigured = com.gugaart.ui.danmaku.rememberDanmakuConfigured()
+    val danmakuUnconfigured = (danmaku.state.phase == com.gugugaga.danmaku.match.DanmakuPhase.Unconfigured || !danmakuConfigured) &&
+        com.gugaart.ui.player.LocalDanmakuSlotOverride.current == null &&
+        com.gugaart.ui.player.DanmakuPickerBoard.stateOverride == null
     val render = remember(settings) { danmaku.prefsNow().render }
     val controls = remember { ControlsVisibility(scope, 3_000) }
     val window = g.deps.windowControls
@@ -249,8 +263,8 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val heat = com.gugaart.ui.player.LocalHeatPreview.current ?: remember(danmaku.heat) { heatDots(danmaku.heat?.model?.values, 140) }
     val introEnd = snap.markers.intro?.endMs?.toDouble()
     val creditsStart = snap.markers.credits?.startMs?.toDouble()
-    val position = clock.positionMs
-    val duration = clock.durationMs.takeIf { it > 0 } ?: snap.resolved?.durationMs?.toDouble() ?: 0.0
+    val position: () -> Double = { clock.value.positionMs }
+    val duration = clockDuration.value.takeIf { it > 0 } ?: snap.resolved?.durationMs?.toDouble() ?: 0.0
     // 网速：mpv 自己报的下载速度，一直在取，控件一出来就有数（NetSpeed.kt）
     val speed = com.gugaart.ui.player.rememberNetSpeed(play.controller)
     val show = controls.visible || panel != null
@@ -260,7 +274,8 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val episodesNow by rememberUpdatedState(com.gugaart.ui.player.LocalPlayerEpisodes.current)
     val prefsNow by rememberUpdatedState(prefs)
     val durationNow by rememberUpdatedState(duration)
-    val stepNow by rememberUpdatedState(maxOf(1.0, PlaybackSettings.of(appSettings).seekStepSec) * 1000)
+    val stepSec = maxOf(1, PlaybackSettings.of(appSettings).seekStepSec.toInt())
+    val stepNow by rememberUpdatedState(stepSec * 1_000.0)
     val openedNow by rememberUpdatedState(opened)
     val run: (PlayerKeyCommand) -> Unit = remember(controller) {
         { cmd ->
@@ -287,10 +302,29 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
             }
         }
     }
+    // 底栏的快捷键行：不常驻，按 ? 才出来、再按一次收起（审计 P2-4）
+    var keysHint by remember { mutableStateOf(false) }
+    // 字幕时间：[ 减、] 加（按住连续调，按满 2 秒每次 0.5 秒）；记着这一次按下的时刻
+    val timingDown = remember { arrayOfNulls<kotlin.time.TimeSource.Monotonic.ValueTimeMark>(1) }
     val handleKey: (KeyEvent) -> Boolean = remember(run) {
-        { e ->
+        keys@{ e ->
             val st = KeyState(UiMode.Desktop, controls.visible, snapNow.skip != null && snapNow.phase == PlayPhase.Ready, KeyTarget.Other)
+            if (e.type == KeyEventType.KeyUp && (e.key == Key.LeftBracket || e.key == Key.RightBracket)) timingDown[0] = null
+            if (e.type == KeyEventType.KeyDown && e.key == Key.Slash && openedNow == null && !e.isCtrlPressed && !e.isAltPressed && !e.isMetaPressed) {
+                keysHint = !keysHint
+                controls.bump()
+                return@keys true
+            }
             val like = if (e.type == KeyEventType.KeyDown && openedNow == null && !e.isCtrlPressed && !e.isAltPressed && !e.isMetaPressed) PlayerKeys.eventLike(e) else null
+            val timing = like?.let { com.gugaart.ui.player.subtitleTimingKey(it.key) }
+            if (timing != null) {
+                val at = timingDown[0] ?: kotlin.time.TimeSource.Monotonic.markNow().also { timingDown[0] = it }
+                if (snapNow.subtitleIndex != null) {
+                    play.stepSubtitleTiming(timing * com.gugaart.ui.player.subtitleTimingStep(at.elapsedNow().inWholeMilliseconds))
+                    controls.bump()
+                }
+                return@keys true
+            }
             val cmd = like?.let { PlayerKeys.resolve(it, st) }
             if (cmd != null) run(cmd)
             cmd != null && cmd != PlayerKeyCommand.Bump
@@ -346,9 +380,11 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val edgeW = Guga.rem(if (narrow) DesktopPlayerSpec.NARROW_EDGE else DesktopPlayerSpec.EDGE)
     val sideW = if (narrow) win.width / 2 else Guga.rem(if (win.width.value >= 2200f) DesktopPlayerSpec.SIDE_XL else DesktopPlayerSpec.SIDE)
     val spec = tween<Dp>(DesktopPlayerSpec.GIVE_WAY_MS)
-    val pt by animateDpAsState(if (show && insetMode) topH else 0.dp, spec, label = "pt")
-    val pb by animateDpAsState(if (show && insetMode) bottomH else 0.dp, spec, label = "pb")
-    val px by animateDpAsState(if (show && insetMode) edgeW else 0.dp, spec, label = "px")
+    // P1-4（1.5.1）：鼠标唤出控件时画面不缩——顶栏和控制坞压在画面上、边缘压暗（和手机一样）；只有打开页边面板时画面才让位（带过渡）
+    val giveWay = panel != null && insetMode
+    val pt by animateDpAsState(if (giveWay) topH else 0.dp, spec, label = "pt")
+    val pb by animateDpAsState(if (giveWay) bottomH else 0.dp, spec, label = "pb")
+    val px by animateDpAsState(if (giveWay) edgeW else 0.dp, spec, label = "px")
     val side by animateDpAsState(if (panel != null && insetMode) sideW else 0.dp, spec, label = "side")
     // M2-6：macOS 系统全屏时底色纯黑（和系统涂黑的刘海那一条接上）；全屏又有不可用的顶条（safeTop > 0）时，画面上下各让出这一条、居中，
     // 顶栏排在这一条之下。壳现在给的 safeTop 是 0（全屏窗口本来就在刘海之下，探针 S3），这段逻辑由离屏测试 player-full-notch 拿假宿主证明
@@ -357,6 +393,9 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val safe = if (macFull) deskHost.safeTop else 0.dp
     val bg = if (macFull) DesktopSpec.FULLSCREEN_BLACK else DesktopPlayerSpec.MARGIN
     val chromeBg = if (insetMode) bg else bg.copy(alpha = 0.9f)
+    // 不让位时顶栏 / 控制坞的底：画面边缘压暗（上深下透 / 下深上透），让位时是页边的实底
+    val topBg: Brush = if (giveWay) SolidColor(chromeBg) else Brush.verticalGradient(listOf(bg.copy(alpha = 0.78f), Color.Transparent))
+    val dockBg: Brush = if (giveWay) SolidColor(chromeBg) else Brush.verticalGradient(listOf(Color.Transparent, bg.copy(alpha = 0.6f), bg.copy(alpha = 0.9f)))
 
     Box(
         Modifier
@@ -411,10 +450,15 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                     drawRect(bg, Offset(l, t + h), Size(w, size.height - t - h))
                 }
             }
-            Box(Modifier.align(Alignment.TopCenter).padding(top = gapTop).size(fw, fh).clipToBounds().then(if (show) Modifier.border(1.dp, colors.ink.copy(alpha = 0.14f)) else Modifier).testTag("player-frame")) {
+            Box(Modifier.align(Alignment.TopCenter).padding(top = gapTop).size(fw, fh).clipToBounds().then(if (giveWay) Modifier.border(1.dp, colors.ink.copy(alpha = 0.14f)) else Modifier).testTag("player-frame")) {
                 Picture(play, snap, engine, slots, render.enabled, duration, showBuffer, controls = show, onClick = {
-                    controller.userGesture()
-                    controller.togglePlay()
+                    // 开着面板（字幕 / 音轨 / 弹幕…）时点画面 = 只收面板，和返回键一样；不暂停（1.5.1 subfix 问题 2）
+                    if (opened != null) {
+                        opened = null
+                    } else {
+                        controller.userGesture()
+                        controller.togglePlay()
+                    }
                     controls.bump()
                 }, onDoubleClick = { window?.let { it.setFullscreen(!it.fullscreen) } })
                 if (inPip && pip != null) DesktopPipNote(onBack = { pip.toggle() })
@@ -435,7 +479,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
             // macOS 非全屏：返回钮让位红绿灯（M2-2）；全屏时红绿灯被系统收走，让位归零
             val macInset = host.windowKeys == WindowKeysStyle.SystemLeft && window?.fullscreen != true
             // ---- 顶栏（页边里）：返回｜logo + 集名 + 规格｜她的一格（暂停才有）｜印章位 + 收藏｜置顶｜窗口键
-            Row(Modifier.align(Alignment.TopStart).padding(top = safe).fillMaxWidth().height(topH).background(chromeBg).padding(start = if (macInset) maxOf(Guga.rem(2f), host.leadingInsetPx.dp) else Guga.rem(2f)).testTag("player-top"), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.align(Alignment.TopStart).padding(top = safe).fillMaxWidth().height(topH).background(topBg).padding(start = if (macInset) maxOf(Guga.rem(2f), host.leadingInsetPx.dp) else Guga.rem(2f)).testTag("player-top"), verticalAlignment = Alignment.CenterVertically) {
                 EdgeButton(GuguIcon.ChevronLeft, "返回", play.exit, tag = "player-back")
                 Spacer(Modifier.width(Guga.rem(1.6f)))
                 val title: @Composable () -> Unit = {
@@ -493,51 +537,83 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                 }
             }
             // ---- 底部控制坞（页边里）：三段对称 + 时间轴
-            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(bottomH).background(chromeBg).padding(horizontal = edgeW).padding(bottom = Guga.rem(1f)).testTag("player-dock"), verticalArrangement = Arrangement.Bottom) {
-                Row(Modifier.fillMaxWidth().height(Guga.rem(5.2f)), verticalAlignment = Alignment.CenterVertically) {
-                    // 左：时间
-                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        BasicText(Rules.clock(position.toLong()), style = Guga.numeral(Guga.player.clock), maxLines = 1, modifier = Modifier.testTag("player-time"))
-                        BasicText(" / ${Rules.clock(duration.toLong())}", style = Guga.numeral(Guga.player.clock, colors.dim), maxLines = 1)
-                        // 网速（用户 2026-11-17：「调出菜单，能够自动显示当前的网络速度」）：和时间一样是一直在变的数，排在时间后面
-                        speed?.let { BasicText("网速 $it", Modifier.padding(start = Guga.rem(1.6f)).testTag("player-speed"), style = Guga.note(Guga.player.hint, colors.ink, letterSpacing = 0.04.em), maxLines = 1) }
-                        if (!narrow && win.width.value >= 1280f) {
-                            BasicText(
-                                "空格 暂停 · ← → ${(stepNow / 1000).toInt()} 秒 · ↑ ↓ 音量",
-                                Modifier.padding(start = Guga.rem(1.6f)).border(1.dp, colors.line).padding(horizontal = Guga.rem(0.8f), vertical = Guga.rem(0.2f)),
-                                style = Guga.note(Guga.player.hint, colors.dim, letterSpacing = 0.04.em),
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                    // 中：上一集 / 退 10 / 播放 / 进 10 / 下一集
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Guga.rem(0.6f))) {
-                        DockKey(GuguIcon.SkipBack, "上一集", enabled = snap.prev != null) { controller.playPrev(); controls.bump() }
-                        DockKey(GuguIcon.Replay10, "退 10 秒") { controller.seekBy(-10_000.0); controls.bump() }
-                        DockKey(if (snap.paused) GuguIcon.Play else GuguIcon.Pause, if (snap.paused) "播放" else "暂停", big = true, tag = "player-play") { controller.userGesture(); controller.togglePlay(); controls.bump() }
-                        DockKey(GuguIcon.Forward10, "进 10 秒") { controller.seekBy(10_000.0); controls.bump() }
-                        DockKey(GuguIcon.SkipForward, "下一集", enabled = snap.next != null) { controller.playNext(); controls.bump() }
-                    }
-                    // 右：功能词（窄窗收成图标）+ 全屏
-                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
-                        for (p in PlayerPanel.WORDS) {
-                            if (p == PlayerPanel.Eps && com.gugaart.ui.player.LocalPlayerEpisodes.current == null && snap.episodes.isEmpty()) continue
-                            val value = when (p) {
-                                PlayerPanel.Eps -> snap.item?.indexNumber?.let { n -> com.gugaart.ui.player.LocalPlayerEpisodes.current?.season?.number?.let { s -> "第 $s 季 · 第 $n 集" } ?: "第 $n 集" }
-                                PlayerPanel.Sub -> snap.subtitles.firstOrNull { it.selected || it.index == snap.subtitleIndex }?.label?.takeIf { snap.subtitleIndex != null } ?: "关"
-                                PlayerPanel.Audio -> snap.audio.firstOrNull { it.selected }?.label
-                                PlayerPanel.Speed -> rateLabel(snap.rate)
-                                PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"
-                                PlayerPanel.Core -> com.gugaart.ui.player.engineShort(snap.engineId)
-                                PlayerPanel.Dm -> if (render.enabled) "开" else "关"
-                                PlayerPanel.Next, PlayerPanel.Cast -> null
-                            }
-                            DockWord(p, value?.take(8), panel == p, compact = win.width.value < 1800f, iconOnly = win.width.value < 1280f, warn = p == PlayerPanel.Dm && slots.danmakuWarns?.invoke() == true) {
-                                opened = if (opened == p) null else p
-                                controls.bump()
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(bottomH).background(dockBg).padding(horizontal = edgeW).padding(bottom = Guga.rem(1f)).testTag("player-dock"), verticalArrangement = Arrangement.Bottom) {
+                Layout(
+                    modifier = Modifier.fillMaxWidth().height(Guga.rem(5.2f)),
+                    content = {
+                        // 左：时间
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            PlayerTimeText(position, Guga.numeral(Guga.player.clock))
+                            BasicText(" / ${Rules.clock(duration.toLong())}", style = Guga.numeral(Guga.player.clock, colors.dim), maxLines = 1)
+                            // 网速（用户 2026-11-17：「调出菜单，能够自动显示当前的网络速度」）：和时间一样是一直在变的数，排在时间后面
+                            com.gugaart.ui.player.NetSpeedText(speed, Modifier.padding(start = Guga.rem(1.6f)).testTag("player-speed"), Guga.note(Guga.player.hint, colors.ink, letterSpacing = 0.04.em))
+                            if (keysHint && !narrow && win.width.value >= 1280f) {
+                                BasicText(
+                                    "空格 暂停 · ← → ${(stepNow / 1000).toInt()} 秒 · ↑ ↓ 音量 · [ ] 字幕时间",
+                                    Modifier.padding(start = Guga.rem(1.6f)).testTag("player-keys-hint").border(1.dp, colors.line).padding(horizontal = Guga.rem(0.8f), vertical = Guga.rem(0.2f)),
+                                    style = Guga.note(Guga.player.hint, colors.dim, letterSpacing = 0.04.em),
+                                    maxLines = 1,
+                                )
                             }
                         }
-                        if (window != null) DockKey(if (window.fullscreen) GuguIcon.Minimize else GuguIcon.Maximize, if (window.fullscreen) "退出全屏" else "全屏", tag = "player-full") { window.setFullscreen(!window.fullscreen) }
+                        // 中：上一集 / 退步长 / 播放 / 进步长 / 下一集
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Guga.rem(0.6f))) {
+                            DockKey(GuguIcon.SkipBack, "上一集", enabled = snap.prev != null) { controller.playPrev(); controls.bump() }
+                            DockKey("退 $stepSec 秒", onClick = { controller.seekBy(-stepNow); controls.bump() }) { ink -> SeekStepIcon(false, stepSec, ink, Guga.rem(2f)) }
+                            DockKey(if (snap.paused) GuguIcon.Play else GuguIcon.Pause, if (snap.paused) "播放" else "暂停", big = true, tag = "player-play") { controller.userGesture(); controller.togglePlay(); controls.bump() }
+                            DockKey("进 $stepSec 秒", onClick = { controller.seekBy(stepNow); controls.bump() }) { ink -> SeekStepIcon(true, stepSec, ink, Guga.rem(2f)) }
+                            DockKey(GuguIcon.SkipForward, "下一集", enabled = snap.next != null) { controller.playNext(); controls.bump() }
+                        }
+                        // 右：功能词（窄窗收成图标）+ 全屏
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+                            for (p in PlayerPanel.WORDS) {
+                                if (p == PlayerPanel.Eps && com.gugaart.ui.player.LocalPlayerEpisodes.current == null && snap.episodes.isEmpty()) continue
+                                if (p == PlayerPanel.Core && !coreVisible) continue
+                                val value = when (p) {
+                                    PlayerPanel.Eps -> snap.item?.indexNumber?.let { n -> com.gugaart.ui.player.LocalPlayerEpisodes.current?.season?.number?.let { s -> "第 $s 季 · 第 $n 集" } ?: "第 $n 集" }
+                                    PlayerPanel.Sub -> com.gugaart.ui.player.subtitleWordValue(snap)
+                                    PlayerPanel.Audio -> com.gugaart.ui.player.audioWordValue(snap)
+                                    PlayerPanel.Speed -> rateLabel(snap.rate)
+                                    PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"
+                                    PlayerPanel.Core -> com.gugaart.ui.player.engineShort(snap.engineId)
+                                    PlayerPanel.Dm -> if (danmakuUnconfigured) "未配置" else if (render.enabled) "开" else "关"
+                                    PlayerPanel.Next, PlayerPanel.Cast -> null
+                                }
+                                DockWord(
+                                    p,
+                                    value?.take(8),
+                                    panel == p,
+                                    compact = win.width.value < 1800f,
+                                    iconOnly = win.width.value < 1280f,
+                                    warn = p == PlayerPanel.Dm && (danmakuUnconfigured || slots.danmakuWarns?.invoke() == true),
+                                    forceValue = p == PlayerPanel.Dm && danmakuUnconfigured,
+                                ) {
+                                    if (p == PlayerPanel.Dm && danmakuUnconfigured) {
+                                        g.nav.navigate(Route.Settings("danmaku"))
+                                    } else {
+                                        opened = if (opened == p) null else p
+                                        controls.bump()
+                                    }
+                                }
+                            }
+                            if (window != null) DockKey(if (window.fullscreen) GuguIcon.Minimize else GuguIcon.Maximize, if (window.fullscreen) "退出全屏" else "全屏", tag = "player-full") { window.setFullscreen(!window.fullscreen) }
+                        }
+                    },
+                ) { measurables, constraints ->
+                    val w = constraints.maxWidth
+                    val h = constraints.maxHeight
+                    val loose = constraints.copy(minWidth = 0, minHeight = 0)
+                    val mid = measurables[1].measure(loose)
+                    val right = measurables[2].measure(loose.copy(maxWidth = (w - mid.width).coerceAtLeast(0)))
+                    val left = measurables[0].measure(loose.copy(maxWidth = (w - mid.width - right.width).coerceAtLeast(0)))
+                    val idealMidX = (w - mid.width) / 2
+                    val minMidX = left.width
+                    val maxMidX = (w - right.width - mid.width).coerceAtLeast(minMidX)
+                    val midX = idealMidX.coerceIn(minMidX, maxMidX)
+                    layout(w, h) {
+                        left.placeRelative(0, (h - left.height) / 2)
+                        mid.placeRelative(midX, (h - mid.height) / 2)
+                        right.placeRelative(w - right.width, (h - right.height) / 2)
                     }
                 }
                 DesktopTimeline(
@@ -555,7 +631,9 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
             Column(
                 Modifier.align(Alignment.TopEnd).padding(top = if (insetMode) pt else topH, bottom = if (insetMode) pb else bottomH).width(sideW).fillMaxHeight().background(chromeBg)
                     .drawBehind { drawLine(colors.line, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx()) }
-                    .padding(horizontal = Guga.rem(if (narrow) 1.4f else 2.4f)).testTag("player-side"),
+                    .padding(horizontal = Guga.rem(if (narrow) 1.4f else 2.4f))
+                    // 面板空白处的点不漏到下面的画面（1.5.1 subfix：不吃事件，只挡住下面的兄弟，components/TouchGuard.kt）
+                    .holdTouches().testTag("player-side"),
             ) {
                 Box(Modifier.weight(1f)) {
                     Column {
@@ -565,14 +643,11 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                         })
                     }
                 }
+                // 片尾的「下一集」面板自己有「取消」（P1-3），底下不再重复
                 val closePress = rememberPressState()
-                BasicText(
-                    if (panel == PlayerPanel.Next) "留在片尾  →" else "收起，回到全幅  →",
+                if (panel != PlayerPanel.Next) BasicText(
+                    "收起  →",
                     Modifier.padding(vertical = Guga.rem(1f)).deskFocusRing(closePress).pressable(closePress, label = "收起面板") {
-                        if (panel == PlayerPanel.Next) {
-                            dismissedNext = true
-                            controller.cancelAutoNext()
-                        }
                         opened = null
                     }.testTag("player-side-close"),
                     style = Guga.song(Guga.player.body, FontWeight.Bold, colors.dim),
@@ -676,19 +751,27 @@ private fun EdgeFrame(label: String, onClick: () -> Unit, tag: String, content: 
 /** 控制坞中段的键（图标；悬停 = 反白）。[enabled] = false：没有上一集 / 下一集时变淡、点不动（位置留着，三段才对称）。 */
 @Composable
 private fun DockKey(icon: GuguIcon, label: String, big: Boolean = false, enabled: Boolean = true, tag: String = "player-key", onClick: () -> Unit) {
+    DockKey(label, big, enabled, tag, onClick) { ink ->
+        Icon(icon, ink, Guga.rem(if (big) 2.8f else 2f), filled = icon == GuguIcon.Play || icon == GuguIcon.Pause)
+    }
+}
+
+@Composable
+private fun DockKey(label: String, big: Boolean = false, enabled: Boolean = true, tag: String = "player-key", onClick: () -> Unit, iconContent: @Composable (Color) -> Unit) {
     val colors = Guga.colors
     val press = rememberPressState()
     val hover = rememberHover()
     val on = hover.value && enabled
+    val ink = if (on) colors.onInk else if (enabled) colors.ink else colors.faint
     Box(
         Modifier.height(Guga.rem(4f)).width(Guga.rem(if (big) 5.2f else 4.4f)).hover(hover).pressGraphics(press).then(if (on) Modifier.background(colors.ink) else Modifier).deskFocusRing(press).pressable(press, enabled = enabled, label = label, onClick = onClick).testTag(tag),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, if (on) colors.onInk else if (enabled) colors.ink else colors.faint, Guga.rem(if (big) 2.8f else 2f), filled = icon == GuguIcon.Play || icon == GuguIcon.Pause) }
+    ) { iconContent(ink) }
 }
 
 /** 一个功能词：图标 + 词 + 斜体的当前值；打开着的 / 悬停 = 反白。[compact] 不写当前值；[iconOnly]（很窄）只剩图标。 */
 @Composable
-private fun DockWord(panel: PlayerPanel, value: String?, active: Boolean, compact: Boolean, iconOnly: Boolean, warn: Boolean, onClick: () -> Unit) {
+private fun DockWord(panel: PlayerPanel, value: String?, active: Boolean, compact: Boolean, iconOnly: Boolean, warn: Boolean, forceValue: Boolean = false, onClick: () -> Unit) {
     val colors = Guga.colors
     val press = rememberPressState()
     val hover = rememberHover()
@@ -696,28 +779,34 @@ private fun DockWord(panel: PlayerPanel, value: String?, active: Boolean, compac
     val ink = if (on) colors.onInk else colors.ink
     Row(
         Modifier.height(Guga.rem(4f)).hover(hover).pressGraphics(press).then(if (on) Modifier.background(colors.ink) else Modifier)
-            .deskFocusRing(press).pressable(press, label = panel.word + (value?.let { " $it" } ?: ""), onClick = onClick).padding(horizontal = Guga.rem(if (iconOnly) 0.8f else if (compact) 0.7f else 1.2f)).testTag(if (active) "word-on" else "word"),
+            .deskFocusRing(press).pressable(press, label = panel.word + (value?.let { " $it" } ?: ""), onClick = onClick).padding(horizontal = Guga.rem(if (iconOnly) 0.55f else if (compact) 0.55f else 1.2f)).testTag(if (active) "word-on" else "word"),
         verticalAlignment = Alignment.CenterVertically,
         // 七个功能词（多了「内核」）：窄一点的窗口里字和图标挨近些，免得最后一个被挤掉
-        horizontalArrangement = Arrangement.spacedBy(Guga.rem(if (compact) 0.45f else 0.7f)),
+        horizontalArrangement = Arrangement.spacedBy(Guga.rem(if (compact) 0.35f else 0.7f)),
     ) {
         Icon(WORD_ICONS.getValue(panel), ink, Guga.rem(2f))
         if (!iconOnly) BasicText(panel.word, style = Guga.song(Guga.player.dock, FontWeight.SemiBold, ink), maxLines = 1)
-        if (!compact && value != null) BasicText(value, style = Guga.note(Guga.player.dockValue, if (on) colors.onInk else colors.dim), maxLines = 1)
+        if (!iconOnly && (!compact || forceValue) && value != null) BasicText(value, style = Guga.note(Guga.player.dockValue, if (on) colors.onInk else colors.dim), maxLines = 1)
         if (warn) Box(Modifier.size(Guga.rem(0.5f)).background(colors.seal, CircleShape))
     }
 }
 
+/** 控制坞左端的时间（单独一格：时钟每走一下只重组这一个字串，1.5.1 性能）。 */
+@Composable
+private fun PlayerTimeText(position: () -> Double, style: androidx.compose.ui.text.TextStyle) {
+    BasicText(Rules.clock(position().toLong()), style = style, maxLines = 1, modifier = Modifier.testTag("player-time"))
+}
+
 /** 顶栏里她的一格：**播放时是空的**（格子留着，版面不跳）；暂停才坐进来，旁边写停在哪。她关掉时只剩那行字。 */
 @Composable
-private fun DesktopPauseSeat(paused: Boolean, positionMs: Double) {
+private fun DesktopPauseSeat(paused: Boolean, positionMs: () -> Double) {
     val colors = Guga.colors
     Row(Modifier.height(Guga.rem(4.4f)).widthIn(min = Guga.rem(17f)).testTag(if (paused) "pause-seat" else "pause-seat-empty"), verticalAlignment = Alignment.CenterVertically) {
         if (!paused) return@Row
         if (LocalGugaPrefs.current.showMascot) Byline(Guga.rem(4.4f), live = false)
         Column(Modifier.padding(start = Guga.rem(1f))) {
             BasicText("PAUSED · 暂停", style = Guga.note(rsp(1.05f), colors.spot, letterSpacing = 0.24.em), maxLines = 1)
-            BasicText("停在 ${Rules.clock(positionMs.toLong())}", style = Guga.note(rsp(1.25f), colors.dim), maxLines = 1)
+            BasicText("停在 ${Rules.clock(positionMs().toLong())}", style = Guga.note(rsp(1.25f), colors.dim), maxLines = 1)
         }
     }
 }
@@ -729,7 +818,7 @@ private fun DesktopPauseSeat(paused: Boolean, positionMs: Double) {
  */
 @Composable
 private fun DesktopTimeline(
-    positionMs: Double,
+    positionMs: () -> Double,
     durationMs: Double,
     heat: FloatArray,
     introEndMs: Double?,
@@ -743,7 +832,7 @@ private fun DesktopTimeline(
     val colors = Guga.colors
     var drag by remember { mutableStateOf<Double?>(null) }
     var hoverX by remember { mutableStateOf(sampleHover) }
-    val shown = drag ?: positionMs
+    val shown = drag ?: positionMs()
     val dur = rememberUpdatedState(durationMs)
     BoxWithConstraints(Modifier.fillMaxWidth().height(Guga.rem(4.4f)).testTag("player-timeline")) {
         val width = maxWidth
@@ -814,7 +903,7 @@ private fun DesktopTimeline(
                 horizontalArrangement = Arrangement.spacedBy(Guga.rem(1f)),
             ) {
                 BasicText(Rules.clock(ms.toLong()), style = Guga.numeral(rsp(1.7f)), maxLines = 1)
-                BasicText(chapterAt(ms, introEndMs, creditsStartMs) ?: "点一下跳到这里", style = Guga.note(rsp(1.1f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                chapterAt(ms, introEndMs, creditsStartMs)?.let { BasicText(it, style = Guga.note(rsp(1.1f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
         }
     }
@@ -835,12 +924,11 @@ private fun DesktopPlayerError(play: PlaySession, snap: PlayerSnapshot) {
     Box(Modifier.fillMaxSize().background(Color(0xFF14110D)).testTag("player-error")) {
         Row(Modifier.align(Alignment.Center).widthIn(max = Guga.rem(96f)).padding(horizontal = Guga.rem(6f)), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                BasicText("PLAYBACK ERROR · 放映中断", style = Guga.song(rsp(1.2f), FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
-                BasicText(if (noEngine) PlayController.NO_ENGINE_MESSAGE else (view?.title ?: "这一集放不出来"), Modifier.padding(top = Guga.rem(1f), bottom = Guga.rem(1.6f)), style = Guga.song(rsp(4f), FontWeight.Black, lineHeight = rsp(5.2f), letterSpacing = 0.1.em), maxLines = 2)
-                if (!noEngine) BasicText(view?.hint ?: "换个版本，或者让服务器转一下，通常就好了。", style = Guga.song(rsp(1.5f), color = colors.dim, lineHeight = rsp(2.8f)), maxLines = 4)
+                // P2-1：三端统一——标题「播放失败」，下面一行原因，按钮「重试」「返回」
+                BasicText(com.gugaart.ui.player.PLAY_ERROR_TITLE, Modifier.padding(bottom = Guga.rem(1.6f)), style = Guga.song(rsp(4f), FontWeight.Black, lineHeight = rsp(5.2f), letterSpacing = 0.1.em), maxLines = 1)
+                BasicText(com.gugaart.ui.player.playErrorReason(snap), Modifier.testTag("player-error-reason"), style = Guga.song(rsp(1.5f), color = colors.dim, lineHeight = rsp(2.8f)), maxLines = 2)
                 Row(Modifier.padding(top = Guga.rem(2.8f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.4f)), verticalAlignment = Alignment.CenterVertically) {
-                    val actions = view?.actions ?: listOf(ErrorActionId.Retry, ErrorActionId.Exit)
-                    for ((i, a) in actions.filter { it != ErrorActionId.UseWeb }.take(4).withIndex()) {
+                    for ((i, a) in com.gugaart.ui.player.playErrorActions(snap).withIndex()) {
                         val act: () -> Unit = {
                             when (a) {
                                 ErrorActionId.Retry -> controller.retry()
@@ -852,8 +940,7 @@ private fun DesktopPlayerError(play: PlaySession, snap: PlayerSnapshot) {
                                 ErrorActionId.UseWeb -> {}
                             }
                         }
-                        val label = if (a == ErrorActionId.Retry) "再试一次" else a.label
-                        DButton(label, act, icon = if (i == 0) GuguIcon.RotateCcw else null, small = true, line = i > 0, tag = "player-error-action")
+                        DButton(a.label, act, icon = if (i == 0) GuguIcon.RotateCcw else null, small = true, line = i > 0, tag = "player-error-action")
                     }
                     g.deps.copyText?.let { copy -> snap.error?.let { raw -> TextLink("复制错误信息", { copy(raw) }, color = colors.dim) } }
                 }

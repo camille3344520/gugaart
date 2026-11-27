@@ -118,8 +118,8 @@ fun TraktCalendarSection(modifier: Modifier = Modifier, titleSize: TextUnit = Gu
     Column(modifier.fillMaxWidth().testTag("trakt-calendar")) {
         SectionHeader("追更日历", "TRAKT CALENDAR", trailing = "接下来两周")
         when {
-            days == null -> BasicText("正在读 Trakt…", Modifier.padding(vertical = 18.dp), style = Guga.note(Guga.type.caption, colors.faint), maxLines = 1)
-            days.isEmpty() -> BasicText("接下来两周没有你追的剧要播。在剧集详情页点「追更」，新的一集就会排在这里。", Modifier.padding(vertical = 18.dp), style = Guga.note(Guga.type.caption, colors.dim), maxLines = 3)
+            days == null -> BasicText("加载中…", Modifier.padding(vertical = 18.dp), style = Guga.note(Guga.type.caption, colors.faint), maxLines = 1)
+            days.isEmpty() -> BasicText("两周内没有更新", Modifier.padding(vertical = 18.dp), style = Guga.note(Guga.type.caption, colors.dim), maxLines = 3)
             else -> for (day in days) {
                 BasicText(day.label, Modifier.padding(top = 18.dp, bottom = 6.dp), style = Guga.song(Guga.type.caption * 1.1f, FontWeight.Bold, if (day.label == "今天") colors.spot else colors.ink), maxLines = 1)
                 for (e in day.entries) {

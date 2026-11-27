@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
@@ -108,7 +109,8 @@ fun PosterCard(
                 measurer.measure(title.name, titleStyle, maxLines = 2, constraints = Constraints(maxWidth = widthPx)).lineCount <= 1
             }
             BasicText(
-                highlighted(title.name, highlight, colors.spot),
+                // 没有要高亮的字就不读专色（1.5.1 性能：读了 = 专色渐变的每一帧这张卡都重组；首页翻一期，一排排海报卡全跟着）
+                if (highlight == null) AnnotatedString(title.name) else highlighted(title.name, highlight, colors.spot),
                 Modifier.padding(top = 9.dp),
                 style = titleStyle,
                 maxLines = 2,
@@ -194,6 +196,7 @@ fun TocRow(number: Int, title: String, subtitle: String, thumbUrl: String?, thum
  * - 已看：校对勾 + 集号朱红删除线；
  * - 没有分集图的季：缩略图位换成斜纹空版。
  * 点整行 = 播放 / 进这一集；点校对格 = 标记已看（[onTick]）。
+ * - [unaired]：未播出（op1137b）：整行置灰、点了没反应，行尾不是校对格而是「未播出」小签。
  */
 @Composable
 fun EpisodeRow(
@@ -207,12 +210,13 @@ fun EpisodeRow(
     onClick: () -> Unit,
     onTick: () -> Unit,
     modifier: Modifier = Modifier,
+    unaired: Boolean = false,
 ) {
     val colors = Guga.colors
     val type = Guga.type
     val press = rememberPressState()
-    Row(modifier.fillMaxWidth().heightIn(min = 86.dp).testTag(if (current) "episode-row-current" else "episode-row"), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).pressGraphics(press).pressable(press, label = "第 $number 集 $name", onClick = onClick).padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().heightIn(min = 86.dp).alpha(if (unaired) com.gugaart.ui.theme.GugaColors.UNAVAILABLE_ALPHA else 1f).testTag(if (unaired) "episode-row-unaired" else if (current) "episode-row-current" else "episode-row"), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f).pressGraphics(press).pressable(press, enabled = !unaired, label = "第 $number 集 $name", onClick = onClick).padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             // 编号栏固定 40 dp：1089 用最小一档字号也放得下
             Box(Modifier.width(46.dp)) {
                 BasicText(
@@ -231,9 +235,13 @@ fun EpisodeRow(
             }
             Thumb(thumbUrl, Rules.episodeNo(number), 104.dp, progress = if (current) progress else 0f)
         }
-        val tick = rememberPressState()
-        Box(Modifier.width(38.dp).height(48.dp).pressable(tick, label = if (played) "改成未看" else "标记已看", onClick = onTick), contentAlignment = Alignment.CenterEnd) {
-            ProofTick(played)
+        if (unaired) {
+            OutlineTag("未播出", type.fine, 1.dp, colors.dim, Modifier.padding(start = 6.dp))
+        } else {
+            val tick = rememberPressState()
+            Box(Modifier.width(38.dp).height(48.dp).pressable(tick, label = if (played) "改成未看" else "标记已看", onClick = onTick), contentAlignment = Alignment.CenterEnd) {
+                ProofTick(played)
+            }
         }
     }
 }

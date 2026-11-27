@@ -61,6 +61,12 @@ data class SubtitleTarget(
 ) {
     override fun toString(): String = "SubtitleTarget(item=$itemId, source=$mediaSourceId, read=$read)"
 
+    /**
+     * 射手的 `pathinfo`：射手要的是文件名（和哈希一起配），所以默认词只是文件名里的编号时照旧传文件名；
+     * 别的情况和以前一样传 [nameQuery]（无意义的 CDN 名换成元数据查询，§3）。
+     */
+    val shooterName: String get() = if (nameQuery == codeOf(fileName)) fileName else nameQuery
+
     companion object {
         private val VIDEO_EXT = Regex("""\.(mkv|mp4|m4v|avi|ts|m2ts|mov|wmv|flv|webm|rmvb|iso|mpg|mpeg|vob|strm)$""", RegexOption.IGNORE_CASE)
 
@@ -124,7 +130,11 @@ data class SubtitleTarget(
             "${item.seriesName} S${(item.parentIndexNumber ?: 1).toString().padStart(2, '0')}E${(item.indexNumber ?: 1).toString().padStart(2, '0')}"
         } else listOfNotNull(item.name.takeIf { it.isNotBlank() }, item.productionYear?.takeIf { it > 0 }?.toString()).joinToString(" ")
 
-        /** 备选查询：中文剧集再试「剧名 第N集」；电影带年份时再试纯片名。null = 没有备选。纯函数，有单测。 */
+        /**
+         * 备选查询：中文剧集再试「剧名 第N集」；电影带年份时再试纯片名。null = 没有备选。纯函数，有单测。
+         * 剧集的备选故意不带季：迅雷认「S06E03」和「第六季 第3集」是同一个意思（2026-11-26 实测），这一季它没收录时两种写法都只回整部剧的字幕；
+         * 「剧名 第N集」回的是各季的第 N 集（头文字D 第3集 里有 Final Stage - 03），季对不上的由智能匹配扣掉。
+         */
         fun altNameQueryOf(item: BaseItemDto): String? {
             val series = item.seriesName
             return when {
@@ -134,9 +144,27 @@ data class SubtitleTarget(
             }
         }
 
+        /**
+         * 按名字搜的默认词：文件名像个视频文件、有意义、（单集）还写明了是哪一集就用文件名，否则 [metadataNameQuery]（「剧名 S06E03」/「片名 年份」）。
+         * 单集的文件名没写这一集（只有剧名、只有集号没有季号的第 2 季起）= 拿去搜只会搜到整部剧（2026-11-26 主理人：头文字D 第六季第三集默认搜「头文字D」）。
+         * 纯函数，有单测。
+         */
         fun nameQueryOf(item: BaseItemDto, fileName: String?): String {
-            if (fileName != null && VIDEO_EXT.containsMatchIn(fileName) && fileNameLooksMeaningful(fileName, item)) return fileName
+            // 文件名里有编号（abp-811-ltx.mp4）：只搜编号（ABP-811），不带发布组、扩展名、画质、编码（1.5.1 subfix）
+            fileName?.let(::codeOf)?.let { return it }
+            if (fileName != null && VIDEO_EXT.containsMatchIn(fileName) && fileNameLooksMeaningful(fileName, item) && fileNameNamesEpisode(fileName, item)) return fileName
             return metadataNameQuery(item)
+        }
+
+        /**
+         * 单集：文件名里写的季集是不是这一集（集号对上；季号对上，或者没写季号而这是第 1 季）。不是单集 = true。纯函数，有单测。
+         */
+        fun fileNameNamesEpisode(fileName: String, item: BaseItemDto): Boolean {
+            if (item.type != "Episode") return true
+            val parts = parseName(fileName)
+            val episode = item.indexNumber ?: return true
+            val season = item.parentIndexNumber ?: 1
+            return parts.episode == episode && (parts.season == season || (parts.season == null && season <= 1))
         }
 
         /**
@@ -206,9 +234,109 @@ sealed interface ApplyState {
     data class Working(val key: String, val step: String) : ApplyState
     data class Done(val key: String, val note: String) : ApplyState
 
-    /** [canLocal]：服务器那一路失败了，可以改成「仅本次播放」再试（只有能拿到字幕文件的才行——服务器源拿不到，所以总是 false）。 */
-    data class Failed(val key: String, val why: String) : ApplyState
+    /**
+     * [upload]：「保存到服务器」（迅雷 / 射手的结果传进 Subtitle Manager 插件）失败的是哪一种——决定那一行还剩哪几个按钮（[hitActionsOf]）；
+     * null = 不是上传失败（下载失败、服务器源失败…）。
+     */
+    data class Failed(val key: String, val why: String, val upload: UploadFail? = null) : ApplyState
 }
+
+/** 「保存到服务器」失败的三种（docs/subtitle-search.md §4.4）。 */
+enum class UploadFail {
+    /** 同名字幕已经在服务器上（插件不覆盖）：只剩「仅本次播放」。 */
+    Exists,
+
+    /** 401 / 403：只剩「仅本次播放」。 */
+    Denied,
+
+    /** 别的：「重试」+「仅本次播放」。 */
+    Other,
+}
+
+/** 一条结果上的按钮（顺序 = 显示顺序）。 */
+enum class HitAction(val label: String) {
+    /** 服务器源：让 Emby 下载、存进去（§4.2）。 */
+    ServerSave("保存到服务器"),
+
+    /** 迅雷 / 射手：下载后传给 Subtitle Manager 插件（§4.4）。 */
+    Upload("保存到服务器"),
+    Retry("重试"),
+
+    /** 播放器里：仅本次播放（§4.3）。 */
+    Local("仅本次播放"),
+
+    /** 播放器外：开播这一集再加载（§4.3 第 6 条）。 */
+    PlayLoad("播放并加载"),
+}
+
+/**
+ * 一条结果有哪些按钮（纯函数，有单测）。服务器源只有「保存到服务器」；迅雷 / 射手：服务器装了 Subtitle Manager、账号是管理员（[canUpload]）
+ * 时「保存到服务器」在前、「仅本次播放」在后；上传失败了按 [ApplyState.Failed.upload] 换（已有 / 没权限 → 只剩本次；别的 → 「重试」在前）。
+ */
+fun hitActionsOf(hit: SubtitleHit, inPlayer: Boolean, canUpload: Boolean, apply: ApplyState?): List<HitAction> {
+    if (hit.toEmby) return listOf(HitAction.ServerSave)
+    val local = if (inPlayer) HitAction.Local else HitAction.PlayLoad
+    if (!canUpload) return listOf(local)
+    val failed = (apply as? ApplyState.Failed)?.takeIf { it.key == hit.key }?.upload
+    return when (failed) {
+        UploadFail.Exists, UploadFail.Denied -> listOf(local)
+        UploadFail.Other -> listOf(HitAction.Retry, local)
+        null -> listOf(HitAction.Upload, local)
+    }
+}
+
+/**
+ * 社区插件 Subtitle Manager（Kectai/Emby.SubtitleManager 1.3.6，MIT）：`POST /SubtitleManager/Upload?ItemId=&Language=&Format=&IsForced=`，
+ * 请求体就是字幕文件；只有管理员能用（不是 = 403 / 401）；别的失败都是 200 + `{Success:false, Message}`；同名字幕不覆盖；
+ * 存在 Emby 自己的元数据目录里（strm 也行），存完刷新这一条的元数据。认插件看 `GET /Plugins` 的 Id（名字会本地化）。
+ */
+object SubtitleManagerPlugin {
+    /** Plugin.cs 的 Id（`944151CB-7308-487B-8023-3E5C352BC545`），比的时候去掉横杠、小写。 */
+    const val ID = "944151cb7308487b80233e5c352bc545"
+    const val UPLOAD = "/SubtitleManager/Upload"
+
+    /** 插件的名字（默认 + 本地化的几种）：Id 对不上时的退路。 */
+    val NAMES = setOf("subtitle manager", "字幕管理器", "字幕マネージャー", "자막 관리자")
+}
+
+/** 服务器装了 Subtitle Manager 插件、而且这个账号是管理员：迅雷 / 射手的结果能「保存到服务器」。纯函数，有单测。 */
+fun subtitleUploadAvailable(plugins: kotlinx.serialization.json.JsonElement?, policy: JsonObject?): Boolean {
+    val admin = (policy?.get("IsAdministrator") as? JsonPrimitive)?.booleanOrNull == true
+    if (!admin) return false
+    val list = plugins as? kotlinx.serialization.json.JsonArray ?: return false
+    return list.any { p ->
+        val o = p as? JsonObject ?: return@any false
+        val id = (o["Id"] as? JsonPrimitive)?.content?.replace("-", "")?.lowercase()
+        val name = (o["Name"] as? JsonPrimitive)?.content?.trim()?.lowercase()
+        id == SubtitleManagerPlugin.ID || name in SubtitleManagerPlugin.NAMES
+    }
+}
+
+/** 插件回的那一句：[UploadAnswer.Ok] / [UploadAnswer.Exists] / [UploadAnswer.Failed]。纯函数，有单测。 */
+sealed interface UploadAnswer {
+    data object Ok : UploadAnswer
+    data object Exists : UploadAnswer
+    data class Failed(val message: String) : UploadAnswer
+}
+
+fun uploadAnswerOf(body: String): UploadAnswer {
+    if (body.isBlank()) return UploadAnswer.Ok
+    val o = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return UploadAnswer.Failed(body.take(120))
+    if ((o["Success"] as? JsonPrimitive)?.booleanOrNull == true) return UploadAnswer.Ok
+    val msg = (o["Message"] as? JsonPrimitive)?.content.orEmpty()
+    return if ("already exists" in msg.lowercase()) UploadAnswer.Exists else UploadAnswer.Failed(msg)
+}
+
+/** 传给插件的语言（Emby 认的三字码）。 */
+fun uploadLanguageOf(lang: SubLang): String = when (lang) {
+    SubLang.English -> "eng"
+    SubLang.Japanese -> "jpn"
+    SubLang.Korean -> "kor"
+    else -> "chi"
+}
+
+/** 上传失败（[UploadFail] + 给人看的一句）。 */
+class SubtitleUploadException(val fail: UploadFail, message: String) : Exception(message)
 
 /** 一路服务器源能不能用（看用户策略）。纯函数，有单测。null = 问不到（照样试，服务器自己会拒）。 */
 fun serverDownloadAllowed(policy: JsonObject?): Boolean? {
@@ -261,6 +389,11 @@ class SubtitleSearchSession(
     var apply: ApplyState? by mutableStateOf(null)
         internal set
 
+    /** 迅雷 / 射手的结果能「保存到服务器」（服务器装了 Subtitle Manager 插件、账号是管理员；[subtitleUploadAvailable]）。 */
+    var canUpload: Boolean by mutableStateOf(false)
+        internal set // 测试（离屏）直接定
+    private var uploadChecked = false
+
     private var serverHits: List<SubtitleHit> = emptyList()
     private var thunderHits: List<SubtitleHit> = emptyList()
     private var shooterHits: List<SubtitleHit> = emptyList()
@@ -296,6 +429,7 @@ class SubtitleSearchSession(
             shooter = SourceState.Busy
         }
         val s = async { searchServer() }
+        val up = async { checkUpload() }
         if (online) {
             val prints = if (print is PrintState.Got) (print as PrintState.Got).prints else fingerprint()
             val t = async { searchThunder(prints?.thunderCid) }
@@ -303,10 +437,82 @@ class SubtitleSearchSession(
             t.await()
             sh.await()
         } else {
-            thunder = SourceState.Off("设置里关了在线字幕源")
-            shooter = SourceState.Off("设置里关了在线字幕源")
+            thunder = SourceState.Off("在线字幕已关")
+            shooter = SourceState.Off("在线字幕已关")
         }
         s.await()
+        up.await()
+    }
+
+    /** 问一次服务器：装没装 Subtitle Manager 插件、这个账号是不是管理员（只读 GET）。问不到 = 不出「保存到服务器」。 */
+    private suspend fun checkUpload() {
+        if (uploadChecked || !online) return
+        val c = client ?: return
+        val uid = c.userId ?: return
+        uploadChecked = true
+        canUpload = try {
+            val policy = (c.getJson("/Users/${encodeURIComponent(uid)}") as? JsonObject)?.get("Policy") as? JsonObject
+            if ((policy?.get("IsAdministrator") as? JsonPrimitive)?.booleanOrNull != true) false
+            else subtitleUploadAvailable(c.getJson("/Plugins"), policy)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 迅雷 / 射手的一条「保存到服务器」（docs/subtitle-search.md §4.4）：下载、校验、转 UTF-8（和仅本次同一套 [fetchText]）→
+     * 传给 Subtitle Manager 插件 → 等新的外挂字幕出现（同 [downloadToEmby]）。返回它的 index（等不到 = null，但服务器已经收下了）。
+     * 失败抛 [SubtitleUploadException]（已有 / 没权限 / 别的）或 [SubtitleFetchException]（下载失败）。
+     */
+    suspend fun uploadToServer(hit: SubtitleHit, pollMs: Long = 1_500, attempts: Int = 10): Int? {
+        val c = client ?: throw IllegalStateException("没有登录")
+        val (text, format) = fetchText(hit)
+        apply = ApplyState.Working(hit.key, "保存到服务器…")
+        val answer = try {
+            val res = c.http.request(
+                "POST",
+                SubtitleManagerPlugin.UPLOAD,
+                RequestOptions(
+                    query = mapOf("ItemId" to target.itemId, "Language" to uploadLanguageOf(hit.lang), "Format" to format.ext, "IsForced" to "false"),
+                    textBody = text,
+                    headers = mapOf("Content-Type" to "text/plain; charset=utf-8"),
+                    timeoutMs = 60_000,
+                    retry = RetryMode.Never,
+                ),
+            )
+            uploadAnswerOf(res.text)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: EmbyException) {
+            throw if (e.status == 401 || e.status == 403) SubtitleUploadException(UploadFail.Denied, "没有权限") else SubtitleUploadException(UploadFail.Other, "保存失败")
+        }
+        when (answer) {
+            UploadAnswer.Ok -> {}
+            UploadAnswer.Exists -> throw SubtitleUploadException(UploadFail.Exists, "服务器上已有这条字幕")
+            is UploadAnswer.Failed -> throw SubtitleUploadException(UploadFail.Other, "保存失败")
+        }
+        apply = ApplyState.Working(hit.key, "等服务器刷新…")
+        return awaitNewExternal(c, pollMs, attempts)
+    }
+
+    /** 每 [pollMs] 问一次这一条，最多 [attempts] 次：这个片源多出来的外挂字幕的 index。 */
+    private suspend fun awaitNewExternal(c: EmbyClient, pollMs: Long, attempts: Int): Int? {
+        val ms = target.mediaSourceId
+        repeat(attempts) { n ->
+            if (n > 0) delay(pollMs)
+            val after = try {
+                val item = c.getItem(target.itemId)
+                SubtitleTarget.externalSubtitles(item.mediaSources.firstOrNull { it.id == ms } ?: item.mediaSources.firstOrNull())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (after != null) newExternalIndex(target.externalBefore, after)?.let { return it }
+        }
+        return null
     }
 
     /** 只按名字重搜迅雷（「换个名字搜」）。 */
@@ -319,12 +525,12 @@ class SubtitleSearchSession(
     private suspend fun fingerprint(): FilePrints? {
         val plan = target.read
         if (plan == null) {
-            print = PrintState.Missing("没取到文件指纹，只按文件名")
+            print = PrintState.Missing("没有文件指纹，只按文件名")
             return null
         }
         print = PrintState.Busy
         val got = withTimeoutOrNull(20_000) { Fingerprint.compute(target.size) { span -> readSpan(plan, span) } }
-        print = if (got != null) PrintState.Got(got) else PrintState.Missing("没取到文件指纹，只按文件名")
+        print = if (got != null) PrintState.Got(got) else PrintState.Missing("没有文件指纹，只按文件名")
         return got
     }
 
@@ -361,7 +567,7 @@ class SubtitleSearchSession(
             null
         }
         if (serverAllowed == false) {
-            server = SourceState.Off("这个账号不能下载字幕（管理员可在 Emby 的 用户 › 权限 里打开「允许下载字幕」）")
+            server = SourceState.Off("账号没有「允许下载字幕」权限")
             return
         }
         server = try {
@@ -377,12 +583,12 @@ class SubtitleSearchSession(
             throw e
         } catch (e: EmbyException) {
             when (e.status) {
-                401, 403 -> SourceState.Off("服务器不让这个账号搜字幕")
+                401, 403 -> SourceState.Off("账号没有搜索字幕的权限")
                 404 -> SourceState.Off("这台服务器不支持字幕搜索")
-                else -> SourceState.Failed("服务器没回（${e.status ?: "网络"}）")
+                else -> SourceState.Failed("服务器无应答（${e.status ?: "网络"}）")
             }
         } catch (_: Exception) {
-            SourceState.Failed("服务器没回")
+            SourceState.Failed("服务器无应答")
         }
     }
 
@@ -397,13 +603,16 @@ class SubtitleSearchSession(
         thunder = SourceState.Busy
         var r = net.getText(SubtitleProviders.thunderUrl(q))
         var hits = if (r.ok) SubtitleProviders.parseThunder(r.text, cid) else emptyList()
-        // 元数据查询没搜到 → 再试备选（中文剧集「剧名 第N集」/ 电影纯片名）；手动改过查询词就不擅自换
+        // 默认词没搜到 → 再试备选（中文剧集「剧名 第N集」/ 电影纯片名）；手动改过查询词就不擅自换。
+        // 单集：默认词搜到的没几条是这一集的（迅雷没收录这一季时「剧名 S06E03」只回整部剧的字幕）→ 也问备选，接在后面
         val alt = target.altQuery
-        if (r.ok && hits.isEmpty() && alt != null && alt != q && q == target.nameQuery) {
+        if (r.ok && alt != null && alt != q && q == target.nameQuery && (hits.isEmpty() || !namesThisEpisode(hits))) {
             val r2 = net.getText(SubtitleProviders.thunderUrl(alt))
             if (r2.ok) {
-                r = r2
-                hits = SubtitleProviders.parseThunder(r2.text, cid)
+                // 备选不带季：写明是别的季 / 别的集的不要（智能匹配反正也扣到底）
+                val more = SubtitleProviders.parseThunder(r2.text, cid).filterNot { conflictsWithThisEpisode(it) }
+                if (hits.isEmpty()) r = r2
+                hits = (hits + more).distinctBy { it.key }
             }
         }
         thunder = if (r.ok) {
@@ -413,12 +622,28 @@ class SubtitleSearchSession(
         } else SourceState.Failed(r.failed ?: "迅雷回了 ${r.status}")
     }
 
+    /** 这批结果里写明是这一集的（集号对上、季号不冲突）够不够 [EPISODE_HITS] 条；不是单集 = 够。 */
+    private fun namesThisEpisode(hits: List<SubtitleHit>): Boolean {
+        val ep = target.episode ?: return true
+        return hits.count { h ->
+            val p = parseName(h.name)
+            p.episode == ep && (p.season == null || target.season == null || p.season == target.season)
+        } >= EPISODE_HITS
+    }
+
+    /** 名字里写明的季 / 集和这一集对不上（两边都写了才算）。 */
+    private fun conflictsWithThisEpisode(h: SubtitleHit): Boolean {
+        val p = parseName(h.name)
+        return (p.season != null && target.season != null && p.season != target.season) ||
+            (p.episode != null && target.episode != null && p.episode != target.episode)
+    }
+
     private suspend fun searchShooter(hash: String?) {
         shooter = SourceState.Busy
         // 按名字配的那一路也用 nameQuery：strm 的 CDN 文件名无意义时它是元数据查询（§3）
-        val r = net.postForm(SubtitleProviders.SHOOTER_API, SubtitleProviders.shooterForm(hash, target.nameQuery, lang))
+        val r = net.postForm(SubtitleProviders.SHOOTER_API, SubtitleProviders.shooterForm(hash, target.shooterName, lang))
         shooter = if (r.ok) {
-            shooterHits = SubtitleProviders.parseShooter(r.text, target.nameQuery, lang, hashSent = !hash.isNullOrEmpty())
+            shooterHits = SubtitleProviders.parseShooter(r.text, target.shooterName, lang, hashSent = !hash.isNullOrEmpty())
             publish()
             SourceState.Done(shooterHits.size)
         } else SourceState.Failed(r.failed ?: "射手回了 ${r.status}")
@@ -468,6 +693,9 @@ class SubtitleSearchSession(
 }
 
 class SubtitleFetchException(message: String) : Exception(message)
+
+/** 默认词的迅雷结果里至少这么多条写明是这一集，才不再问备选。 */
+private const val EPISODE_HITS = 3
 
 /** `scheme://host:port`（比较是不是同一台）。 */
 internal fun hostOf(url: String): String {

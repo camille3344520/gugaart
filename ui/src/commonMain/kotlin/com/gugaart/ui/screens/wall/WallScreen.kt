@@ -92,8 +92,14 @@ enum class WallSort(val label: String, val sortBy: String, val descending: Boole
     Rating("评分", "CommunityRating", true),
 }
 
-/** 状态筛选。 */
-enum class WatchState(val label: String) { Unseen("未看"), Watching("在看"), Seen("看完"), Favorite("收藏") }
+/**
+ * 状态筛选：观看状态只有「未看」「已看」两种（主理人 2026-11-27，D-watch）——没看完的（看了一半、剧集看了几集）一律算「未看」；
+ * 「收藏」是单独一项。
+ */
+enum class WatchState(val label: String) { Unseen("未看"), Seen("已看"), Favorite("收藏") }
+
+/** 一部片子的观看状态：服务器标了已看 = 已看，其余（没开始、看了一半、剧集没看完）都是未看。纯函数，有单测。 */
+fun watchStateOf(t: Title): WatchState = if (t.played) WatchState.Seen else WatchState.Unseen
 
 /** 年代的桶：按实际年份分，不假设都是近年（「更早」= 2000 年以前）。 */
 enum class Decade(val label: String) {
@@ -120,12 +126,9 @@ data class WallFilter(val genres: Set<String> = emptySet(), val decades: Set<Dec
         if (genres.isNotEmpty() && t.genres.none { it in genres }) return false
         if (decades.isNotEmpty() && Decade.of(t.year) !in decades) return false
         if (states.isNotEmpty()) {
-            val watching = t.progress > 0f || (t.unplayed != null && t.count != null && t.unplayed in 1 until t.count)
             val ok = states.any {
                 when (it) {
-                    WatchState.Unseen -> !t.played && !watching
-                    WatchState.Watching -> watching
-                    WatchState.Seen -> t.played
+                    WatchState.Unseen, WatchState.Seen -> watchStateOf(t) == it
                     WatchState.Favorite -> t.favorite
                 }
             }
@@ -147,7 +150,8 @@ fun WallFilter.toPref(sort: WallSort, minRating: Int? = null): WallPref = WallPr
 fun WallPref.toFilter(): WallFilter = WallFilter(
     genres = genres,
     decades = decades.mapNotNull { l -> Decade.entries.firstOrNull { it.label == l } }.toSet(),
-    states = states.mapNotNull { n -> WatchState.entries.firstOrNull { it.name == n } }.toSet(),
+    // 1.5.1 以前存过的「在看」（Watching）并进「未看」
+    states = states.mapNotNull { n -> if (n == "Watching") WatchState.Unseen else WatchState.entries.firstOrNull { it.name == n } }.toSet(),
 )
 
 fun WallPref.toSort(default: WallSort): WallSort = WallSort.entries.firstOrNull { it.name == sort } ?: default
@@ -229,8 +233,9 @@ fun WallScreen(libraryId: String?) {
     val list = rememberLazyListState()
     com.gugaart.ui.screens.ScrollsToTop { list.animateScrollToItem(0) }
     val returnPx = with(LocalDensity.current) { PhoneTabBarSpec.RETURN_DP.toPx() }
-    LaunchedEffect(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) {
-        chrome.reportScroll(list.firstVisibleItemIndex * 2000f + list.firstVisibleItemScrollOffset, 0f, returnPx)
+    // 在协程里跟滚动（1.5.1 性能）：以前把位置当 LaunchedEffect 的键 = 整面墙每滚一帧重组一次、重起一个协程
+    LaunchedEffect(list, chrome, returnPx) {
+        androidx.compose.runtime.snapshotFlow { list.firstVisibleItemIndex * 2000f + list.firstVisibleItemScrollOffset }.collect { chrome.reportScroll(it, 0f, returnPx) }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -361,7 +366,9 @@ fun WallScreen(libraryId: String?) {
             }
             item("safe") { Spacer(Modifier.height(150.dp + Guga.dimens.tabLift)) }
         }
-        StatusBand(solid = list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 4, modifier = Modifier.background(colors.paper.copy(alpha = 0f)))
+        // 派生状态（1.5.1 性能）：只在「实心 / 透明」翻转时重组
+        val bandSolid = remember(list) { androidx.compose.runtime.derivedStateOf { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 4 } }
+        StatusBand(solid = bandSolid.value, modifier = Modifier.background(colors.paper.copy(alpha = 0f)))
     }
 }
 

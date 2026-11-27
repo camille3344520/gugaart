@@ -56,6 +56,7 @@ import com.gugaart.ui.screens.LocalChrome
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.detail.SeriesHead
 import com.gugaart.ui.screens.detail.initialSeason
+import com.gugaart.ui.screens.detail.seasonMarkCopy
 import com.gugaart.ui.screens.detail.loadEpisodes
 import com.gugaart.ui.screens.detail.loadSeriesHead
 import com.gugaart.ui.screens.detail.pagesOf
@@ -145,9 +146,9 @@ fun seriesScreenOf(group: String?): Int = when (group) {
 }
 
 @Composable
-fun TvSeriesScreen(id: String, today: Today) {
+fun TvSeriesScreen(id: String, today: Today, preview: Title? = null) {
     val head = rememberLoad("tv-series", id) { loadSeriesHead(it, id) }
-    val h = head.value
+    val h = head.value ?: preview?.let { SeriesHead(series = it, seasons = emptyList(), upNext = null) }
     when {
         h != null -> TvSeries(h, today)
         head.error != null -> TvPage("", "FEATURE", today) { ErrorView(head.error!!, head::retry) }
@@ -173,11 +174,14 @@ fun TvSeries(head: SeriesHead, today: Today) {
     val back = LocalBackDispatcher.current
 
     val poster = rememberImage(series.art.poster, keepPrevious = true)
-    LaunchedEffect(poster) { chrome.spot = poster?.spot(tv = true) }
-
+    val tvSpot = com.gugaart.ui.components.rememberSpotColor(poster, tv = true)
+    LaunchedEffect(tvSpot) { chrome.spot = tvSpot }
+    LaunchedEffect(series.id) { com.gugaart.ui.tv.TvPerfTiming.onDetailContent(series.id) }
     var season by remember(head) { mutableStateOf(initialSeason(head, preset.season)) }
     var page by remember(head) { mutableIntStateOf(preset.episodePage) }
     var more by remember { mutableStateOf(preset.state == "more") }
+    // P0-3：整季标已看 / 未看先在按钮行原地换成确认（标题 + 「标为已看」「取消」）；截图预置 `markseason` 直接打开
+    var markSeason by remember { mutableStateOf(preset.state == "markseason") }
     val slice = rememberLoad("tv-episodes", series.id, season?.id, page) { loadEpisodes(it, series.id, season?.id, page) }
     val pages = pagesOf(slice.value)
     val similar = rememberLoad("tv-similar", series.id) { loadSimilar(it, series.id) }
@@ -214,8 +218,12 @@ fun TvSeries(head: SeriesHead, today: Today) {
     groups.edge = { from, dir -> if (from == G.MORE) TvGroups.STAY else seriesEdge(from, dir, groups::has) }
 
     // 返回 = 收起最上面一层：简介全文 → 回上一屏（第三屏 → 第二屏 → 第一屏）→ 上一页（外壳）
-    DisposableEffect(more, screen) {
+    DisposableEffect(more, screen, markSeason) {
         val un = when {
+            markSeason -> back.push {
+                markSeason = false
+                true
+            }
             more -> back.push {
                 more = false
                 true
@@ -226,6 +234,20 @@ fun TvSeries(head: SeriesHead, today: Today) {
             else -> null
         }
         onDispose { un?.invoke() }
+    }
+    // 打开 / 收起整季确认时焦点跟过去：打开 → 落在「取消」；收起 → 回到「整季已看」
+    var markSeen by remember { mutableStateOf(false) }
+    LaunchedEffect(markSeason) {
+        if (markSeason) {
+            markSeen = true
+            groups.forget(G.CTA)
+            groups.enterWhenReady(G.CTA, graph.focus)
+        } else if (markSeen) {
+            repeat(40) {
+                if (graph.focus.request("cta-played")) return@LaunchedEffect
+                kotlinx.coroutines.delay(25)
+            }
+        }
     }
     // 打开 / 合上简介全文时焦点跟过去
     var moreSeen by remember { mutableStateOf(false) }
@@ -239,7 +261,7 @@ fun TvSeries(head: SeriesHead, today: Today) {
     }
 
     val play: () -> Unit = {
-        val t = up ?: episodes.firstOrNull()
+        val t = up ?: episodes.firstOrNull { !it.unaired }
         if (t != null) graph.play(t.id, t.positionSec?.times(1000))
     }
     val primaryText = when {
@@ -256,7 +278,7 @@ fun TvSeries(head: SeriesHead, today: Today) {
         } else TvScreens(screen, if (hasStills) 4 else 3) { index ->
             when (index) {
                 0 -> Box(Modifier.fillMaxSize()) {
-                    TvRunHead("FEATURE", if (series.art.backdrop != null) "剧照｜${series.name}" else "没有剧照｜用海报虚化代替", today)
+                    TvRunHead("FEATURE", if (series.art.backdrop != null) "剧照｜${series.name}" else "海报｜${series.name}", today)
                     Column(Modifier.align(Alignment.BottomStart).padding(start = TvSpec.LEFT, bottom = TvDetailSpec.HERO_BOTTOM).width(TvDetailSpec.HERO_WIDTH)) {
                         TvKick(tvKickOf(series, "剧集"))
                         TvTitle(series, Modifier.padding(top = 14.dp, bottom = 16.dp))
@@ -274,19 +296,34 @@ fun TvSeries(head: SeriesHead, today: Today) {
                         }
                         // Trakt 追更（连着 Trakt 才有）
                         val follow = com.gugaart.ui.components.rememberTraktFollow(series.id)
+                        val seasonPlayed = season?.let { chrome.isPlayed(it.id, it.unplayed == 0) } == true
+                        val confirming = season?.takeIf { markSeason }
+                        if (confirming != null) {
+                            val copy = seasonMarkCopy(confirming, toPlayed = !seasonPlayed)
+                            TvGroup(G.CTA, listOf("cta-mark-ok", "cta-mark-cancel"), default = "cta-mark-cancel")
+                            BasicText(copy.title, Modifier.padding(top = 26.dp).testTag("tv-mark-season"), style = Guga.song(34.sp, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            copy.note?.let { BasicText(it, Modifier.padding(top = 8.dp), style = Guga.song(25.sp, color = colors.dim), maxLines = 1) }
+                            Row(Modifier.padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                TvActionButton("cta-mark-ok", copy.confirm, {
+                                    markSeason = false
+                                    graph.togglePlayed(chrome, confirming.id, seasonPlayed)
+                                }, icon = GuguIcon.Check)
+                                TvActionButton("cta-mark-cancel", "取消", { markSeason = false }, icon = GuguIcon.X)
+                            }
+                        } else {
                         val keys = listOfNotNull("cta-play", "cta-restart".takeIf { up != null }, "cta-fav", "cta-played", "cta-follow".takeIf { follow != null }, "cta-more".takeIf { series.overview.isNotEmpty() })
                         TvGroup(G.CTA, keys, default = "cta-play")
                         Row(Modifier.padding(top = 26.dp).wrapContentWidth(Alignment.Start, unbounded = true), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             TvActionButton("cta-play", primaryText, play, icon = GuguIcon.Play, primary = true, sub = primarySub, progress = up?.progress ?: 0f, default = true)
-                            if (up != null) TvActionButton("cta-restart", "从头看", { (episodes.firstOrNull() ?: up).let { graph.play(it.id, 0) } }, icon = GuguIcon.RotateCcw)
+                            if (up != null) TvActionButton("cta-restart", "从第 1 集看", { (episodes.firstOrNull { !it.unaired } ?: up).let { graph.play(it.id, 0) } }, icon = GuguIcon.RotateCcw)
                             TvActionButton("cta-fav", "收藏", {
                                 graph.toggleFavorite(chrome, series.id, fav)
                                 voice.say(MascotLines.pick(if (fav) "fav.off" else "fav.on", hour = hour, seed = series.id.hashCode() + today.day))
                             }, icon = GuguIcon.Heart) { TvSealSlot(fav, it) }
-                            val seasonPlayed = season?.let { chrome.isPlayed(it.id, it.unplayed == 0) } == true
-                            TvActionButton("cta-played", if (seasonPlayed) "整季已看 ✓" else "整季已看", { season?.let { s -> graph.togglePlayed(chrome, s.id, seasonPlayed) } }, icon = GuguIcon.Check)
+                            TvActionButton("cta-played", if (seasonPlayed) "整季已看 ✓" else "整季已看", { if (season != null) markSeason = true }, icon = GuguIcon.Check)
                             if (follow != null) TvActionButton("cta-follow", if (follow.following) "已追更 ✓" else "追更", follow.toggle, icon = if (follow.following) GuguIcon.Check else GuguIcon.Plus)
                             if (series.overview.isNotEmpty()) TvActionButton("cta-more", "简介全文", { more = true }, icon = GuguIcon.List)
+                        }
                         }
                     }
                     TvDownHint(listOfNotNull(series.count?.let { "分集 $it" } ?: "分集", "演职人员 ${series.people.size}".takeIf { series.people.isNotEmpty() }, "相似".takeIf { similar.value?.isNotEmpty() == true }, "剧照 ${stills.size}".takeIf { hasStills }))
@@ -333,7 +370,7 @@ fun TvSeries(head: SeriesHead, today: Today) {
                             episodes.isEmpty() -> {
                                 groups.remove(G.EPS)
                                 BasicText(
-                                    if ((slice.value?.total ?: 0) > 0) "这一季的分集还没取到。" else "这一季还没有分集。",
+                                    if ((slice.value?.total ?: 0) > 0) "分集未加载" else "没有分集",
                                     Modifier.padding(start = TvSpec.LEFT).height(320.dp),
                                     style = Guga.song(26.sp, color = colors.dim),
                                 )
@@ -362,7 +399,7 @@ fun TvSeries(head: SeriesHead, today: Today) {
                                     BasicText(tvEpisodeKick(focusedEp), Modifier.padding(top = 26.dp), style = Guga.song(22.sp, FontWeight.Bold, colors.spot, letterSpacing = 0.14.em), maxLines = 1)
                                     BasicText(focusedEp.name.ifEmpty { "第 ${focusedEp.episodeNo ?: "?"} 集" }, Modifier.padding(top = 8.dp, bottom = 12.dp), style = Guga.song(40.sp, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     BasicText(
-                                        focusedEp.overview.ifEmpty { "服务器上没有这一集的简介。" },
+                                        focusedEp.overview.ifEmpty { "没有简介" },
                                         style = Guga.song(26.sp, FontWeight.Medium, colors.dim, lineHeight = 42.sp),
                                         maxLines = 3,
                                         overflow = TextOverflow.Ellipsis,

@@ -117,7 +117,7 @@ fun DesktopSet(set: Title, today: Today) {
         Row(Modifier.padding(horizontal = m).padding(top = Guga.rem(3.2f)).fillMaxWidth()) {
             Column(Modifier.weight(4f)) {
                 BasicText("ABOUT · 关于这一套", Modifier.padding(bottom = Guga.rem(1.2f)), style = Guga.song(rsp(1.2f), FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
-                BasicText(set.overview.ifEmpty { "服务器上没有这套合集的简介。" }, style = Guga.song(rsp(1.5f), color = if (set.overview.isEmpty()) colors.faint else colors.dim, lineHeight = rsp(2.85f)), maxLines = 16, overflow = TextOverflow.Ellipsis)
+                BasicText(set.overview.ifEmpty { "没有简介" }, style = Guga.song(rsp(1.5f), color = if (set.overview.isEmpty()) colors.faint else colors.dim, lineHeight = rsp(2.85f)), maxLines = 16, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.width(Guga.dimens.gutter * 2))
             Column(Modifier.weight(8f).testTag("d-members")) {
@@ -129,7 +129,7 @@ fun DesktopSet(set: Title, today: Today) {
                     else -> Row(Modifier.padding(vertical = Guga.rem(4f)), verticalAlignment = Alignment.CenterVertically) {
                         MascotPoseNamed("摊手", Guga.rem(9f))
                         Column(Modifier.padding(start = Guga.rem(1.6f))) {
-                            BasicText("成员清单还没取到", style = Guga.song(rsp(2f), FontWeight.Black), maxLines = 1)
+                            BasicText("没有成员", style = Guga.song(rsp(2f), FontWeight.Black), maxLines = 1)
                             set.count?.let { BasicText("这套合集共 $it 部。", Modifier.padding(top = Guga.rem(0.4f)), style = Guga.song(rsp(1.3f), color = colors.dim), maxLines = 1) }
                         }
                     }

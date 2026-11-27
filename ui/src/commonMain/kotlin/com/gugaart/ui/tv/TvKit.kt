@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -35,8 +36,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -48,18 +54,18 @@ import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import com.gugaart.ui.components.BRIGHT_IMAGE_LUMA
+import com.gugaart.ui.components.rememberBrightImage
 import com.gugaart.ui.components.CoverImage
-import com.gugaart.ui.components.meanLuma
 import com.gugaart.ui.components.rememberCrossfade
 import com.gugaart.ui.components.rememberSoft
 import com.gugugaga.app.data.rememberImage
@@ -67,9 +73,13 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import com.gugaart.ui.components.ProofTick
 import com.gugaart.ui.components.Seal
 import com.gugaart.ui.components.drawCover
+import com.gugaart.ui.components.meanLuma
+import androidx.compose.ui.layout.onSizeChanged
+import kotlin.math.roundToInt
 import com.gugaart.ui.data.Framing
 import com.gugaart.ui.data.Title
 import com.gugaart.ui.screens.LocalChrome
@@ -167,12 +177,15 @@ fun <T> TvRow(
         ) {
             for ((i, item) in items.withIndex()) {
                 val past = i < state.lead
-                val a by animateFloatAsState(if (past) 0f else 1f, tween(TvKitSpec.FADE_MS), label = "tv-row-fade")
+                val a by animateFloatAsState(if (past) 0f else 1f, tween(remember(past) { if (TvPerfGovernor.degraded) 0 else TvKitSpec.FADE_MS }), label = "tv-row-fade")
                 Box(
                     Modifier
                         .onFocusChanged { if (it.hasFocus) state.lead = i }
                         .focusProperties { canFocus = state.hasFocus || i >= state.lead }
-                        .graphicsLayer { alpha = a },
+                        .then(if (past || a < 1f) Modifier.graphicsLayer { alpha = a } else Modifier)
+                        .drawWithContent {
+                            if (i >= state.lead - 1 && i <= state.lead + 8) drawContent()
+                        },
                 ) { content(i, item, i == state.lead) }
             }
         }
@@ -188,9 +201,9 @@ fun TvSectionHeader(title: String, english: String, modifier: Modifier = Modifie
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        if (!number.isNullOrEmpty()) BasicText(number, Modifier.alignByBaseline(), style = Guga.numeral(36.sp, colors.spot), maxLines = 1)
+        if (!number.isNullOrEmpty()) BasicText(number, Modifier.alignByBaseline(), style = Guga.numeral(36.sp), color = { colors.spot }, maxLines = 1)
         BasicText(title, Modifier.alignByBaseline(), style = Guga.song(Guga.type.section, FontWeight.Black, letterSpacing = 0.08.em), maxLines = 1)
-        if (english.isNotEmpty()) BasicText(english, Modifier.alignByBaseline(), style = Guga.numeral(20.sp, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
+        if (english.isNotEmpty()) BasicText(english, Modifier.alignByBaseline(), style = Guga.numeral(20.sp, letterSpacing = 0.24.em), color = { colors.spot }, maxLines = 1)
         Box(Modifier.weight(1f).height(1.dp).background(colors.line))
         if (!trailing.isNullOrEmpty()) BasicText(trailing, Modifier.alignByBaseline(), style = Guga.note(23.sp, colors.dim), maxLines = 1)
     }
@@ -198,20 +211,30 @@ fun TvSectionHeader(title: String, english: String, modifier: Modifier = Modifie
 
 /** 卡片下的两行：片名（灰 → 焦点时白，最多两行）+ 副行。[pre]：片名前的斜体小号（分集的集号，专色）。 */
 @Composable
-fun TvCardCaption(title: AnnotatedString, sub: String?, focused: Boolean, modifier: Modifier = Modifier, pre: String? = null, titleLines: Int = 2) {
+fun TvCardCaption(title: AnnotatedString, sub: String?, focused: Boolean, modifier: Modifier = Modifier, pre: String? = null, titleLines: Int = 2) =
+    TvCardCaption(title, sub, { focused }, modifier, pre, titleLines)
+
+/** 绘制期读取 [focused] 的版本：焦点切换只改绘制着色，不触发重组与文本重新排版。 */
+@Composable
+fun TvCardCaption(title: AnnotatedString, sub: String?, focused: () -> Boolean, modifier: Modifier = Modifier, pre: String? = null, titleLines: Int = 2) {
     val colors = Guga.colors
+    val ink = colors.ink
+    val dim = colors.dim
+    val faint = colors.faint
+    val titleColor = remember(focused, ink, dim) { { if (focused()) ink else dim } }
+    val subColor = remember(focused, dim, faint) { { if (focused()) dim else faint } }
     Column(modifier.padding(top = TvKitSpec.CAPTION_GAP)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (pre != null) BasicText(pre, style = Guga.numeral(TvKitSpec.CAPTION, colors.spot), maxLines = 1)
-            BasicText(
-                title,
-                style = Guga.song(TvKitSpec.CAPTION, FontWeight.Bold, if (focused) colors.ink else colors.dim, lineHeight = TvKitSpec.CAPTION * 1.3f),
-                maxLines = titleLines,
-                overflow = TextOverflow.Ellipsis,
-            )
+        val titleStyle = Guga.song(TvKitSpec.CAPTION, FontWeight.Bold, lineHeight = TvKitSpec.CAPTION * 1.3f)
+        if (pre != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BasicText(pre, style = Guga.numeral(TvKitSpec.CAPTION), color = { colors.spot }, maxLines = 1)
+                BasicText(title, style = titleStyle, color = titleColor, maxLines = titleLines, overflow = TextOverflow.Ellipsis)
+            }
+        } else {
+            BasicText(title, style = titleStyle, color = titleColor, maxLines = titleLines, overflow = TextOverflow.Ellipsis)
         }
         if (!sub.isNullOrEmpty()) {
-            BasicText(sub, Modifier.padding(top = 4.dp), style = Guga.song(TvKitSpec.CAPTION_SUB, FontWeight.SemiBold, if (focused) colors.dim else colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(sub, Modifier.padding(top = 4.dp), style = Guga.song(TvKitSpec.CAPTION_SUB, FontWeight.SemiBold), color = subColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -227,7 +250,7 @@ private fun BoxScope.TvNoPicture(name: String, number: String?) {
             .padding(18.dp)
             .testTag("tv-nopic"),
     ) {
-        if (!number.isNullOrEmpty()) BasicText(number, Modifier.align(Alignment.TopStart), style = Guga.numeral(66.sp, colors.spot), maxLines = 1)
+        if (!number.isNullOrEmpty()) BasicText(number, Modifier.align(Alignment.TopStart), style = Guga.numeral(66.sp), color = { colors.spot }, maxLines = 1)
         BasicText(
             name,
             Modifier.align(Alignment.BottomStart),
@@ -244,7 +267,7 @@ private fun BoxScope.TvCardProgress(progress: Float) {
     if (progress <= 0f) return
     val colors = Guga.colors
     Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(TvKitSpec.PROGRESS).background(colors.paper.copy(alpha = 0.6f))) {
-        Box(Modifier.fillMaxWidth(progress.coerceIn(0.03f, 1f)).height(TvKitSpec.PROGRESS).background(colors.spot))
+        Box(Modifier.fillMaxWidth(progress.coerceIn(0.03f, 1f)).height(TvKitSpec.PROGRESS).drawBehind { drawRect(colors.spot) })
     }
 }
 
@@ -252,6 +275,8 @@ private fun BoxScope.TvCardProgress(progress: Float) {
  * 海报卡（214 × 321）：图 + 片名（最多两行，全名在长按菜单和详情里）+ 副行（默认「年份 · ★ 评分」）。
  * 焦点：米白框 + 校对角 + 抬起 ×1.08，片名由灰变白。已收藏 → 右上一枚小印；[progress] > 0 → 图下沿进度线。
  */
+private const val DEFAULT_SUB = "\u0000default\u0000"
+
 @Composable
 fun TvPosterCard(
     title: Title,
@@ -262,22 +287,71 @@ fun TvPosterCard(
     onLongClick: (() -> Unit)? = null,
     onFocus: (() -> Unit)? = null,
     width: Dp = TvKitSpec.POSTER_W,
-    sub: String? = listOfNotNull(title.year?.toString(), title.rating?.let { "★ $it" }).joinToString(" · "),
-    name: AnnotatedString = AnnotatedString(title.name),
+    sub: String? = DEFAULT_SUB,
+    name: AnnotatedString? = null,
     progress: Float = 0f,
     origin: TransformOrigin = TransformOrigin(0.5f, 0.4f),
+    knownSize: androidx.compose.ui.unit.IntSize? = null,
 ) {
     val chrome = LocalChrome.current
-    TvFocusable(onClick, modifier.width(width).testTag("tv-poster"), TvFocusKind.Card, key, default, title.name, onLongClick = onLongClick, origin = origin, onFocus = onFocus, frame = false) { focused ->
-        Column {
-            Box(Modifier.fillMaxWidth().height(width * 1.5f).tvHeldPicture(focused).tvCardFrame(focused).background(Color(0xFF1C1914)).border(1.dp, Guga.colors.ink.copy(alpha = 0.16f))) {
-                CoverImage(title.art.poster, Modifier.fillMaxSize(), Framing(0.5f, 0.5f)) { Box(Modifier.fillMaxSize()) { TvNoPicture(title.name, null) } }
-                if (chrome.isFavorite(title)) Seal(Modifier.align(Alignment.TopEnd).padding(10.dp).graphicsLayer { rotationZ = -7f }, size = 46.dp)
-                if (chrome.isPlayed(title.id, title.played)) ProofTick(true, Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp), size = 44.dp, box = false)
-                TvCardProgress(progress)
-            }
-            TvCardCaption(name, sub, focused)
+    val subText = if (sub !== DEFAULT_SUB) sub else remember(title.id, title.year, title.rating) {
+        listOfNotNull(title.year?.toString(), title.rating?.let { "★ $it" }).joinToString(" · ")
+    }
+    val shownName = name ?: remember(title.name) { AnnotatedString(title.name) }
+    val boxSize = knownSize ?: with(LocalDensity.current) { androidx.compose.ui.unit.IntSize(width.roundToPx(), (width * 1.5f).roundToPx()) }
+    val press = com.gugugaga.ds.physics.rememberPressState()
+    val tv = LocalWideNav.current.tv
+    val isFocused = remember(press) { { press.focused } }
+    val picCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val focusCb = remember(picCoords, onFocus, tv) {
+        {
+            picCoords[0]?.takeIf { it.isAttached }?.let { tv.focusedPicture = it.boundsInRoot() }
+            onFocus?.invoke()
+            Unit
         }
+    }
+    val fav = chrome.isFavorite(title)
+    val played = chrome.isPlayed(title.id, title.played)
+    TvFocusable(onClick, modifier.width(width).testTag("tv-poster"), TvFocusKind.Card, key, default, title.name, onLongClick = onLongClick, press = press, origin = origin, onFocus = focusCb, frame = false) { _ ->
+        Column(Modifier.clearAndSetSemantics { }) {
+            TvPosterPicture(title, boxSize, width * 1.5f, fav, played, progress, isFocused, picCoords, tv)
+            TvCardCaption(shownName, subText, isFocused)
+        }
+    }
+}
+
+@Composable
+private fun TvPosterPicture(
+    title: Title,
+    boxSize: androidx.compose.ui.unit.IntSize,
+    height: Dp,
+    fav: Boolean,
+    played: Boolean,
+    progress: Float,
+    isFocused: () -> Boolean,
+    picCoords: Array<LayoutCoordinates?>,
+    tv: TvShellState,
+) {
+    Box(
+        Modifier.fillMaxWidth().height(height)
+            .onGloballyPositioned { c ->
+                picCoords[0] = c
+                if (isFocused()) tv.focusedPicture = c.boundsInRoot()
+            }
+            .tvCardFrame(isFocused)
+            .background(Color(0xFF1C1914))
+            .border(1.dp, Guga.colors.ink.copy(alpha = 0.16f)),
+    ) {
+        CoverImage(
+            title.art.poster,
+            Modifier.fillMaxSize(),
+            Framing(0.5f, 0.5f),
+            knownSize = boxSize,
+            placeholder = if (title.art.poster == null) ({ Box(Modifier.fillMaxSize()) { TvNoPicture(title.name, null) } }) else null,
+        )
+        if (fav) Seal(Modifier.align(Alignment.TopEnd).padding(10.dp).graphicsLayer { rotationZ = -7f }, size = 46.dp)
+        if (played) ProofTick(true, Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp), size = 44.dp, box = false)
+        TvCardProgress(progress)
     }
 }
 
@@ -306,16 +380,61 @@ fun TvLandscapeCard(
     framing: Framing = Framing.DEFAULT,
     origin: TransformOrigin = TransformOrigin(0.5f, 0.4f),
 ) {
-    TvFocusable(onClick, modifier.width(width).testTag("tv-wide"), TvFocusKind.Card, key, default, title, onLongClick = onLongClick, origin = origin, onFocus = onFocus, frame = false) { focused ->
-        Column {
-            Box(Modifier.fillMaxWidth().height(height).tvHeldPicture(focused).tvCardFrame(focused).background(Color(0xFF1C1914)).border(1.dp, Guga.colors.ink.copy(alpha = 0.16f))) {
-                CoverImage(image, Modifier.fillMaxSize(), framing) { Box(Modifier.fillMaxSize()) { TvNoPicture(title, number.orEmpty()) } }
-                if (seen) ProofTick(true, Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp), size = 44.dp, box = false)
-                TvCardProgress(progress)
-            }
-            // 首页封面状态下目录只露图不露字：字还占着位置（版面不跳），只是不画
-            TvCardCaption(AnnotatedString(title), sub, focused, Modifier.graphicsLayer { alpha = if (caption) 1f else 0f }, pre = pre, titleLines = 1)
+    val boxSize = with(LocalDensity.current) { androidx.compose.ui.unit.IntSize(width.roundToPx(), height.roundToPx()) }
+    val shownName = remember(title) { AnnotatedString(title) }
+    val press = com.gugugaga.ds.physics.rememberPressState()
+    val tv = LocalWideNav.current.tv
+    val isFocused = remember(press) { { press.focused } }
+    val picCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val focusCb = remember(picCoords, onFocus, tv) {
+        {
+            picCoords[0]?.takeIf { it.isAttached }?.let { tv.focusedPicture = it.boundsInRoot() }
+            onFocus?.invoke()
+            Unit
         }
+    }
+    TvFocusable(onClick, modifier.width(width).testTag("tv-wide"), TvFocusKind.Card, key, default, title, onLongClick = onLongClick, press = press, origin = origin, onFocus = focusCb, frame = false) { _ ->
+        Column(Modifier.clearAndSetSemantics { }) {
+            TvWidePicture(image, title, number, boxSize, height, framing, seen, progress, isFocused, picCoords, tv)
+            // 首页封面状态下目录只露图不露字：字还占着位置（版面不跳），只是不画
+            TvCardCaption(shownName, sub, isFocused, Modifier.graphicsLayer { alpha = if (caption) 1f else 0f }, pre = pre, titleLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun TvWidePicture(
+    image: String?,
+    title: String,
+    number: String?,
+    boxSize: androidx.compose.ui.unit.IntSize,
+    height: Dp,
+    framing: Framing,
+    seen: Boolean,
+    progress: Float,
+    isFocused: () -> Boolean,
+    picCoords: Array<LayoutCoordinates?>,
+    tv: TvShellState,
+) {
+    Box(
+        Modifier.fillMaxWidth().height(height)
+            .onGloballyPositioned { c ->
+                picCoords[0] = c
+                if (isFocused()) tv.focusedPicture = c.boundsInRoot()
+            }
+            .tvCardFrame(isFocused)
+            .background(Color(0xFF1C1914))
+            .border(1.dp, Guga.colors.ink.copy(alpha = 0.16f)),
+    ) {
+        CoverImage(
+            image,
+            Modifier.fillMaxSize(),
+            framing,
+            knownSize = boxSize,
+            placeholder = if (image == null) ({ Box(Modifier.fillMaxSize()) { TvNoPicture(title, number.orEmpty()) } }) else null,
+        )
+        if (seen) ProofTick(true, Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp), size = 44.dp, box = false)
+        TvCardProgress(progress)
     }
 }
 
@@ -328,13 +447,31 @@ fun TvLandscapeCard(
  * [dimLeft] / [dimRight]：左、右两端压暗多少（页面上左侧的暗角比右边重；侧栏在左缘）。
  */
 @Composable
-fun TvBleedBackdrop(image: ImageBitmap?, heightFraction: Float = 1f, framing: Framing = Framing.DEFAULT, dimLeft: Float = 0.9f, dimRight: Float = 0.46f) {
+fun TvBleedBackdrop(image: ImageBitmap?, heightFraction: Float = 1f, framing: Framing = Framing.DEFAULT, dimLeft: Float = 0.9f, dimRight: Float = 0.46f, active: Boolean = true) {
     if (Guga.uiMode != UiMode.Tv) return
     val nav = LocalWideNav.current
     val paper = Guga.colors.paper
-    val small = remember(image, heightFraction, framing, dimLeft, dimRight) { image?.let { tvBackdropOf(it, paper, heightFraction, framing, dimLeft, dimRight) } }
-    DisposableEffect(small) {
-        nav.bleedBackdrop = small
+    if (com.gugaart.ui.idle.LocalIdleClock.current == null) {
+        val small = remember(image, heightFraction, framing, dimLeft, dimRight) { image?.let { tvBackdropOf(it, paper, heightFraction, framing, dimLeft, dimRight) } }
+        DisposableEffect(small, active) {
+            if (active) nav.bleedBackdrop = small
+            onDispose { if (nav.bleedBackdrop === small) nav.bleedBackdrop = null }
+        }
+        return
+    }
+    var small by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(image, heightFraction, framing, dimLeft, dimRight, paper) {
+        val out = if (image == null) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            tvBackdropOf(image, paper, heightFraction, framing, dimLeft, dimRight)
+        }
+        small = out
+        if (active) nav.bleedBackdrop = out
+    }
+    DisposableEffect(active, small) {
+        if (active && small != null) nav.bleedBackdrop = small
+        onDispose { if (!active && nav.bleedBackdrop === small) nav.bleedBackdrop = null }
+    }
+    DisposableEffect(Unit) {
         onDispose { if (nav.bleedBackdrop === small) nav.bleedBackdrop = null }
     }
 }
@@ -381,37 +518,130 @@ object TvBleedSpec {
 fun TvBleed(
     backdrop: String?,
     poster: String?,
+    /** 会动的高（电视首页封面 ↔ 目录换版）：只在这里读，调用的那一页不跟着每帧重组（1.5.1 性能）。 */
+    height: androidx.compose.runtime.State<Dp>,
+    modifier: Modifier = Modifier,
+    framing: Framing = TvBleedSpec.FRAMING,
+    grey: Boolean = false,
+    screenHeight: Dp = 1080.dp,
+    reportBackdrop: Boolean = true,
+) = TvBleed(backdrop, poster, height.value, modifier, framing, grey, screenHeight, reportBackdrop)
+
+@Composable
+fun TvBleed(
+    backdrop: String?,
+    poster: String?,
     height: Dp,
     modifier: Modifier = Modifier,
     framing: Framing = TvBleedSpec.FRAMING,
     grey: Boolean = false,
     screenHeight: Dp = 1080.dp,
+    reportBackdrop: Boolean = true,
 ) {
     val colors = Guga.colors
     val blurred = backdrop == null
-    val bmp = rememberImage(backdrop ?: poster, keepPrevious = true)
+    val rawUrl = backdrop ?: poster
+    // 压到 TV_BLEED_W（1280）宽；探针 bleed full 要原图（看压宽前后的差别）
+    val bleedUrl = remember(rawUrl) { rawUrl?.let(::tvBleedUrl) }
+    val bmp = rememberImage(bleedUrl, keepPrevious = true)
     val cf = rememberCrossfade(bmp)
     val softNow = rememberSoft(cf.current.takeIf { blurred })
     val softPrev = rememberSoft(cf.previous.takeIf { blurred })
     val current = cf.current
-    val bright = remember(current) { current != null && current.meanLuma() > BRIGHT_IMAGE_LUMA }
-    TvBleedBackdrop(if (blurred) softNow else current, height / screenHeight, framing)
-    val filter = if (grey) ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.15f) }) else null
-    androidx.compose.foundation.Canvas(modifier.fillMaxWidth().height(height).testTag(if (current == null) "tv-bleed-empty" else if (blurred) "tv-bleed-poster" else "tv-bleed")) {
-        drawRect(colors.paper)
-        clipRect {
-            if (blurred) {
-                softPrev?.let { drawCover(it, framing, 1f, filter, FilterQuality.High) }
-                softNow?.let { drawCover(it, framing, cf.alpha, filter, FilterQuality.High) }
-            } else {
-                cf.previous?.let { drawCover(it, framing, 1f, filter) }
-                current?.let { drawCover(it, framing, cf.alpha, filter) }
-            }
-        }
-        if (bright || blurred) drawRect(colors.paper.copy(alpha = TvBleedSpec.BRIGHT_EXTRA))
-        drawRect(Brush.horizontalGradient(*TvBleedSpec.SIDE.map { (at, a) -> at to colors.paper.copy(alpha = a) }.toTypedArray()))
-        drawRect(Brush.verticalGradient(*TvBleedSpec.DOWN.map { (at, a) -> at to colors.paper.copy(alpha = a) }.toTypedArray()))
+    val bright = rememberBrightImage(current)
+    TvBleedBackdrop(if (blurred) softNow else current, height / screenHeight, framing, active = reportBackdrop)
+    val filter = remember(grey) { if (grey) ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.15f) }) else null }
+    val paper = colors.paper
+    // 候选修法 bleedcache：图 + 亮图压暗 + 两层暗角先在后台合成一张「版」，每帧只贴这一张（版换的时候两张交叉淡入）
+    val usePlate = TvFlipProbe.bleedCache && filter == null && TvFlipProbe.bleed != "nograd"
+    var boxPx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val plate = if (usePlate) rememberBleedPlate(if (blurred) softNow else current, blurred, boxPx, framing, paper) else null
+    val plateCf = rememberCrossfade(plate)
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(height)
+            .then(if (usePlate) Modifier.onSizeChanged { if (it != boxPx) boxPx = it } else Modifier)
+            .testTag(if (current == null) "tv-bleed-empty" else if (blurred) "tv-bleed-poster" else "tv-bleed")
+            .drawWithCache {
+                val brushes = tvBleedBrushes(paper)
+                onDrawBehind {
+                    val cur = plateCf.current
+                    if (usePlate && cur != null && cur.width == size.width.roundToInt() && cur.height == size.height.roundToInt()) {
+                        plateCf.previous?.takeIf { it.width == cur.width && it.height == cur.height }?.let { drawImage(it) }
+                        drawImage(cur, alpha = plateCf.alpha)
+                    } else if (blurred) {
+                        drawTvBleed(softPrev, softNow, cf.alpha, framing, filter, FilterQuality.High, true, paper, brushes)
+                    } else {
+                        drawTvBleed(cf.previous, current, cf.alpha, framing, filter, FilterQuality.Medium, bright, paper, brushes.takeIf { TvFlipProbe.bleed != "nograd" })
+                    }
+                }
+            },
+    )
+}
+
+/**
+ * [TvBleed] 要的图宽：1280（int151e 协调人定）。perf/tv 压到过 480，全屏放大偏糊；1280 在 1920 宽的屏上看不出糊，
+ * 解码 1280 × 720 × 4 B ≈ 3.7 MB，比原图（1920 宽）省一半多。首页预取、合成的「版」、详情首帧垫图都用这一档。
+ */
+const val TV_BLEED_W = 1280
+
+/** [TvBleed] 实际要的图地址：压到 [TV_BLEED_W] 宽；探针 `bleed full` = 原地址。 */
+fun tvBleedUrl(url: String): String = if (TvFlipProbe.bleed == "full") url else com.gugaart.ui.data.ImageSizing.capWidth(url, TV_BLEED_W)
+
+/** [TvBleed] 的两层暗角（横、竖）；铺满当前画布。 */
+fun tvBleedBrushes(paper: Color): Pair<Brush, Brush> = Pair(
+    Brush.horizontalGradient(*TvBleedSpec.SIDE.map { (at, a) -> at to paper.copy(alpha = a) }.toTypedArray()),
+    Brush.verticalGradient(*TvBleedSpec.DOWN.map { (at, a) -> at to paper.copy(alpha = a) }.toTypedArray()),
+)
+
+/**
+ * [TvBleed] 的画法（每帧现画和后台合成的「版」共用这一份，所以两条路画出来一样）：纸色底、[previous] 在下 / [current] 按 [alpha] 淡入，
+ * 都按 [framing] 盖满；[dimmed]（亮图或虚化的海报）再压一层；最后 [vignette] 两层暗角（null = 不画，只给探针用）。
+ */
+fun DrawScope.drawTvBleed(
+    previous: ImageBitmap?,
+    current: ImageBitmap?,
+    alpha: Float,
+    framing: Framing,
+    filter: ColorFilter?,
+    quality: FilterQuality,
+    dimmed: Boolean,
+    paper: Color,
+    vignette: Pair<Brush, Brush>? = tvBleedBrushes(paper),
+) {
+    drawRect(paper)
+    clipRect {
+        previous?.let { drawCover(it, framing, 1f, filter, quality) }
+        current?.let { drawCover(it, framing, alpha, filter, quality) }
     }
+    if (dimmed) drawRect(paper.copy(alpha = TvBleedSpec.BRIGHT_EXTRA))
+    if (vignette == null) return
+    drawRect(vignette.first)
+    drawRect(vignette.second)
+}
+
+/** [TvBleed] 的「版」：后台合成，[size] 变了 / 图换了重做；新版好之前一直给旧版。 */
+@Composable
+private fun rememberBleedPlate(image: ImageBitmap?, blurred: Boolean, size: androidx.compose.ui.unit.IntSize, framing: Framing, paper: Color): ImageBitmap? {
+    var plate by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(image, blurred, size, framing, paper) {
+        if (image == null || size.width <= 0 || size.height <= 0) return@LaunchedEffect
+        val out = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { tvBleedPlate(image, blurred, size.width, size.height, framing, paper) }
+        out.prepareToDraw()
+        plate = out
+    }
+    return plate
+}
+
+/** [TvBleed] 的「版」：和每帧现画的同一份 [drawTvBleed]（一张图、不淡入），画进 [w] × [h] 的位图。 */
+fun tvBleedPlate(image: ImageBitmap, blurred: Boolean, w: Int, h: Int, framing: Framing, paper: Color): ImageBitmap {
+    val out = ImageBitmap(w, h)
+    val dimmed = blurred || image.meanLuma() > com.gugaart.ui.components.BRIGHT_IMAGE_LUMA
+    CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(out), Size(w.toFloat(), h.toFloat())) {
+        drawTvBleed(null, image, 1f, framing, null, if (blurred) FilterQuality.High else FilterQuality.Medium, dimmed, paper)
+    }
+    return out
 }
 
 /**

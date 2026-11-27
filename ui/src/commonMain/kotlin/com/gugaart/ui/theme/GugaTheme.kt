@@ -6,7 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -79,16 +79,22 @@ object Guga {
  * [spot]：当前这一期 / 这部片的专色（[SpotColor.of]）；null = 兜底朱红。
  */
 @Composable
-fun GugaTheme(spot: Color? = null, content: @Composable () -> Unit) {
+fun GugaTheme(spot: Color? = null, animateSpot: Boolean = true, content: @Composable () -> Unit) {
     val uiMode = GuguTheme.current.uiMode
-    val win = LocalWindowDp.current
-    val animatedSpot by animateColorAsState(spot ?: GugaColors.SPOT_FALLBACK, tween(GugaMotion.SPOT_MS), label = "spot")
-    val values = GugaThemeValues(
-        uiMode = uiMode,
-        colors = GugaColors(spot = animatedSpot),
-        dimens = GugaDimens.of(uiMode, win.width.value, LocalPhoneInsets.current),
-        type = GugaType.of(uiMode, if (uiMode == UiMode.Desktop) desktopRem(win.width.value) else 10f),
-        player = GugaPlayerType.of(uiMode, if (uiMode == UiMode.Desktop) desktopRem(win.width.value) else 10f),
-    )
+    val width = LocalWindowDp.current.width.value
+    val insets = LocalPhoneInsets.current
+    // 1.5.1 性能：渐变的 State 本身交给 GugaColors（这里不读 .value），这一层和下面整本画报不跟着渐变每帧重组；
+    // 主题值只在端 / 窗口宽 / 安全区变了才换一份（静态 CompositionLocal 一换，下面就整个重组）。
+    val animatedSpot = animateColorAsState(spot ?: GugaColors.SPOT_FALLBACK, tween(if (animateSpot) GugaMotion.SPOT_MS else 0), label = "spot")
+    val colors = remember(animatedSpot) { GugaColors(animatedSpot) }
+    val values = remember(uiMode, width, insets, colors) {
+        GugaThemeValues(
+            uiMode = uiMode,
+            colors = colors,
+            dimens = GugaDimens.of(uiMode, width, insets),
+            type = GugaType.of(uiMode, if (uiMode == UiMode.Desktop) desktopRem(width) else 10f),
+            player = GugaPlayerType.of(uiMode, if (uiMode == UiMode.Desktop) desktopRem(width) else 10f),
+        )
+    }
     CompositionLocalProvider(LocalGuga provides values, content = content)
 }

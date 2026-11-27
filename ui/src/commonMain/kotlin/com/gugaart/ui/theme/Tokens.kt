@@ -1,6 +1,8 @@
 package com.gugaart.ui.theme
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -12,38 +14,50 @@ import com.gugugaga.ds.theme.UiMode
  * 「咕嘎画报」的颜色 token（docs/design-language.md §1）。只有深色；数值只在这里出现，界面代码一律写 `Guga.colors.xxx`。
  *
  * 专色 [spot] 是唯一会变的颜色：取自当前海报（[spotOf]），进详情页跟那部片走。印章、焦点、校对勾【不】跟专色，永远是 [seal]。
+ *
+ * 1.5.1 性能：专色的 700 ms 渐变不再每一帧换一份新的 [GugaColors]。以前主题每帧造一份新的、经静态的 CompositionLocal 交下去，
+ * 整个应用（首页、留着的页、外壳）每帧从头重组一遍（手机首页翻一期 ≈ 6400 个作用域）。现在 [spot] 读的是主题里那个渐变的
+ * State：只有真的读了专色的地方跟着重组 / 重画，别的一律跳过。颜色本身一个像素不变。
  */
-@Immutable
-data class GugaColors(
+@Stable
+class GugaColors private constructor(private val fixedSpot: Color, private val liveSpot: State<Color>?) {
+    constructor(spot: Color = SPOT_FALLBACK) : this(spot, null)
+
+    /** 主题用：专色跟着 [spot] 这个会变的值走（渐变的每一帧都在变；读它的地方被快照系统记下，变了只重组 / 重画那几处）。 */
+    constructor(spot: State<Color>) : this(Color.Unspecified, spot)
+
     /** 墨黑纸 `#100E0B`：所有页面的底。 */
-    val paper: Color = Color(0xFF100E0B),
+    val paper: Color = Color(0xFF100E0B)
     /** 米白字 `#EFE6D4`：正文、主线、按钮实底。 */
-    val ink: Color = Color(0xFFEFE6D4),
+    val ink: Color = Color(0xFFEFE6D4)
     /** 次要字：米白 64 %。 */
-    val dim: Color = Color(0xFFEFE6D4).copy(alpha = 0.64f),
+    val dim: Color = Color(0xFFEFE6D4).copy(alpha = 0.64f)
     /** 弱字：米白 40 %（只用于非必读信息）。 */
-    val faint: Color = Color(0xFFEFE6D4).copy(alpha = 0.40f),
+    val faint: Color = Color(0xFFEFE6D4).copy(alpha = 0.40f)
     /** 细线：米白 18 %。 */
-    val line: Color = Color(0xFFEFE6D4).copy(alpha = 0.18f),
+    val line: Color = Color(0xFFEFE6D4).copy(alpha = 0.18f)
     /** 压在米白实底上的字（按钮、焦点块、衬纸上的黑笔画 logo）。 */
-    val onInk: Color = Color(0xFF141109),
+    val onInk: Color = Color(0xFF141109)
     /** 专色：栏目名、编号、进度线、热力点、海报投影。默认 = 兜底朱红。 */
-    val spot: Color = SPOT_FALLBACK,
+    val spot: Color get() = liveSpot?.value ?: fixedSpot
     /** 印章 / 校对勾 / 电视焦点的校对角 / 玻璃导航的选中小圆点：固定朱红，不跟专色。 */
-    val seal: Color = Color(0xFFD8432A),
+    val seal: Color = Color(0xFFD8432A)
     /** 压在图上的按钮墨底：纸色 52 %。 */
-    val inkWell: Color = Color(0xFF100E0B).copy(alpha = 0.52f),
+    val inkWell: Color = Color(0xFF100E0B).copy(alpha = 0.52f)
     /** 片源格式徽记的墨底：纸色 86 %（开播时压在画面上，小字也要读得清；`player.md` §8）。 */
-    val badgePlate: Color = Color(0xFF100E0B).copy(alpha = 0.86f),
+    val badgePlate: Color = Color(0xFF100E0B).copy(alpha = 0.86f)
     /** 服务器在线的小圆点（1.5.0 换服务器）：压低饱和的铜绿，墨黑纸上看得出、不抢字。只画点，不当字色 / 底色。 */
-    val online: Color = Color(0xFF7DB07A),
-) {
+    val online: Color = Color(0xFF7DB07A)
+
     companion object {
         /** 灰海报 / 取不到色时的专色。 */
         val SPOT_FALLBACK = Color(0xFFEA4E30)
 
         /** 压在米白焦点块上的朱红（电视：焦点行上的编号、记号、提示）：比 [seal] 深一号，米白底上才读得清。固定色，不跟专色。 */
         val SEAL_ON_INK = Color(0xFFB4381F)
+
+        /** 放不了的一行（未播出的分集，op1137b）整行压到这么淡：看得见在那儿，一眼知道点不了。 */
+        const val UNAVAILABLE_ALPHA = 0.42f
     }
 }
 

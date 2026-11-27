@@ -108,15 +108,16 @@ fun SlipHeader(badge: String, english: String, trailing: String? = null) {
 }
 
 /**
- * 二次确认（退出登录、移除服务器…）：一张纸片，标题 + 一句说明 + 主按钮 + 「算了」。[danger]：主按钮的字是朱红（不可撤销的动作）。
+ * 二次确认（退出登录、移除服务器…）：一张纸片，标题 + 主按钮 + 「算了」。[danger]：主按钮的字是朱红（不可撤销的动作）。
+ * [text] 最多一句短句，默认没有（1.5.1 m151：后果不常驻在说明里，确认框只留标题 + 危险按钮）。
  */
 @Composable
-fun ConfirmSheet(title: String, text: String, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit, danger: Boolean = false, cancel: String = "算了") {
+fun ConfirmSheet(title: String, text: String = "", confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit, danger: Boolean = false, cancel: String = "取消") {
     val colors = Guga.colors
     SheetHost(onDismiss, tag = "confirm-sheet") {
         SlipHeader("确认", "CONFIRM")
         BasicText(title, Modifier.padding(top = 16.dp), style = Guga.song(Guga.type.section, FontWeight.Black), maxLines = 2, overflow = TextOverflow.Ellipsis)
-        BasicText(text, Modifier.padding(top = 8.dp), style = Guga.song(Guga.type.lead * 0.94f, color = colors.dim, lineHeight = 24.sp))
+        if (text.isNotBlank()) BasicText(text, Modifier.padding(top = 8.dp), style = Guga.song(Guga.type.lead * 0.94f, color = colors.dim, lineHeight = 24.sp))
         Row(Modifier.padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
             if (danger) TextLink(confirm, onConfirm, color = colors.seal) else PrimaryButton(confirm, onConfirm, icon = null)
             TextLink(cancel, onDismiss, color = if (danger) colors.ink else colors.dim)

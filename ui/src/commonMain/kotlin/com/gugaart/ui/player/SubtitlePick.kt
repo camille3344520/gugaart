@@ -3,19 +3,24 @@ package com.gugaart.ui.player
 import com.gugaart.ui.data.GugaPrefs
 import com.gugaart.ui.data.SubtitleDefault
 import com.gugugaga.app.platform.LocalStore
+import com.gugugaga.app.settings.SUBTITLE_LANGS
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /*
- * 字幕自动选择（用户 2026-11-15：「有字幕的片不加载字幕，没字幕的片自动加载中文。也可以根据用户自己上次的选择（默认跟随用户上次的习惯）」）。
- *
- * 这一层全是纯函数 + 一个小的本地记录；播放的事还是上游 `PlayController.selectSubtitle` 在做。四档见 [SubtitleDefault]。
- * 「有字幕的片」= 对白是中文的片子：国产剧 / 电影大多把字幕烧在画面里，再开一条外挂字幕就叠了两层。
+ * 开播字幕选择（P0-2）：只认「开播字幕（自动 / 跟随上次 / 关闭）」和「首选字幕语言（有顺序的列表）」两项。
+ * 「自动」按首选语言顺序挑第一条有的；都没有就挑默认轨；还是没有就不开。
  */
 
-/** 一条字幕轨里和选择有关的东西（上游 `MediaStream` 的 Index / Language / Title + DisplayTitle）。[external] = 外挂（内嵌 = false）。 */
-data class SubTrack(val index: Int, val language: String? = null, val title: String? = null, val external: Boolean = false)
+/** 一条字幕轨里和选择有关的东西（上游 `MediaStream` 的 Index / Language / Title + DisplayTitle / IsDefault）。[external] = 外挂（内嵌 = false）。 */
+data class SubTrack(
+    val index: Int,
+    val language: String? = null,
+    val title: String? = null,
+    val external: Boolean = false,
+    val isDefault: Boolean = false,
+)
 
 /** 中文字幕的四类，按用户要的先后：简体 > 繁体 > 中英双语 > 其它中文。 */
 enum class ChineseKind(val short: String) { Simplified("简中"), Traditional("繁中"), Bilingual("双语"), Other("中文") }
@@ -50,9 +55,7 @@ fun chineseKindOf(track: SubTrack): ChineseKind? {
 fun bestChineseSubtitle(subs: List<SubTrack>): SubTrack? =
     subs.mapNotNull { t -> chineseKindOf(t)?.let { it to t } }.minByOrNull { it.first.ordinal }?.second
 
-/**
- * 对白是不是中文：音轨语言是中文；或者音轨没标语言（und / 空）而片子的出品地是华语地区（Emby 的 `ProductionLocations`）。
- */
+/** 对白是不是中文（保留给其它调用检查用）。 */
 fun dialogueIsChinese(audioLanguage: String?, productionLocations: List<String>): Boolean {
     val lang = audioLanguage?.trim()?.lowercase().orEmpty()
     if (isChineseLanguage(lang)) return true
@@ -80,23 +83,98 @@ data class SubChoice(val off: Boolean, val language: String? = null, val title: 
 /** 选出来的结果：[index] = 要开的字幕轨（null = 关）；[why] = 怎么选来的（顶部信息行写「字幕 简中 · 自动」）。 */
 data class SubPick(val index: Int?, val why: String)
 
-/** 「智能」：对白是中文且只有外挂字幕 = 不开（画面多半烧了字幕，用户 2026-11-15）；带内嵌字幕 = 内嵌不是烧录，照偏好开（1.3.1）；否则最合适的中文字幕。 */
-fun smartSubtitle(audioLanguage: String?, productionLocations: List<String>, subs: List<SubTrack>): Int? = when {
-    !dialogueIsChinese(audioLanguage, productionLocations) -> bestChineseSubtitle(subs)?.index
-    subs.any { !it.external } -> bestChineseSubtitle(subs.filter { !it.external })?.index
-    else -> null
+private fun isExplicitTraditional(track: SubTrack): Boolean {
+    val lang = track.language?.trim()?.lowercase().orEmpty()
+    val title = track.title.orEmpty().lowercase()
+    return lang in setOf("zh-hant", "zh-tw", "zh-hk", "cht") || title.contains('繁') || title.contains("cht") || title.contains("big5")
+}
+
+private fun langMatchesAny(language: String?, codes: List<String>): Boolean {
+    val norm = language?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return false
+    return codes.any { raw ->
+        val c = raw.lowercase()
+        norm == c || norm.startsWith("$c-") || norm.startsWith("${c}_")
+    }
+}
+
+private fun preferredLanguageKeys(preferredLangs: List<String>): List<String> {
+    val out = ArrayList<String>()
+    for (raw in preferredLangs) {
+        val norm = raw.trim().lowercase()
+        if (norm.isEmpty()) continue
+        val opt = SUBTITLE_LANGS.firstOrNull { o ->
+            o.key.equals(norm, ignoreCase = true) || o.codes.any { it.equals(norm, ignoreCase = true) }
+        }
+        val key = opt?.key?.lowercase() ?: norm
+        if (key !in out) out += key
+    }
+    return out
+}
+
+private fun titleMatchesUnknownLang(title: String?, key: String): Boolean {
+    val t = title.orEmpty().lowercase()
+    if (t.isBlank()) return false
+    val words = t.split(Regex("[^a-z0-9\\-]+")).filter { it.isNotEmpty() }.toSet()
+    return when (key) {
+        "en" -> ("english" in words || "eng" in words || "英文" in t || "英语" in t) && "双语" !in t && "雙語" !in t
+        "ja" -> "japanese" in words || "jpn" in words || "日文" in t || "日语" in t || "日本語" in t
+        "ko" -> "korean" in words || "kor" in words || "韩文" in t || "韩语" in t || "한국어" in t
+        "fr" -> "french" in words || "fra" in words || "fre" in words || "法文" in t || "法语" in t
+        "de" -> "german" in words || "deu" in words || "ger" in words || "deutsch" in words || "德文" in t || "德语" in t
+        "ru" -> "russian" in words || "rus" in words || "俄文" in t || "俄语" in t
+        "es" -> "spanish" in words || "spa" in words || "西班牙" in t
+        "th" -> "thai" in words || "tha" in words || "泰文" in t || "泰语" in t
+        else -> false
+    }
+}
+
+private fun matchPreferredTrack(key: String, subs: List<SubTrack>, allowGenericChineseForTraditional: Boolean): SubTrack? = when (key) {
+    "zh-hans" -> subs.firstOrNull { chineseKindOf(it) == ChineseKind.Simplified }
+        ?: subs.firstOrNull { chineseKindOf(it) == ChineseKind.Bilingual && !isExplicitTraditional(it) }
+        ?: subs.firstOrNull { chineseKindOf(it) == ChineseKind.Other }
+    "zh-hant" -> subs.firstOrNull { chineseKindOf(it) == ChineseKind.Traditional }
+        ?: if (allowGenericChineseForTraditional) {
+            subs.firstOrNull { chineseKindOf(it) == ChineseKind.Other }
+                ?: subs.firstOrNull { chineseKindOf(it) == ChineseKind.Bilingual }
+        } else null
+    "yue" -> subs.firstOrNull {
+        langMatchesAny(it.language, listOf("yue", "zh-yue")) ||
+            it.title.orEmpty().lowercase().let { t -> "粤" in t || "粵" in t || "cantonese" in t }
+    }
+    else -> {
+        val opt = SUBTITLE_LANGS.firstOrNull { it.key.equals(key, ignoreCase = true) }
+        val codes = opt?.codes ?: listOf(key)
+        subs.firstOrNull { langMatchesAny(it.language, codes) && chineseKindOf(it) == null }
+            ?: subs.firstOrNull { langMatchesAny(it.language, codes) }
+            ?: subs.firstOrNull {
+                val l = it.language?.trim()?.lowercase().orEmpty()
+                (l.isEmpty() || l == "und" || l == "unknown") && titleMatchesUnknownLang(it.title, key)
+            }
+    }
 }
 
 /**
- * 这一条该开哪条字幕。[remembered] = 这部剧 / 电影上次的选择（没有记录 = null）。
- * 跟随上次：上次关 = 关；上次开的那条在这一集里还找得到（语言和标题都一样，或者同一类中文字幕、同一种语言）= 开它；找不到 / 没有记录 = 按「智能」。
+ * 「自动」：按 [preferredLangs] 的顺序挑第一条有的；都没有就挑默认轨（[SubTrack.isDefault]）；还是没有就不开（null）。
  */
-fun pickSubtitle(mode: SubtitleDefault, remembered: SubChoice?, audioLanguage: String?, productionLocations: List<String>, subs: List<SubTrack>): SubPick = when (mode) {
+fun autoSubtitle(preferredLangs: List<String>, subs: List<SubTrack>): Int? {
+    if (subs.isEmpty()) return null
+    val keys = preferredLanguageKeys(preferredLangs)
+    val hasZhHans = "zh-hans" in keys
+    for (key in keys) {
+        val found = matchPreferredTrack(key, subs, allowGenericChineseForTraditional = !hasZhHans)
+        if (found != null) return found.index
+    }
+    return subs.firstOrNull { it.isDefault }?.index
+}
+
+/**
+ * 这一条该开哪条字幕。[mode] = 「开播字幕」，[preferredLangs] = 「首选字幕语言」，[remembered] = 这部剧 / 电影上次的选择（没有记录 = null）。
+ */
+fun pickSubtitle(mode: SubtitleDefault, preferredLangs: List<String>, remembered: SubChoice?, subs: List<SubTrack>): SubPick = when (mode) {
     SubtitleDefault.Off -> SubPick(null, "设置")
-    SubtitleDefault.Chinese -> SubPick(bestChineseSubtitle(subs)?.index, "设置")
-    SubtitleDefault.Smart -> SubPick(smartSubtitle(audioLanguage, productionLocations, subs), "自动")
+    SubtitleDefault.Auto -> SubPick(autoSubtitle(preferredLangs, subs), "自动")
     SubtitleDefault.Follow -> when {
-        remembered == null -> SubPick(smartSubtitle(audioLanguage, productionLocations, subs), "自动")
+        remembered == null -> SubPick(autoSubtitle(preferredLangs, subs), "自动")
         remembered.off -> SubPick(null, "上次")
         else -> {
             val was = SubTrack(-1, remembered.language, remembered.title)
@@ -104,11 +182,10 @@ fun pickSubtitle(mode: SubtitleDefault, remembered: SubChoice?, audioLanguage: S
             val same = subs.firstOrNull { it.language == remembered.language && it.title == remembered.title }
                 ?: kind?.let { k -> subs.firstOrNull { chineseKindOf(it) == k } }
                 ?: subs.firstOrNull { kind == null && !remembered.language.isNullOrEmpty() && it.language == remembered.language }
-            if (same != null) SubPick(same.index, "上次") else SubPick(smartSubtitle(audioLanguage, productionLocations, subs), "自动")
+            if (same != null) SubPick(same.index, "上次") else SubPick(autoSubtitle(preferredLangs, subs), "自动")
         }
     }
 }
-
 /** 顶部信息行里那一小段：「字幕 简中 · 自动」「字幕 关 · 上次」。[track] = 现在开着的那条（null = 关）；[why] = null 时不写来由。 */
 fun subtitleBadge(track: SubTrack?, why: String?): String {
     val what = when {

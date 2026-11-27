@@ -60,14 +60,12 @@ data class HistoryEntry(val title: Title, val playedMs: Long)
 
 /** 记录页的页签。 */
 enum class HistoryFilter(val id: String, val label: String) {
-    All("all", "全部"), Series("series", "剧集"), Movies("movies", "电影"), Unfinished("un", "不到一半");
+    All("all", "全部"), Series("series", "剧集"), Movies("movies", "电影");
 
     fun accepts(t: Title): Boolean = when (this) {
         All -> true
         Series -> t.kind == Kind.Episode
         Movies -> t.kind == Kind.Movie
-        // 开始了、但没看到一半
-        Unfinished -> t.progress > 0f && t.progress < 0.5f
     }
 
     companion object {
@@ -93,13 +91,13 @@ fun groupEntries(entries: List<HistoryEntry>, now: Long, zone: (Long) -> Long): 
     return HistoryGroupId.entries.filter { it in buckets }.map { it to buckets.getValue(it) }
 }
 
-/** 一行的副行：「第 5 集 · 看到 59% · 余 19 分」「看到 42% · 余 78 分」「第 2 集 · 还没开始」「第 3 集 · 看完了」。纯函数。 */
+/** 一行的副行：「第 5 集 · 看到 59% · 余 19 分」「看到 42% · 余 78 分」「第 2 集 · 未看」「第 3 集 · 已看」。纯函数。 */
 fun historyLine(t: Title): String {
     val ep = if (t.kind == Kind.Episode) t.episodeNo?.let { "第 $it 集" } else null
     val state = when {
         t.progress > 0f -> listOfNotNull("看到 ${t.pct ?: 0}%", t.runtimeSec?.let { "余 ${Rules.minutesOnly((it * (1f - t.progress)).toLong())}" }).joinToString(" · ")
-        t.played -> "看完了"
-        else -> "还没开始"
+        t.played -> "已看"
+        else -> "未看"
     }
     return listOfNotNull(ep, state).joinToString(" · ")
 }
@@ -108,7 +106,7 @@ fun historyLine(t: Title): String {
 fun kindMark(t: Title): String = if (t.kind == Kind.Movie) "影" else "剧"
 
 /**
- * 记录（设计稿 `p=hist`，路由 `Route.History`）：页签（全部 / 剧集 / 电影 / 不到一半）+ 按天分组的行（方框字 + 片名 + 进度 + 缩略图）。
+ * 记录（设计稿 `p=hist`，路由 `Route.History`）：页签（全部 / 剧集 / 电影；观看状态只有未看 / 已看，不按进度另分一组）+ 按天分组的行（方框字 + 片名 + 进度 + 缩略图）。
  * 记录在服务器上、跟着账号走；这一页**只读**——设计稿右上的「清空」要逐条改服务器上的已看状态，这一版不做（见 impl-status）。
  */
 @Composable
@@ -136,7 +134,7 @@ fun HistoryScreen() {
                 else -> {
                     val shown = all.filter { filter.accepts(it.title) }
                     if (shown.isEmpty()) {
-                        BasicText("这一类是空的。", Modifier.padding(vertical = 28.dp), style = Guga.song(Guga.type.caption, color = colors.dim))
+                        BasicText("没有记录", Modifier.padding(vertical = 28.dp), style = Guga.song(Guga.type.caption, color = colors.dim))
                     }
                     val now = remember { currentTimeMillis() }
                     for ((group, list) in groupEntries(shown, now) { com.gugugaga.app.platform.localUtcOffsetMs(it) }) {
@@ -146,7 +144,6 @@ fun HistoryScreen() {
                             Rule()
                         }
                     }
-                    BasicText("—  记录跟着账号走，保存在服务器上  —", Modifier.fillMaxWidth().padding(top = 36.dp), style = Guga.note(Guga.type.caption, colors.faint).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center), maxLines = 1)
                 }
             }
         }

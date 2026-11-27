@@ -192,8 +192,9 @@ fun PhoneTabBar(active: PhoneTab?, onSelect: (PhoneTab) -> Unit, onSearch: () ->
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     BasicText(tab.label, style = Guga.song(15.sp, if (on) FontWeight.Black else FontWeight.Medium, colors.ink.copy(alpha = if (on) 1f else 0.82f)), maxLines = 1)
-                                    // 选中记号：专色小圆点（没选的格子留同样的高度，字不跳）
-                                    Box(Modifier.padding(top = 3.dp).size(4.dp).then(if (on) Modifier.background(colors.spot, CircleShape) else Modifier))
+                                    // 选中记号：专色小圆点（没选的格子留同样的高度，字不跳）；「我的」有没看的称号（P2-13）：同一个位置一个朱红点
+                                    val dot = !on && tab == PhoneTab.Me && com.gugaart.ui.screens.me.RankBoard.unseen
+                                    Box(Modifier.padding(top = 3.dp).size(4.dp).then(if (on) Modifier.background(colors.spot, CircleShape) else if (dot) Modifier.background(colors.seal, CircleShape).testTag("tab-me-dot") else Modifier))
                                 }
                             }
                         }

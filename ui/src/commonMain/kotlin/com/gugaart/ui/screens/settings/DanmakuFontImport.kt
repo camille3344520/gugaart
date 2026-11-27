@@ -41,7 +41,7 @@ fun rememberImportedFonts(): ImportedFontStore {
 }
 
 /** 电视 / 没有文件选择器的平台上那一句说明。 */
-const val FONT_IMPORT_UNAVAILABLE = "这台设备上没有文件选择器，导入不了；在手机或电脑上导入的字体存在各自的设备里，不会同步过来。"
+const val FONT_IMPORT_UNAVAILABLE = "这台设备不能导入字体"
 
 
 /**
@@ -60,7 +60,7 @@ fun DanmakuFontImportGroup() {
     var busy by remember { mutableStateOf(false) }
 
     SettingGroup("弹幕字体", "FONTS")
-    SettingRow("导入字体", note = if (!store.canImport) FONT_IMPORT_UNAVAILABLE else "从本机选一个 ttf / otf，复制进应用；和内置的四款并列", tag = "set-dm-font-import") {
+    SettingRow("导入字体", note = if (!store.canImport) FONT_IMPORT_UNAVAILABLE else "ttf / otf", tag = "set-dm-font-import") {
         if (store.canImport) {
             ActionWord(
                 if (busy) "正在导入…" else "导入字体…",
@@ -101,7 +101,7 @@ fun DanmakuFontImportGroup() {
         )
     }
     if (state.fonts.isNotEmpty()) {
-        SettingRow("用内置字体", note = "回到下面「样式 · 字体」选的那一款", tag = "set-dm-font-builtin", onClick = { store.select(null) }) { RadioMark(state.selected == null) }
+        SettingRow("用内置字体", tag = "set-dm-font-builtin", onClick = { store.select(null) }) { RadioMark(state.selected == null) }
         // 导入的字体字幕也能用（设置 › 字幕与音轨 › 字幕样式 · 字体）
     }
 }

@@ -68,7 +68,7 @@ class EmbySourceRepository(
     }
 
     private suspend fun fetchSources(itemId: String): List<MediaSourceInfo> = try {
-        client.getItem(itemId).mediaSources
+        client.getItemShared(itemId).mediaSources
     } catch (e: CancellationException) {
         throw e
     } catch (_: Exception) {

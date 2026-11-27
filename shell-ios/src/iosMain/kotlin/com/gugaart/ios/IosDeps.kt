@@ -123,7 +123,7 @@ internal class IosUpdateHost : UpdateHost {
     companion object {
         /** 清单里 iOS 安装包的资产键（D-lead-22：未签名的 IPA）。 */
         const val ASSET_KEY = "ios-ipa"
-        const val NO_INSTALL = "iPhone 上不在应用里安装：请到发布页下载 .ipa，用自签的工具装上。"
+        const val NO_INSTALL = "在 GitHub 发布页下载 .ipa，用自签工具覆盖安装"
     }
 }
 

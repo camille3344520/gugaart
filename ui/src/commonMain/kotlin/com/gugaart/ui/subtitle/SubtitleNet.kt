@@ -81,7 +81,7 @@ class KtorSubtitleNet(
             }.execute { r ->
                 // 字幕最多几 MB；超过 16 MB 的不是字幕
                 val len = r.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-                if (len != null && len > MAX_SUBTITLE_BYTES) NetBytes(r.status.value, ByteArray(0), failed = "文件太大，不像字幕")
+                if (len != null && len > MAX_SUBTITLE_BYTES) NetBytes(r.status.value, ByteArray(0), failed = "文件太大")
                 else NetBytes(r.status.value, r.bodyAsBytes(), r.headers[HttpHeaders.ContentType]?.lowercase())
             }
         }

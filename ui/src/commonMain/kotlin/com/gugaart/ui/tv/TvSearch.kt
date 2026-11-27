@@ -53,9 +53,11 @@ import com.gugaart.ui.screens.LocalChrome
 import com.gugaart.ui.screens.LocalPreset
 import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.play
+import com.gugaart.ui.screens.search.SearchIndex
 import com.gugaart.ui.screens.search.TitleHit
 import com.gugaart.ui.screens.search.loadLibraryIndex
-import com.gugaart.ui.screens.search.searchTitles
+import com.gugaart.ui.screens.search.rememberAsyncSearch
+import com.gugaart.ui.screens.search.rememberRecentTops
 import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.ds.focus.RemoteKey
@@ -114,13 +116,13 @@ fun TvSearchScreen(q: String?, today: Today) {
     var digits by rememberSaveable { mutableStateOf(false) }
     var lastKey by rememberSaveable { mutableStateOf("key-A") }
     val titles = index.value?.titles
-    val hits = remember(index.value, query) { index.value?.let { searchTitles(it, query.trim(), TvSearchSpec.MAX_ROWS) }.orEmpty() }
-    // 演员（用户 2026-11-16：「搜索也支持按演员名字搜索，不过缩写的话还是影片排在前面」）：本地人名单按名字 / 拼音缩写找；
-    // 电视上打的多是缩写 → 片子在前、演员接在后面；从「最近搜过」点进来的名字正好是某位演员 → 演员在前
     val peopleIndex = rememberLoad("tv-search-people") { com.gugaart.ui.screens.search.loadPeopleIndex(it) }
-    val people = remember(peopleIndex.value, query) { com.gugaart.ui.screens.search.searchPeopleLocal(peopleIndex.value.orEmpty(), query.trim(), 6) }
-    val peopleFirst = com.gugaart.ui.screens.search.peopleFirst(query, hits, people)
-    // 最近搜过：打开了哪一条 = 记一笔（记的是打的那几个字母）
+    val search = rememberAsyncSearch(query, index.value, peopleIndex.value, remote = null, titleLimit = TvSearchSpec.MAX_ROWS, peopleLimit = 6, episodeLimit = 0)
+    val snap = search.snapshot
+    val hits = snap.hits
+    val people = snap.people
+    val peopleFirst = snap.peopleFirst
+    val shownQuery = snap.query
     val recents = com.gugaart.ui.screens.search.rememberSearchRecents()
     fun openHit(id: String) {
         recents.add(query.trim())
@@ -132,7 +134,7 @@ fun TvSearchScreen(q: String?, today: Today) {
     }
 
     Column(Modifier.fillMaxSize().testTag("tv-search")) {
-        TvPageHeader("搜索", "SEARCH", today, trailing = index.value?.let { "在 ${it.total} 部里找" })
+        TvPageHeader("搜索", "SEARCH", today, trailing = index.value?.let { "共 ${it.total} 部" })
         Box(Modifier.fillMaxSize()) {
             // ---- 左页：输入行 + 字母盘 ----
             Column(Modifier.padding(start = TvSpec.LEFT, top = 26.dp).width(TvSearchSpec.LEFT_W)) {
@@ -178,11 +180,17 @@ fun TvSearchScreen(q: String?, today: Today) {
             }
             // ---- 右页：结果 ----
             Column(Modifier.padding(start = TvSearchSpec.RIGHT_X, end = TvSpec.RIGHT, top = 26.dp).fillMaxSize().testTag("tv-search-results")) {
-                val best = hits.firstOrNull()?.takeIf { Pinyin.initials(it.title.name).equals(query.trim(), ignoreCase = true) || it.title.name.equals(query.trim(), ignoreCase = true) }
+                val best = hits.firstOrNull()?.takeIf { Pinyin.initials(it.title.name).equals(shownQuery, ignoreCase = true) || it.title.name.equals(shownQuery, ignoreCase = true) }
                 when {
-                    query.isBlank() -> TvSearchIdle(titles, recents.items, today.day, backToKeys) { term -> query = term.take(TvSearchSpec.MAX_QUERY) }
+                    query.isBlank() -> TvSearchIdle(index.value, recents.items, today.day, backToKeys) { term ->
+                        val next = term.take(TvSearchSpec.MAX_QUERY)
+                        query = next
+                        search.flush(next)
+                    }
                     titles == null -> Unit
-                    hits.isEmpty() && people.isEmpty() -> TvStateView("tv-search-none", "摊手", "片库里没有「${query.trim()}」", MascotLines.pick("search.none", hour = hour, seed = today.day), Modifier.padding(top = 60.dp), inset = false)
+                    hits.isEmpty() && people.isEmpty() ->
+                        if (search.isSearching(query, index.value != null || peopleIndex.value != null)) Unit
+                        else TvStateView("tv-search-none", "摊手", "片库里没有「${query.trim()}」", MascotLines.pick("search.none", hour = hour, seed = today.day), Modifier.padding(top = 60.dp), inset = false)
                     best != null -> {
                         TvSearchHeader("最佳匹配", "BEST MATCH", "共 ${hits.size} 条")
                         val t = best.title
@@ -215,7 +223,7 @@ fun TvSearchScreen(q: String?, today: Today) {
                         }
                         val rest = hits.drop(1).take(if (people.isEmpty()) 2 else 1)
                         if (rest.isNotEmpty()) {
-                            TvSearchHeader("也含「${query.trim()}」", "MATCHES", null)
+                            TvSearchHeader("也含「$shownQuery」", "MATCHES", null)
                             for (h in rest) TvSearchRow(h, backToKeys) { openHit(h.direct?.id ?: h.title.id) }
                         }
                         if (people.isNotEmpty()) {
@@ -231,7 +239,7 @@ fun TvSearchScreen(q: String?, today: Today) {
                             for (p in shownPeople) TvPersonRow(p, backToKeys) { openHit(p.person.id) }
                         }
                         if (shownTitles.isNotEmpty()) {
-                            TvSearchHeader("含「${query.trim()}」", "MATCHES", "${hits.size} 条")
+                            TvSearchHeader("含「$shownQuery」", "MATCHES", "${hits.size} 条")
                             // 打了集号（「仙逆 12」「XIANNIS01E12」）= 要的是那一集：电视一行只有一个「确定」，有直达的行确定就开那一集
                             for (h in shownTitles) TvSearchRow(h, backToKeys) { openHit(h.direct?.id ?: h.title.id) }
                         }
@@ -296,16 +304,18 @@ private fun TvSearchRow(hit: TitleHit, modifier: Modifier, onOpen: () -> Unit) {
  * 下面她举笔。没搜过就只有她。结果区按左回字母盘（[modifier]）。
  */
 @Composable
-private fun TvSearchIdle(titles: List<Title>?, recents: List<com.gugaart.ui.screens.search.RecentSearch>, seed: Int, modifier: Modifier, onPick: (String) -> Unit) {
+private fun TvSearchIdle(index: SearchIndex?, recents: List<com.gugaart.ui.screens.search.RecentSearch>, seed: Int, modifier: Modifier, onPick: (String) -> Unit) {
     val colors = Guga.colors
     val hour = LocalHour.current
     val now = remember { com.gugaart.ui.screens.search.SearchMemory.nowMs() }
     val offset = remember(now) { com.gugaart.ui.screens.search.SearchMemory.offsetMs(now) }
+    val shown = recents.take(4)
+    val tops = rememberRecentTops(index, shown.map { it.term })
     Column(Modifier.fillMaxWidth().testTag("tv-search-idle")) {
         if (recents.isNotEmpty()) {
             TvSearchHeader("最近搜过", "RECENT", null)
-            for ((i, r) in recents.take(4).withIndex()) {
-                val top = remember(titles, r.term) { titles?.let { searchTitles(it, r.term, 1).firstOrNull()?.title?.name } }
+            for ((i, r) in shown.withIndex()) {
+                val top = tops[r.term]
                 TvFocusable({ onPick(r.term) }, modifier.fillMaxWidth().height(TvSearchSpec.ROW_H * 0.62f), TvFocusKind.Row, key = "recent-$i", label = r.term) { focused ->
                     val ink = if (focused) colors.onInk else colors.ink
                     Row(
@@ -321,7 +331,7 @@ private fun TvSearchIdle(titles: List<Title>?, recents: List<com.gugaart.ui.scre
                 }
             }
         }
-        TvStateView("tv-search-ask", "举笔", "想找哪一部？", MascotLines.pick("search.idle", hour = hour, seed = seed), Modifier.padding(top = if (recents.isEmpty()) 40.dp else 26.dp), inset = false)
+        TvStateView("tv-search-ask", "举笔", "找哪一部", MascotLines.pick("search.idle", hour = hour, seed = seed), Modifier.padding(top = if (recents.isEmpty()) 40.dp else 26.dp), inset = false)
     }
 }
 
@@ -340,7 +350,7 @@ private fun TvPersonRow(hit: com.gugaart.ui.screens.search.PersonHit, modifier: 
             Box(Modifier.size(72.dp).clip(androidx.compose.foundation.shape.CircleShape).background(colors.line)) { CoverImage(p.photo, Modifier.fillMaxSize(), Framing(0.5f, 0.2f)) }
             Column(Modifier.weight(1f)) {
                 BasicText(highlighted(p.name, hit.range, if (focused) com.gugaart.ui.theme.GugaColors.SEAL_ON_INK else colors.spot), style = Guga.song(34.sp, FontWeight.Black, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText("演员 · 打开看 ta 在片库里的作品", Modifier.padding(top = 4.dp), style = Guga.song(22.sp, color = ink.copy(alpha = if (focused) 0.7f else 0.44f)), maxLines = 1)
+                BasicText("演员", Modifier.padding(top = 4.dp), style = Guga.song(22.sp, color = ink.copy(alpha = if (focused) 0.7f else 0.44f)), maxLines = 1)
             }
             BasicText(Pinyin.initials(p.name).uppercase().take(10), style = Guga.numeral(26.sp, ink.copy(alpha = 0.7f), letterSpacing = 0.14.em), maxLines = 1)
         }

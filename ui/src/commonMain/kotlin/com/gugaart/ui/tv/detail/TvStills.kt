@@ -76,7 +76,7 @@ fun TvStillsScreen(title: Title, stills: List<Still>, today: Today) {
     }
     Column(Modifier.fillMaxSize().testTag("tv-stills-screen")) {
         TvSectionTop(title, "剧照 ${stills.size} 张", today)
-        TvSecHead("剧照", "STILLS", Modifier.padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = 72.dp), trailing = "${stills.size} 张 · 确定看大图，← → 换一张")
+        TvSecHead("剧照", "STILLS", Modifier.padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = 72.dp), trailing = "${stills.size} 张")
         Spacer(Modifier.height(36.dp))
         val indexed = remember(stills) { stills.withIndex().toList() }
         TvLeadRow(TV_STILLS, indexed, { "still-${it.index}" }, TvStillsSpec.W, TvStillsSpec.H + TvStillsSpec.CAPTION_H, gap = TvStillsSpec.GAP, visible = 3) { (i, s), key, focused ->

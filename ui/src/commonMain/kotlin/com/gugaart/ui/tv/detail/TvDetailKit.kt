@@ -24,11 +24,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -51,8 +57,8 @@ import com.gugaart.ui.components.Seal
 import com.gugaart.ui.components.TitleLogo
 import com.gugaart.ui.components.drawCover
 import com.gugaart.ui.components.hatch
-import com.gugaart.ui.components.isDarkLogo
-import com.gugaart.ui.components.meanLuma
+import com.gugaart.ui.components.rememberBrightImage
+import com.gugaart.ui.components.rememberDarkLogo
 import com.gugaart.ui.components.rememberCrossfade
 import com.gugaart.ui.components.rememberSoft
 import com.gugaart.ui.data.Art
@@ -137,41 +143,58 @@ fun tvFirstSentence(overview: String, max: Int = 92): String {
 @Composable
 fun TvBackdrop(art: Art, deep: Boolean, modifier: Modifier = Modifier, sided: Boolean = false, heavy: Boolean = false, framing: Framing = Framing(0.5f, 0.12f)) {
     val colors = Guga.colors
+    val graph = com.gugugaga.app.ui.LocalGraph.current
     val url = art.backdrop ?: art.poster
     val blur = art.backdrop == null
-    val bmp = rememberImage(url, keepPrevious = true)
+    val sharpBmp = rememberImage(url, keepPrevious = true)
+    // 首页 TvBleed 已经把压过宽的图（tvBleedUrl，1280 宽）放进内存缓存：详情首帧锐图未到前先垫它，免等待免闪
+    val cachedLow = remember(url) {
+        url?.let { com.gugaart.ui.tv.tvBleedUrl(it) }?.takeIf { it != url }?.let { graph.images.peek(it) }
+    }
+    val bmp = sharpBmp ?: cachedLow
     val cf = rememberCrossfade(bmp)
     val soft = rememberSoft(cf.current.takeIf { blur })
-    val bright = remember(cf.current) { cf.current?.let { it.meanLuma() > BRIGHT_IMAGE_LUMA } == true }
+    val bright = rememberBrightImage(cf.current)
     val reduced = LocalMotionPrefs.current.reducedMotion
-    val a by animateFloatAsState(if (deep) TvDetailSpec.DEEP_ALPHA else 1f, tween(if (reduced) 0 else 350), label = "tv-bd")
-    Canvas(modifier.fillMaxSize().testTag(if (bright) "tv-backdrop-bright" else "tv-backdrop")) {
-        drawRect(colors.paper)
-        val img = if (blur) soft else cf.current
-        if (img == null) {
-            hatch(colors.line.copy(alpha = 0.06f), 9.dp.toPx(), 1.dp.toPx())
-        } else {
-            if (!blur) cf.previous?.let { drawCover(it, framing) }
-            drawCover(img, if (blur) Framing(0.5f, 0.5f) else framing, if (blur) 1f else cf.alpha, quality = if (blur) FilterQuality.High else FilterQuality.Medium)
-            if (blur) drawRect(colors.paper.copy(alpha = 0.34f))
-        }
-        val p = colors.paper
-        // 左侧暗角（文字栏）
-        val side = when {
-            heavy -> arrayOf(0f to p.copy(alpha = 0.95f), 0.30f to p.copy(alpha = 0.88f), 0.50f to p.copy(alpha = 0.55f), 0.68f to p.copy(alpha = 0.1f), 1f to Color.Transparent)
-            bright -> arrayOf(0f to p.copy(alpha = 0.94f), 0.26f to p.copy(alpha = 0.84f), 0.54f to p.copy(alpha = 0.4f), 0.78f to p.copy(alpha = 0.12f), 1f to p.copy(alpha = 0.12f))
-            else -> arrayOf(0f to p.copy(alpha = 0.9f), 0.24f to p.copy(alpha = 0.72f), 0.52f to p.copy(alpha = 0.18f), (if (sided) 0.66f else 0.72f) to Color.Transparent, 1f to Color.Transparent)
-        }
-        drawRect(Brush.horizontalGradient(*side))
-        // 顶部 + 底部暗角（页眉压在图上；底部渐隐进纸面）
-        val vert = if (bright) {
-            arrayOf(0f to p.copy(alpha = 0.9f), 0.12f to p.copy(alpha = 0.4f), 0.30f to p.copy(alpha = 0.1f), 0.70f to p.copy(alpha = 0.86f), 0.90f to p, 1f to p)
-        } else {
-            arrayOf(0f to p.copy(alpha = 0.72f), 0.14f to p.copy(alpha = 0.05f), 0.36f to Color.Transparent, 0.72f to p.copy(alpha = 0.8f), 0.92f to p, 1f to p)
-        }
-        drawRect(Brush.verticalGradient(*vert))
-        if (a < 1f) drawRect(p.copy(alpha = 1f - a))
-    }
+    val a = animateFloatAsState(if (deep) TvDetailSpec.DEEP_ALPHA else 1f, tween(if (reduced) 0 else 350), label = "tv-bd")
+    val p = colors.paper
+    val lineColor = colors.line
+    Box(
+        modifier
+            .fillMaxSize()
+            .testTag(if (bright) "tv-backdrop-bright" else "tv-backdrop")
+            .drawWithCache {
+                val sideStops = when {
+                    heavy -> arrayOf(0f to p.copy(alpha = 0.95f), 0.30f to p.copy(alpha = 0.88f), 0.50f to p.copy(alpha = 0.55f), 0.68f to p.copy(alpha = 0.1f), 1f to Color.Transparent)
+                    bright -> arrayOf(0f to p.copy(alpha = 0.94f), 0.26f to p.copy(alpha = 0.84f), 0.54f to p.copy(alpha = 0.4f), 0.78f to p.copy(alpha = 0.12f), 1f to p.copy(alpha = 0.12f))
+                    else -> arrayOf(0f to p.copy(alpha = 0.9f), 0.24f to p.copy(alpha = 0.72f), 0.52f to p.copy(alpha = 0.18f), (if (sided) 0.66f else 0.72f) to Color.Transparent, 1f to Color.Transparent)
+                }
+                val vertStops = if (bright) {
+                    arrayOf(0f to p.copy(alpha = 0.9f), 0.12f to p.copy(alpha = 0.4f), 0.30f to p.copy(alpha = 0.1f), 0.70f to p.copy(alpha = 0.86f), 0.90f to p, 1f to p)
+                } else {
+                    arrayOf(0f to p.copy(alpha = 0.72f), 0.14f to p.copy(alpha = 0.05f), 0.36f to Color.Transparent, 0.72f to p.copy(alpha = 0.8f), 0.92f to p, 1f to p)
+                }
+                val sideBrush = Brush.horizontalGradient(*sideStops, startX = 0f, endX = size.width)
+                val vertBrush = Brush.verticalGradient(*vertStops, startY = 0f, endY = size.height)
+                val blurDim = p.copy(alpha = 0.34f)
+                val hatchColor = lineColor.copy(alpha = 0.06f)
+                onDrawBehind {
+                    drawRect(p)
+                    val img = if (blur) soft else cf.current
+                    if (img == null) {
+                        hatch(hatchColor, 9.dp.toPx(), 1.dp.toPx())
+                    } else {
+                        if (!blur) cf.previous?.let { drawCover(it, framing) }
+                        drawCover(img, if (blur) Framing(0.5f, 0.5f) else framing, if (blur) 1f else cf.alpha, quality = if (blur) FilterQuality.High else FilterQuality.Medium)
+                        if (blur) drawRect(blurDim)
+                    }
+                    drawRect(sideBrush)
+                    drawRect(vertBrush)
+                    val av = a.value
+                    if (av < 1f) drawRect(p.copy(alpha = 1f - av))
+                }
+            },
+    )
 }
 
 /** 压在整幅图上的页眉（设计稿 `.rhead`）：左「咕咕嘎嘎」+ 英文小标，右 图注（这是哪一集的剧照，电视上横排）+ 时钟。 */
@@ -204,7 +227,7 @@ fun TvTitle(title: Title, modifier: Modifier = Modifier, small: Boolean = false,
     val logo = if (textOnly) null else rememberImage(title.art.logo, keepPrevious = false)
     if (title.art.logo != null && !textOnly) {
         // 上游图片到了以后由 TitleLogo 处理（黑笔画 → 衬纸，电视倾斜）；没到之前先出宋体片名
-        val dark = remember(logo) { logo?.isDarkLogo() == true }
+        val dark = rememberDarkLogo(logo)
         Box(modifier.testTag(if (logo == null) "tv-title-text" else if (dark) "tv-title-backed" else "tv-title-logo")) {
             TitleLogo(title.name, title.art.logo, width, if (dark && !small) height - 10.dp else height, baseSize = if (small) 44.sp else TvDetailSpec.TITLE_TIERS[tvTitleTier(title.name)] / Rules.TITLE_SCALE[Rules.titleTier(title.name)])
         }
@@ -290,8 +313,20 @@ fun TvSectionTop(title: Title, note: String, today: Today, modifier: Modifier = 
 fun TvScreens(screen: Int, count: Int, modifier: Modifier = Modifier, content: @Composable (index: Int) -> Unit) {
     val reduced = LocalMotionPrefs.current.reducedMotion
     val at by animateFloatAsState(screen.toFloat(), tween(if (reduced) 0 else TvDetailSpec.PAGE_MS), label = "tv-screens")
+    val live = com.gugaart.ui.idle.LocalIdleClock.current != null
+    var extraReady by remember { mutableStateOf(!live) }
+    if (!extraReady) {
+        LaunchedEffect(Unit) {
+            withFrameNanos { }
+            extraReady = true
+        }
+    }
     Layout(
-        content = { for (i in 0 until count) Box(Modifier.fillMaxSize().testTag("tv-screen-$i")) { content(i) } },
+        content = {
+            for (i in 0 until count) Box(Modifier.fillMaxSize().testTag("tv-screen-$i")) {
+                if (i == 0 || i == screen || extraReady) content(i)
+            }
+        },
         modifier = modifier.fillMaxSize().clipToBounds().testTag("tv-screens-$screen"),
     ) { measurables, constraints ->
         val placeables = measurables.map { it.measure(constraints) }
@@ -377,6 +412,7 @@ fun TvActionButton(
     sub: String? = null,
     progress: Float = 0f,
     default: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
     slot: (@Composable (focused: Boolean) -> Unit)? = null,
 ) {
     val colors = Guga.colors
@@ -395,12 +431,14 @@ fun TvActionButton(
                 }
             },
         TvFocusKind.Block, key, default, text,
+        onLongClick = onLongClick,
     ) { focused ->
         val ink = if (focused) colors.onInk else colors.ink
         Row(Modifier.height(76.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             if (icon != null) Icon(icon, if (focused) colors.onInk else if (primary) colors.spot else colors.ink, 30.dp, filled = icon == GuguIcon.Play)
             BasicText(text, style = Guga.song(30.sp, FontWeight.Bold, ink, letterSpacing = 0.06.em), maxLines = 1)
-            if (sub != null) BasicText(sub, style = Guga.note(23.sp, if (focused) colors.onInk.copy(alpha = 0.66f) else colors.dim), maxLines = 1)
+            // 小字一行；按钮排不下时它先让（省略号），按钮名和图标不让
+            if (sub != null) BasicText(sub, Modifier.weight(1f, fill = false), style = Guga.note(23.sp, if (focused) colors.onInk.copy(alpha = 0.66f) else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
             slot?.invoke(focused)
         }
     }
@@ -486,13 +524,14 @@ fun TvEpisodeCard(e: Title, key: String, played: Boolean, current: Boolean, subt
     val focused = groups.current == key
     val no = e.episodeNo
     val name = e.name.ifEmpty { no?.let { "第 $it 集" } ?: "" }
-    Column(modifier.width(TvSpec.EPISODE_W)) {
-        TvCardFocus(key, onClick, Modifier.graphicsLayer { translationX = if (focused) TvSpec.EPISODE_W.toPx() * 0.04f else 0f }, label = name, onLongClick = onLongClick) {
+    // 未播出（op1137b）：焦点能停，确定 / 长按都没反应；整张置灰，副行换成「未播出」小签
+    Column(modifier.width(TvSpec.EPISODE_W).alpha(if (e.unaired) com.gugaart.ui.theme.GugaColors.UNAVAILABLE_ALPHA else 1f).then(if (e.unaired) Modifier.testTag("tv-ep-unaired") else Modifier)) {
+        TvCardFocus(key, if (e.unaired) ({}) else onClick, Modifier.graphicsLayer { translationX = if (focused) TvSpec.EPISODE_W.toPx() * 0.04f else 0f }, label = name, onLongClick = if (e.unaired) ({}) else onLongClick) {
             Box(Modifier.width(TvSpec.EPISODE_W).height(TvDetailSpec.EP_H).border(1.dp, colors.ink.copy(alpha = 0.16f)).testTag(if (e.art.still == null) "tv-ep-nopic" else "tv-ep-pic")) {
                 // 没有自己的分集图：用这部剧的剧照顶上（episodeStillFallback）；连剧照都没有才是集号排版
                 val img = e.art.still ?: fallback
                 if (img != null) {
-                    CoverImage(img, Modifier.fillMaxSize(), Framing(0.5f, 0.3f))
+                    CoverImage(img, Modifier.fillMaxSize(), Framing(0.5f, 0.3f), knownSize = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntSize(TvSpec.EPISODE_W.roundToPx(), TvDetailSpec.EP_H.roundToPx()) })
                 } else {
                     // 没有剧照：集号排版
                     Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF2A251C), Color(0xFF17140F)))).padding(18.dp)) {
@@ -511,7 +550,9 @@ fun TvEpisodeCard(e: Title, key: String, played: Boolean, current: Boolean, subt
             if (no != null) BasicText(no.toString(), style = Guga.numeral(25.sp, colors.spot), maxLines = 1)
             BasicText(name, style = Guga.song(25.sp, FontWeight.Bold, if (focused) colors.ink else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (!subtitle.isNullOrEmpty()) {
+        if (e.unaired) {
+            com.gugaart.ui.components.OutlineTag("未播出", 20.sp, 2.dp, colors.dim, Modifier.padding(top = 8.dp).graphicsLayer { translationX = if (focused) 4.dp.toPx() else 0f; translationY = if (focused) 10.dp.toPx() else 0f })
+        } else if (!subtitle.isNullOrEmpty()) {
             BasicText(
                 subtitle,
                 Modifier.padding(top = 4.dp).graphicsLayer { translationX = if (focused) 4.dp.toPx() else 0f; translationY = if (focused) 10.dp.toPx() else 0f },
@@ -533,7 +574,7 @@ fun TvPersonCard(p: Person, key: String, onClick: () -> Unit, modifier: Modifier
         TvCardFocus(key, onClick, label = p.name) {
             Box(Modifier.width(width).height(height).border(1.dp, colors.ink.copy(alpha = 0.16f)).testTag(if (p.photo == null) "tv-person-nopic" else "tv-person-pic")) {
                 if (p.photo != null) {
-                    CoverImage(p.photo, Modifier.fillMaxSize(), Framing(0.5f, 0.2f)) { TvMonogram(p.name) }
+                    CoverImage(p.photo, Modifier.fillMaxSize(), Framing(0.5f, 0.2f), knownSize = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntSize(width.roundToPx(), height.roundToPx()) }) { TvMonogram(p.name) }
                 } else {
                     TvMonogram(p.name)
                 }
@@ -567,7 +608,7 @@ fun TvPosterCard(t: Title, key: String, onClick: () -> Unit, modifier: Modifier 
                         BasicText(t.name, style = Guga.song(30.sp, FontWeight.Black, lineHeight = 38.sp), maxLines = 4, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                if (t.art.poster != null) CoverImage(t.art.poster, Modifier.fillMaxSize(), Framing(0.5f, 0.5f), placeholder = plate) else plate()
+                if (t.art.poster != null) CoverImage(t.art.poster, Modifier.fillMaxSize(), Framing(0.5f, 0.5f), knownSize = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntSize(width.roundToPx(), height.roundToPx()) }, placeholder = plate) else plate()
                 if (favorite) Seal(Modifier.align(Alignment.TopEnd).padding(10.dp).graphicsLayer { rotationZ = -7f }, size = 46.dp)
                 if (t.progress > 0f) {
                     Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(6.dp).background(colors.paper.copy(alpha = 0.6f)))

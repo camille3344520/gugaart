@@ -101,7 +101,8 @@ fun FullBleed(
     modifier: Modifier = Modifier,
     framing: Framing = Framing.DEFAULT,
     caption: String? = null,
-    scrollPx: Float = 0f,
+    /** 页面滚了多少像素（图注跟着淡出）。给的是读法不是数（1.5.1 性能）：只在图注那一层读，页面不必每滚一帧重组。 */
+    scrollPx: () -> Float = { 0f },
     /** 首页封面区：有剧照也虚化、压暗（海报流和文字浮在上面）。 */
     soften: Boolean = false,
     /** 手机详情页：有海报就用竖版海报整张铺开（顶部对齐），只底部 [BleedSpec.POSTER_FADE] 渐隐；没海报照旧。 */
@@ -120,7 +121,7 @@ fun FullBleed(
     val softNow = rememberSoft(cf.current.takeIf { soften || source == BleedSource.PosterBlur })
     val softPrev = rememberSoft(cf.previous.takeIf { soften || source == BleedSource.PosterBlur })
     val current = cf.current
-    val bright = remember(current) { current != null && current.meanLuma() > BRIGHT_IMAGE_LUMA }
+    val bright = rememberBrightImage(current)
     if (onImage != null && current != null) androidx.compose.runtime.LaunchedEffect(current) { onImage(current) }
     Box(modifier.fillMaxWidth().height(height).clipToBounds().testTag("full-bleed-${source.name.lowercase()}")) {
         Canvas(Modifier.matchParentSize()) {
@@ -165,14 +166,18 @@ fun FullBleed(
             }
         }
         if (caption != null) {
-            val fade = with(androidx.compose.ui.platform.LocalDensity.current) { (1f - scrollPx / BleedSpec.CAPTION_FADE.toPx()).coerceIn(0f, 1f) }
-            if (fade > 0f) {
+            val fadePx = with(androidx.compose.ui.platform.LocalDensity.current) { BleedSpec.CAPTION_FADE.toPx() }
+            val scrolled = androidx.compose.runtime.rememberUpdatedState(scrollPx)
+            fun fadeNow(): Float = (1f - scrolled.value() / fadePx).coerceIn(0f, 1f)
+            // 淡没了才从组合里拿掉（和以前一样）；淡的过程只在绘制层读
+            val visible = remember(fadePx) { androidx.compose.runtime.derivedStateOf { fadeNow() > 0f } }
+            if (visible.value) {
                 if (Guga.uiMode == UiMode.Tv) {
-                    BasicText(caption, Modifier.align(Alignment.TopEnd).padding(top = 40.dp, end = 96.dp).graphicsLayer { alpha = fade }, style = Guga.song(Guga.type.fine, color = colors.dim), maxLines = 1)
+                    BasicText(caption, Modifier.align(Alignment.TopEnd).padding(top = 40.dp, end = 96.dp).graphicsLayer { alpha = fadeNow() }, style = Guga.song(Guga.type.fine, color = colors.dim), maxLines = 1)
                 } else {
                     VerticalCaption(
                         caption,
-                        Modifier.align(Alignment.TopEnd).padding(top = BleedSpec.VIGNETTE + height * frame.captionDown * 0.5f).graphicsLayer { alpha = fade },
+                        Modifier.align(Alignment.TopEnd).padding(top = BleedSpec.VIGNETTE + height * frame.captionDown * 0.5f).graphicsLayer { alpha = fadeNow() },
                     )
                 }
             }

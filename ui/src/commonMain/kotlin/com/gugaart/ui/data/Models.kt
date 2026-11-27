@@ -14,7 +14,8 @@ import kotlin.math.roundToInt
 enum class Kind { Movie, Series, Season, Episode, BoxSet, Person, Other }
 
 fun kindOf(type: String?): Kind = when (type) {
-    "Movie" -> Kind.Movie
+    // 家庭视频、MV、混合库里的视频（P1-12）按电影的详情页走：能播、能选版本
+    "Movie", "Video", "MusicVideo" -> Kind.Movie
     "Series" -> Kind.Series
     "Season" -> Kind.Season
     "Episode" -> Kind.Episode
@@ -82,6 +83,11 @@ data class Title(
     val sortName: String? = null,
     /** TMDB / IMDB 这些外部 id（`ProviderIds`）：「源」找重复片、记住用户选的版本用（1.5.0，data/SourceRules.kt）。没有 = 空。 */
     val providerIds: Map<String, String?> = emptyMap(),
+    /**
+     * 未播出（op1137b）：Emby 的虚拟条目（`LocationType = Virtual`，没有文件）。分集表取的时候带了 `IsMissing=false`（缺集不列），
+     * 剩下的虚拟条目就是首播日期还没到的那些：列出来，但置灰、不能点、行尾写「未播出」，下一集跳过它。和上游详情页 / 播放器一样按 Virtual 判断。
+     */
+    val unaired: Boolean = false,
 ) {
     /** 版面上显示的名字：单集在首页 / 目录里写剧名。 */
     val displayName: String get() = if (kind == Kind.Episode) seriesName ?: name else name
@@ -189,6 +195,7 @@ fun EmbyClient.titleOf(item: BaseItemDto): Title {
         originalTitle = item.originalTitle?.trim()?.takeIf { it.isNotEmpty() },
         sortName = item.sortName?.trim()?.takeIf { it.isNotEmpty() },
         providerIds = item.providerIds,
+        unaired = item.locationType == "Virtual",
     )
 }
 

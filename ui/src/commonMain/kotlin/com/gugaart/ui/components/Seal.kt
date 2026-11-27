@@ -74,11 +74,12 @@ fun Seal(modifier: Modifier = Modifier, size: Dp = 34.dp) {
 }
 
 /**
- * 印章位：虚线方格，章落在里面。[sealed] 从 false 变 true = 落章（从 2.6 倍砸下来）；变回 false = 350 ms 淡出。
+ * 印章位：章落在里面；盖了章才画那一圈虚线（P2-7：没收藏时这一格是空的，不画虚线）。[sealed] 从 false 变 true = 落章（从 2.6 倍砸下来）；变回 false = 350 ms 淡出。
  * 减弱动效：直接出现 / 消失。位置是版面上预留的一格，所以落章不挤别的东西。
+ * [frame]：这一格本身就是收藏按钮（电脑卡片悬停时的快捷操作）时，没收藏也画虚线格，不然按钮看不见。
  */
 @Composable
-fun SealSlot(sealed: Boolean, modifier: Modifier = Modifier, size: Dp = 40.dp) {
+fun SealSlot(sealed: Boolean, modifier: Modifier = Modifier, size: Dp = 40.dp, frame: Boolean = false) {
     val colors = Guga.colors
     val reduced = LocalMotionPrefs.current.reducedMotion
     // 0 = 没有章，1 = 章盖好了；首次组合直接是终值（进页面时已经收藏的不重放动画）
@@ -106,7 +107,9 @@ fun SealSlot(sealed: Boolean, modifier: Modifier = Modifier, size: Dp = 40.dp) {
         modifier
             .size(size)
             .drawBehind {
-                drawRect(colors.line, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))))
+                // P2-7：没收藏时不画虚线格（像加载失败的图 / 复选框）；格子的位置照留，盖章落在原处、不挤别的东西
+                val a = if (frame) 1f else fade.value
+                if (a > 0f) drawRect(colors.line.copy(alpha = colors.line.alpha * a), style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx()))))
             }
             .semantics { stateDescription = if (sealed) "已收藏" else "未收藏" }
             .testTag(if (sealed) "seal-on" else "seal-off"),

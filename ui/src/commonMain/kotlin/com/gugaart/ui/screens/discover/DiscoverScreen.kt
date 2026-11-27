@@ -121,7 +121,7 @@ fun DiscoverScreen(today: Today) {
                 }
                 else -> {
                     // ---- 第 1 名：整幅铺满，报头压在图上
-                    FullBleed(first?.art ?: com.gugaart.ui.data.Art(), DISCOVER_BLEED, framing = Framing.of(first?.id.orEmpty()), scrollPx = scroll.value.toFloat()) {
+                    FullBleed(first?.art ?: com.gugaart.ui.data.Art(), DISCOVER_BLEED, framing = Framing.of(first?.id.orEmpty()), scrollPx = { scroll.value.toFloat() }) {
                         Column(Modifier.padding(horizontal = dimens.margin)) {
                             Spacer(Modifier.height(dimens.statusBar + 8.dp))
                             Masthead(volume = "", date = "第 $week 周", title = "发现", leading = "DISCOVER")
@@ -173,7 +173,7 @@ fun DiscoverScreen(today: Today) {
                         }
 
                         // ---- 随手翻
-                        SectionHeader("随手挑", "LUCKY DIP", Modifier.padding(top = dimens.sectionGap), trailing = "不知道看什么")
+                        SectionHeader("随手挑", "LUCKY DIP", Modifier.padding(top = dimens.sectionGap))
                         val pick = lucky.value
                         Row(Modifier.fillMaxWidth().padding(top = 18.dp).testTag("discover-lucky"), verticalAlignment = Alignment.Top) {
                             val press = rememberPressState()
@@ -189,7 +189,6 @@ fun DiscoverScreen(today: Today) {
                                 PrimaryButton("换一部", { dip++ }, Modifier.padding(top = 16.dp), icon = null)
                             }
                         }
-                        BasicText("榜单只统计这台服务器 · 评分来自片库的资料", Modifier.fillMaxWidth().padding(top = 44.dp), style = Guga.note(type.caption, colors.faint, letterSpacing = 0.06.em).copy(textAlign = TextAlign.Center), maxLines = 1)
                     }
                 }
             }
@@ -197,7 +196,7 @@ fun DiscoverScreen(today: Today) {
             Spacer(Modifier.height(128.dp + dimens.tabLift))
         }
         // 滚动 2 dp 之后状态栏垫实心纸色（docs/platforms.md）
-        StatusBand(solid = scroll.value > 6)
+        StatusBand(solid = com.gugaart.ui.screens.scrolledPast(scroll, 6f))
     }
 }
 

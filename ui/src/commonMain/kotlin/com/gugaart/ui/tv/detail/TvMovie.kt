@@ -1,12 +1,13 @@
 package com.gugaart.ui.tv.detail
 
+import com.gugaart.ui.tv.TvLongPressMenu
+
 import com.gugaart.ui.player.formatBadges
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -72,6 +73,12 @@ fun tvMbps(bits: Long?): String? = bits?.takeIf { it > 0 }?.let { "${kotlin.math
 /** 「版本」按钮里的小字：选中那个源的名字，太长截到 12 个字（按钮排在一行里）。纯函数。 */
 fun tvVersionSub(title: String): String = if (title.length > 12) title.take(11) + "…" else title
 
+/**
+ * 开播带哪条音轨 / 字幕（纯函数，有单测）：只带用户点过的；字幕点了「关」= -1；片源里没有字幕流 = 不带（流表空的源别被关掉）。
+ */
+fun tvPickedTracks(audioTouched: Boolean, audio: Int?, subTouched: Boolean, sub: Int?, hasSubtitles: Boolean): Pair<Int?, Int?> =
+    (if (audioTouched) audio else null) to (if (subTouched && hasSubtitles) (sub ?: -1) else null)
+
 /** 按钮里的小字：默认音轨 / 默认字幕的名字（「关 · 有 3 条」「无」）。纯函数，有单测。 */
 fun tvSubtitleSummary(subs: List<MediaStream>, selected: Int?): String = when {
     subs.isEmpty() -> "无"
@@ -134,7 +141,9 @@ fun TvMovie(movie: Title, today: Today) {
     val groups = remember { TvGroups() }
     val back = LocalBackDispatcher.current
     val poster = rememberImage(movie.art.poster, keepPrevious = true)
-    LaunchedEffect(poster) { chrome.spot = poster?.spot(tv = true) }
+    val tvSpot = com.gugaart.ui.components.rememberSpotColor(poster, tv = true)
+    LaunchedEffect(tvSpot) { chrome.spot = tvSpot }
+    LaunchedEffect(movie.id) { com.gugaart.ui.tv.TvPerfTiming.onDetailContent(movie.id) }
     val similar = rememberLoad("tv-similar", movie.id) { loadSimilar(it, movie.id) }
     val stills = rememberItemStills(movie.id)
     val hasStills = showStills(stills)
@@ -147,10 +156,14 @@ fun TvMovie(movie: Title, today: Today) {
     val subs = com.gugaart.ui.player.chineseSubtitlesFirst(source?.mediaStreams.orEmpty().filter { it.type == "Subtitle" })
     var audio by remember(movie.id, picked?.itemId, source?.id) { mutableStateOf((audios.firstOrNull { it.isDefault == true } ?: audios.firstOrNull())?.index) }
     var sub by remember(movie.id, picked?.itemId, source?.id) { mutableStateOf(subs.firstOrNull { it.isDefault == true }?.index) }
+    // 开播只带用户在页边里点过的（没动过 = 不带，播放器按自己的「字幕默认」/ 音轨语言设置来）；换版本算没动过
+    var audioTouched by remember(movie.id, picked?.itemId, source?.id) { mutableStateOf(false) }
+    var subTouched by remember(movie.id, picked?.itemId, source?.id) { mutableStateOf(false) }
     // 页边选项栏：ver / tracks / null
     var side by remember { mutableStateOf(preset.state?.takeIf { it == "ver" || it == "tracks" }) }
+    var prevSide by remember { mutableStateOf(side) }
+    LaunchedEffect(side) { if (prevSide != side) { com.gugaart.ui.tv.TvPerfTiming.onPanelToggle(side != null, side ?: prevSide ?: "side"); prevSide = side } }
     var sideFrom by remember { mutableStateOf("cta-audio") }
-
     val fav = chrome.isFavorite(movie)
     val played = chrome.isPlayed(movie.id, movie.played)
     val screen = when (groups.currentGroup) {
@@ -198,14 +211,15 @@ fun TvMovie(movie: Title, today: Today) {
         }
     }
     val play: () -> Unit = {
-        graph.playback.play(sources.playRoute(movie.positionSec?.times(1000), audio = audio, subtitle = sub))
+        val (a, st) = tvPickedTracks(audioTouched, audio, subTouched, sub, subs.isNotEmpty())
+        graph.playback.play(sources.playRoute(movie.positionSec?.times(1000), audio = a, subtitle = st))
     }
 
     TvGroupsRoot(groups, Modifier.testTag("tv-movie")) {
         TvBackdrop(movie.art, deep = screen > 0, sided = side != null)
         TvScreens(screen, if (hasStills) 3 else 2) { index ->
             if (index == 0) Box(Modifier.fillMaxSize()) {
-                TvRunHead(badges = formatBadges(source, audio, null), english = if (movie.kind == Kind.Episode) "EPISODE" else "FILM", caption = if (movie.art.backdrop != null) "剧照｜主视觉" else "没有剧照｜用海报虚化代替", today = today)
+                TvRunHead(badges = formatBadges(source, audio, null), english = if (movie.kind == Kind.Episode) "EPISODE" else "FILM", caption = if (movie.art.backdrop != null) "剧照｜主视觉" else "海报｜主视觉", today = today)
                 Column(Modifier.align(Alignment.BottomStart).padding(start = TvSpec.LEFT, bottom = TvDetailSpec.HERO_BOTTOM).width(TvDetailSpec.HERO_WIDTH)) {
                     TvKick(tvKickOf(movie, tvKindName(movie.kind)))
                     TvTitle(movie, Modifier.padding(top = 14.dp, bottom = 16.dp))
@@ -213,22 +227,23 @@ fun TvMovie(movie: Title, today: Today) {
                     val lead = tvFirstSentence(movie.overview)
                     if (lead.isNotEmpty()) BasicText(lead, Modifier.padding(top = 18.dp).width(980.dp), style = Guga.song(28.sp, FontWeight.SemiBold, lineHeight = 43.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     // 版本只有一个时不出现入口（真实数据里通常只有一个）；没有音轨 / 字幕信息的同理
-                    val keys = listOfNotNull("cta-play", "cta-ver".takeIf { sources.sources.size > 1 }, "cta-audio".takeIf { audios.isNotEmpty() }, "cta-sub".takeIf { source != null }, "cta-fav", "cta-played")
+                    // P2-6：第一行最多 5 个（播放 / 版本 / 音轨 / 字幕 / 收藏），不折到第二行；「标记已看」收进长按确定的菜单（每个按钮上长按都是这部片的菜单）
+                    val keys = listOfNotNull("cta-play", "cta-ver".takeIf { sources.sources.size > 1 }, "cta-audio".takeIf { audios.isNotEmpty() }, "cta-sub".takeIf { source != null }, "cta-fav")
+                    val menu = { TvLongPressMenu.open(movie) }
                     TvGroup("cta", keys, default = "cta-play")
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    FlowRow(Modifier.padding(top = 26.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+                    // 一行排完（P2-6）：版本 / 音轨 / 字幕按钮里的小字放不下就省略号，播放和收藏不让
+                    Row(Modifier.padding(top = 26.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         TvActionButton(
                             "cta-play", if (movie.progress > 0f) "续看" else "播放", play, icon = GuguIcon.Play, primary = true,
-                            sub = if (movie.progress > 0f) Rules.remaining(movie.progress, movie.runtimeSec) else null, progress = movie.progress, default = true,
+                            sub = if (movie.progress > 0f) Rules.remaining(movie.progress, movie.runtimeSec) else null, progress = movie.progress, default = true, onLongClick = menu,
                         )
-                        if (sources.sources.size > 1) TvActionButton("cta-ver", sources.sectionTitle, { sideFrom = "cta-ver"; side = "ver" }, icon = GuguIcon.Layers, sub = picked?.let { tvVersionSub(sources.rowText(it).title) })
-                        if (audios.isNotEmpty()) TvActionButton("cta-audio", "音轨", { sideFrom = "cta-audio"; side = "tracks" }, icon = GuguIcon.AudioLines, sub = audios.firstOrNull { it.index == audio }?.let { streamRow(it).name })
-                        if (source != null) TvActionButton("cta-sub", "字幕", { if (subs.isNotEmpty()) { sideFrom = "cta-sub"; side = "tracks" } }, icon = GuguIcon.Captions, sub = tvSubtitleSummary(subs, sub))
+                        if (sources.sources.size > 1) TvActionButton("cta-ver", sources.sectionTitle, { sideFrom = "cta-ver"; side = "ver" }, Modifier.weight(1f, fill = false), icon = GuguIcon.Layers, sub = picked?.let { tvVersionSub(sources.rowText(it).title) }, onLongClick = menu)
+                        if (audios.isNotEmpty()) TvActionButton("cta-audio", "音轨", { sideFrom = "cta-audio"; side = "tracks" }, Modifier.weight(1f, fill = false), icon = GuguIcon.AudioLines, sub = audios.firstOrNull { it.index == audio }?.let { streamRow(it).name }, onLongClick = menu)
+                        if (source != null) TvActionButton("cta-sub", "字幕", { if (subs.isNotEmpty()) { sideFrom = "cta-sub"; side = "tracks" } }, Modifier.weight(1f, fill = false), icon = GuguIcon.Captions, sub = tvSubtitleSummary(subs, sub), onLongClick = menu)
                         TvActionButton("cta-fav", "收藏", {
                             graph.toggleFavorite(chrome, movie.id, fav)
                             MascotLines.pick(if (fav) "fav.off" else "fav.on", hour = hour, seed = movie.id.hashCode() + today.day)
-                        }, icon = GuguIcon.Heart) { TvSealSlot(fav, it) }
-                        TvActionButton("cta-played", if (played) "已看" else "标记已看", { graph.togglePlayed(chrome, movie.id, played) }, icon = GuguIcon.Check)
+                        }, icon = GuguIcon.Heart, onLongClick = menu) { TvSealSlot(fav, it) }
                     }
                 }
                 TvDownHint(listOfNotNull("规格".takeIf { source != null }, "演职人员 ${movie.people.size}".takeIf { movie.people.isNotEmpty() }, "相似".takeIf { similar.value?.isNotEmpty() == true }, "剧照 ${stills.size}".takeIf { hasStills }))
@@ -272,24 +287,23 @@ fun TvMovie(movie: Title, today: Today) {
                         }
                         SourceProgress(sources, 21.sp, 10.dp, Modifier.padding(top = 18.dp, start = 20.dp), lineGap = 8.dp)
                     }
-                    BasicText("码率超过设置里的上限时，会先问你要不要服务器转码。", Modifier.padding(top = 34.dp), style = Guga.song(21.sp, color = colors.faint, lineHeight = 34.sp))
                 } else {
                     if (audios.isNotEmpty()) {
                         TvSecHead("音轨", "AUDIO", trailing = "${audios.size} 条")
                         TvGroup("side-audio", audios.map { "audio-${it.index}" }, horizontal = false, default = "audio-$audio")
                         for (s in audios) {
                             val r = streamRow(s)
-                            TvOption("audio-${s.index}", r.name, r.note, s.index == audio) { audio = s.index }
+                            TvOption("audio-${s.index}", r.name, r.note, s.index == audio) { audio = s.index; audioTouched = true }
                         }
                         Box(Modifier.height(34.dp))
                     } else groups.remove("side-audio")
                     if (subs.isNotEmpty()) {
                         TvSecHead("字幕", "SUBTITLES", trailing = "${subs.size} 条")
                         TvGroup("side-sub", listOf("sub-off") + subs.map { "sub-${it.index}" }, horizontal = false, default = if (sub == null) "sub-off" else "sub-$sub")
-                        TvOption("sub-off", "关", "", sub == null) { sub = null }
+                        TvOption("sub-off", "关", "", sub == null) { sub = null; subTouched = true }
                         for (s in subs) {
                             val r = streamRow(s)
-                            TvOption("sub-${s.index}", r.name, r.note, s.index == sub) { sub = s.index }
+                            TvOption("sub-${s.index}", r.name, r.note, s.index == sub) { sub = s.index; subTouched = true }
                         }
                     } else groups.remove("side-sub")
                 }
@@ -337,7 +351,7 @@ fun TvSpecTable(source: MediaSourceInfo, audios: List<MediaStream>, subs: List<M
         listOfNotNull(source.container?.uppercase(), tvGb(source.size), tvMbps(source.bitrateOrNull())).joinToString(" · ").takeIf { it.isNotEmpty() }?.let { "容器 · 大小" to it },
         v?.let { "视频" to listOfNotNull(if (it.width != null && it.height != null) "${it.width} × ${it.height}" else null, it.codec?.uppercase(), it.videoRange?.takeIf { r -> r.isNotBlank() }).joinToString(" · ") },
         audios.takeIf { it.isNotEmpty() }?.let { a -> "音轨" to a.joinToString("　/　") { s -> streamRow(s).let { r -> listOf(r.name, r.note).filter(String::isNotEmpty).joinToString(" · ") } } },
-        "字幕" to if (subs.isEmpty()) "没有字幕（服务器上这部片子一条都没有）" else subs.joinToString("　/　") { s -> streamRow(s).name },
+        "字幕" to if (subs.isEmpty()) "没有字幕" else subs.joinToString("　/　") { s -> streamRow(s).name },
     )
     Column(Modifier.padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = 20.dp).testTag("tv-spec")) {
         TvSecHead("放映规格", "SPECS")

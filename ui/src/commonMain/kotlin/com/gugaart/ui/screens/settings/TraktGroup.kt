@@ -65,12 +65,12 @@ internal fun TraktGroup() {
 
     SettingGroup("Trakt", "TRAKT")
     when (val s = state) {
-        TraktState.Unavailable -> SettingRow("连接 Trakt", note = "这一版没有带 Trakt 应用，连不了", tag = "trakt-unavailable")
+        TraktState.Unavailable -> SettingRow("连接 Trakt", note = "这一版不支持", tag = "trakt-unavailable")
         TraktState.Disconnected, is TraktState.Expired -> {
             val expired = state as? TraktState.Expired
             SettingRow(
                 if (expired != null) "Trakt 的授权过期了" else "连接 Trakt",
-                note = message ?: if (expired != null) (expired.user?.let { "@$it · " } ?: "") + "重新连接一次就好" else "看的时候自动记到 Trakt；Trakt 上看过的可以同步回 Emby",
+                note = message ?: expired?.user?.let { "@$it" },
                 tag = if (expired != null) "trakt-expired" else "trakt-connect",
             ) {
                 ActionWord(if (expired != null) "重新连接" else "连接", {
@@ -89,7 +89,7 @@ internal fun TraktGroup() {
             val isCopied = copied == s.code.userCode
             SettingRow(
                 "在浏览器打开 ${s.code.verificationUrl.removePrefix("https://")}",
-                note = if (isCopied) "下面这串码已经复制好了：在网页里登录 Trakt，粘贴进去；输好了这里会自己连上" else "用手机或电脑打开这个网址，登录 Trakt，输入下面这串码；输好了这里会自己连上",
+                note = if (isCopied) "码已复制，在 Trakt 网页登录后粘贴" else "在 Trakt 网页登录后输入下面的码",
                 tag = "trakt-waiting",
             ) {
                 ActionWord("取消", { job?.cancel(); job = null })
@@ -107,10 +107,10 @@ internal fun TraktGroup() {
             SettingRow("已连接 Trakt", note = s.user?.let { "@$it" } ?: "已连接", tag = "trakt-connected") {
                 ActionWord("断开", { scope.launch { TraktService.disconnect() } }, danger = true)
             }
-            SettingRow("看的时候记到 Trakt", note = "开始、暂停、看完都同步过去；看到 80% 以上 Trakt 记为看过", tag = "trakt-scrobble") {
+            SettingRow("看的时候记到 Trakt", tag = "trakt-scrobble") {
                 OnOff(prefs.scrobble, { TraktService.setPrefs(g.deps.local, prefs.copy(scrobble = it)) })
             }
-            SettingRow("Trakt 看过的同步到 Emby", note = syncMsg ?: "只把 Emby 里还没看的标成已看，不会改回没看", tag = "trakt-sync") {
+            SettingRow("Trakt 看过的同步到 Emby", note = syncMsg ?: "只把未看的标成已看", tag = "trakt-sync") {
                 ActionWord(if (syncMsg == "同步中…") "同步中…" else "同步", {
                     val client = g.session.session.value?.client ?: return@ActionWord
                     scope.launch { TraktService.syncToEmby(client) }

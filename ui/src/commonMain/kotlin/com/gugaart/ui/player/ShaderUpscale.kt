@@ -9,8 +9,8 @@ import org.jetbrains.compose.resources.ExperimentalResourceApi
  * 画质面板的「着色器增强」（Anime4K / FSR）。
  *
  * 预设链照 Anime4K 官方 v4.0.1 `GLSL_Instructions.md` 的 **HQ** 档（顺序即下发顺序）；FSR 是 AMD FSR v1.0.2 的 mpv 移植（单文件）。
- * 原件在 `third_party/shaders/`，构建时合进资源 `files/shaders/`（[SHADER_RES_DIR]）。选择记在画报自己的键 `gugaart.settings.v1`
- * （[com.gugaart.ui.data.GugaPrefs.shader]），下次开播沿用；应用时机在 [RememberShaderApply]。
+ * 原件在 `third_party/shaders/`，构建时合进资源 `files/shaders/`（[SHADER_RES_DIR]）。按片记在画报自己的键 `gugaart.settings.v1`
+ * （[com.gugaart.ui.data.GugaPrefs.itemShaders] / 默认 [com.gugaart.ui.data.GugaPrefs.defaultShader]）；应用时机在 [RememberShaderApply]。
  *
  * **只在 mpv 系内核出现**：引擎要有 [com.gugugaga.app.player.PlayerEngine.shaders]（ExoPlayer / VLC 没有），平台要能把字节写成
  * 缓存文件（[FontImportHost]，没接文件缝的壳为 null；电视给的是 `canPick=false` 的 host——能写文件、不能选字体）——两者缺一就不画入口（[shaderEntryVisible]）。

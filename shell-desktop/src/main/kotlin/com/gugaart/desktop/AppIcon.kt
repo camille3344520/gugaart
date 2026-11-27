@@ -15,12 +15,13 @@ import javax.imageio.ImageIO
 internal object AppIcon {
     private val SIZES = listOf(16, 20, 24, 32, 40, 48, 64, 128, 256)
 
-    /** 几档尺寸的图标（读不到 = 空，窗口照旧用系统的）。 */
-    val images: List<Image> by lazy {
-        val src = runCatching { AppIcon::class.java.getResourceAsStream("/gugaart/icon-512.png")?.use { ImageIO.read(it) } }.getOrNull()
-            ?: return@lazy emptyList()
-        SIZES.map { s -> scaled(src, s) }
+    /** 解码一次的原图（512 × 512）：窗口图标缩它，Dock / ⌘Tab 也用它（以前那一处自己再解码一遍同一张 PNG）。 */
+    val source: BufferedImage? by lazy {
+        runCatching { AppIcon::class.java.getResourceAsStream("/gugaart/icon-512.png")?.use { ImageIO.read(it) } }.getOrNull()
     }
+
+    /** 几档尺寸的图标（读不到 = 空，窗口照旧用系统的）。 */
+    val images: List<Image> by lazy { source?.let { src -> SIZES.map { s -> scaled(src, s) } } ?: emptyList() }
 
     fun apply(vararg windows: Window) {
         val list = images

@@ -4,6 +4,9 @@ import com.gugaart.ui.screens.me.Specials
 import com.gugaart.ui.screens.me.SpecialNews
 import com.gugaart.ui.screens.me.SpecialGrid
 import com.gugaart.ui.screens.me.RankBadge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import com.gugugaga.ds.physics.pressGraphics
 import com.gugaart.ui.screens.me.Ranks
@@ -23,8 +26,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,13 +79,14 @@ import com.gugaart.ui.screens.open
 import com.gugaart.ui.screens.pageStateOf
 import com.gugaart.ui.screens.settings.AboutSection
 import com.gugaart.ui.screens.settings.AccountSection
+import com.gugaart.ui.screens.settings.AdvancedSection
+import com.gugaart.ui.screens.settings.AppearanceSection
+import com.gugaart.ui.screens.settings.BackupSection
 import com.gugaart.ui.screens.settings.CacheSection
 import com.gugaart.ui.screens.settings.DanmakuSection
 import com.gugaart.ui.screens.settings.GugaSection
-import com.gugaart.ui.screens.settings.LayoutSection
 import com.gugaart.ui.screens.settings.LicensesBody
 import com.gugaart.ui.screens.settings.OpenSourceLicenses
-import com.gugaart.ui.screens.settings.LookSection
 import com.gugaart.ui.screens.settings.PlaybackSection
 import com.gugaart.ui.screens.settings.StrmSection
 import com.gugaart.ui.screens.settings.SubsSection
@@ -117,12 +123,14 @@ object DesktopSystemSpec {
 /**
  * 我的（设计稿 `p=me`）：读者证（她的固定位置之一）+ 记录 / 收藏在同一页。[tab]：`Route.History(tab)` 的 tab（"favorites" = 收藏）；
  * 截图预置 `fav` / `favempty` 也落在收藏。数据复用手机的 `loadMe` / `loadHistory` / `loadFavs`（只读）。
- * 和设计稿的差异：记录不按「今天 / 昨天」分组（设计稿里的分组日期是摆的）；「本月看完」换成真实的「看过」部数（电影一部、剧集一季算一部，
+ * 和设计稿的差异：记录不按「今天 / 昨天」分组（设计稿里的分组日期是摆的）；「本月看完」换成真实的「已看」部数（电影一部、剧集一季算一部，
  * 和读者证上的称号同一个数）。
  */
 @Composable
 fun DesktopMeScreen(today: Today, tab: String?) {
     val g = LocalGraph.current
+    // P2-13：进了「我的」导航上的小点清掉
+    androidx.compose.runtime.LaunchedEffect(Unit) { com.gugaart.ui.screens.me.RankBoard.seen() }
     val colors = Guga.colors
     val state = LocalPreset.current.state
     val m = Guga.dimens.margin
@@ -160,11 +168,10 @@ fun DesktopMeScreen(today: Today, tab: String?) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(Guga.rem(3.6f)), verticalAlignment = Alignment.CenterVertically) {
                     val d = me.value
-                    MeStat(d?.watching?.toString() ?: "—", "在看")
                     MeStat(d?.favorites?.toString() ?: "—", "收藏")
-                    MeStat(d?.played?.toString() ?: "—", "看过")
+                    MeStat(d?.played?.toString() ?: "—", "已看")
                     Column(verticalArrangement = Arrangement.spacedBy(Guga.rem(1f))) {
-                        MeLink(GuguIcon.UserRound, "切换账号 / 服务器") { g.nav.navigate(Route.Servers) }
+                        MeLink(GuguIcon.UserRound, "切换服务器") { g.nav.navigate(Route.Servers) }
                         MeLink(GuguIcon.Settings, "设置") { g.nav.navigate(Route.Settings()) }
                     }
                 }
@@ -174,7 +181,7 @@ fun DesktopMeScreen(today: Today, tab: String?) {
             Row(Modifier.fillMaxWidth().padding(vertical = Guga.rem(1.8f)).testTag("me-specials"), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.width(Guga.rem(16f))) {
                     BasicText("特别称号", style = Guga.song(rsp(2.2f), FontWeight.Black, letterSpacing = 0.1.em), maxLines = 1)
-                    BasicText("${RankBoard.owned.size} / ${Specials.COUNT} · 点一枚看拿法", Modifier.padding(top = Guga.rem(0.4f)), style = Guga.note(rsp(1.3f), colors.dim), maxLines = 1)
+                    BasicText("${RankBoard.owned.size} / ${Specials.COUNT}", Modifier.padding(top = Guga.rem(0.4f)), style = Guga.note(rsp(1.3f), colors.dim), maxLines = 1)
                 }
                 SpecialGrid(RankBoard.owned, Modifier.weight(1f), columns = 12, badge = Guga.rem(5.6f), nameSize = rsp(1.15f), rows = 1) { id -> RankBoard.special = SpecialNews(listOf(id), browse = true) }
             }
@@ -199,7 +206,6 @@ fun DesktopMeScreen(today: Today, tab: String?) {
                         MascotPoseNamed("捧白纸", Guga.rem(16f))
                         Column(Modifier.padding(start = Guga.rem(2.4f)).width(Guga.rem(40f))) {
                             BasicText("收藏夹还是空的", style = Guga.song(rsp(2.4f), FontWeight.Black, letterSpacing = 0.08.em), maxLines = 1)
-                            BasicText("在详情页点「收藏」，或者在任何一张海报上右键 → 收藏，就会收进这里。", Modifier.padding(top = Guga.rem(0.8f)), style = Guga.song(rsp(1.4f), color = colors.dim, lineHeight = rsp(2.5f)), maxLines = 3)
                         }
                     }
                     else -> {
@@ -274,7 +280,7 @@ private fun MeSeg(text: String, on: Boolean, onClick: () -> Unit) {
     )
 }
 
-/** 记录的一行：16 rem 的横图（进度线）| 片名 / 副行 | 进度百分比（0 = 未开始）。悬停片名变专色，右键 = 条目菜单。 */
+/** 记录的一行：16 rem 的横图（进度线）| 片名 / 副行 | 进度百分比（0 = 未看）。悬停片名变专色，右键 = 条目菜单。 */
 @Composable
 private fun HistoryLine(t: Title) {
     val g = LocalGraph.current
@@ -291,7 +297,7 @@ private fun HistoryLine(t: Title) {
             BasicText(historyLine(t), Modifier.padding(top = Guga.rem(0.3f)), style = Guga.note(rsp(1.25f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (t.pct != null) BasicText("${t.pct}%", style = Guga.numeral(rsp(1.6f), colors.dim), maxLines = 1)
-        else BasicText(if (t.played) "看完" else "未开始", style = Guga.note(rsp(1.4f), colors.dim), maxLines = 1)
+        else BasicText(if (t.played) "已看" else "未看", style = Guga.note(rsp(1.4f), colors.dim), maxLines = 1)
     }
     Rule()
 }
@@ -299,9 +305,9 @@ private fun HistoryLine(t: Title) {
 /* ============================== 设置（两栏） ============================== */
 
 /**
- * 设置（设计稿 `p=settings`）：左栏九个分区（编号 / 分区名 / 英文小标，当前的专色），右栏这一区的条目。
- * 设置树、键、写回**完全是手机那一套**（`screens/settings/SettingsSections.kt`，上游的键，不新增）：右栏直接嵌手机的分区内容，只重排外框；
- * 播放分区多一张快捷键表（键位从上游 `PlayerKeys` 解析出来，不手抄）。没给分区 = 第一个（外观）。
+ * 设置：左栏六个主要分区 + 可折叠「高级」（P2-18），右栏这一区的条目。
+ * 设置树、键、写回**完全是手机那一套**（`screens/settings/SettingsSections.kt`）：右栏直接嵌手机的分区内容，只重排外框；
+ * 播放分区多一张快捷键表（键位从上游 `PlayerKeys` 解析出来，不手抄）。没给分区 = 第一个（账号与服务器）。
  */
 @Composable
 fun DesktopSettingsScreen(section: String?, today: Today) {
@@ -309,23 +315,42 @@ fun DesktopSettingsScreen(section: String?, today: Today) {
     val colors = Guga.colors
     val preset = LocalPreset.current
     val wanted = section ?: when (preset.state) {
-        "ui" -> "interface"
+        "ui" -> "appearance"
         "play", "dd" -> "playback"
         "strm" -> "strm"
         "sub" -> "subtitles"
         "dm" -> "danmaku"
         "cache" -> "cache"
         "acct" -> "account"
+        "backup" -> "backup"
         "about" -> "about"
+        "diag" -> "diagnostics"
+        "adv" -> "advanced"
         else -> null
     }
     // 「开源许可」是关于下面的一页：左栏亮着「关于」，右栏换成许可清单
     val licenses = wanted == OpenSourceLicenses.KEY
-    val sec = if (licenses) GugaSection.About else GugaSection.of(wanted) ?: GugaSection.Look
+    val sec = if (licenses) GugaSection.About else GugaSection.of(wanted) ?: GugaSection.Account
+    val activeNav = if (sec == GugaSection.Diagnostics) GugaSection.About else sec
     val settings by g.settings.state.collectAsState()
     val prefs by rememberGugaStore().prefs.collectAsState()
     val session by g.session.session.collectAsState()
-    val facts = SummaryFacts(settings, prefs, session?.let { it.userName to it.serverName }, g.deps.appVersion, null)
+    val webdavConfigured by produceState(false) {
+        value = com.gugaart.ui.backup.WebDavConfig.load(g.deps.secure).complete
+    }
+    val danmakuConfigured = com.gugaart.ui.danmaku.rememberDanmakuConfigured()
+    val facts = SummaryFacts(
+        settings,
+        prefs,
+        session?.let { it.userName to it.serverName },
+        g.deps.appVersion,
+        null,
+        danmakuConfigured = danmakuConfigured,
+        webdavConfigured = webdavConfigured,
+        hasIdleHome = true,
+    )
+    var advOpen by remember { mutableStateOf(sec.advanced || licenses) }
+    LaunchedEffect(sec, licenses) { if (sec.advanced || licenses) advOpen = true }
     // 截图预置 `dd`：首选引擎的选择器推开着（纸面语言，推开不盖）
     val pageState = LocalPageState.current ?: "pick=engine".takeIf { preset.state == "dd" }
     val pick = pageStateOf(pageState, "pick")
@@ -333,8 +358,8 @@ fun DesktopSettingsScreen(section: String?, today: Today) {
         Row(Modifier.fillMaxWidth().padding(horizontal = Guga.dimens.margin)) {
             Column(Modifier.width(Guga.rem(if (dWidth() == DWidth.Sm) 22f else DesktopSystemSpec.SETTINGS_NAV)).testTag("settings-nav")) {
                 Rule(strong = true)
-                for (s in GugaSection.entries) {
-                    val on = s == sec
+                for (s in GugaSection.PRIMARY) {
+                    val on = s == activeNav
                     val hover = rememberHover()
                     val press = rememberPressState()
                     val ink = if (on || hover.value) colors.spot else colors.ink
@@ -348,29 +373,79 @@ fun DesktopSettingsScreen(section: String?, today: Today) {
                     }
                     Rule()
                 }
+                run {
+                    val advOn = activeNav == GugaSection.Advanced
+                    val hover = rememberHover()
+                    val press = rememberPressState()
+                    val ink = if (advOn || hover.value) colors.spot else colors.ink
+                    Row(
+                        Modifier.fillMaxWidth().hover(hover).deskFocusRing(press).pressable(press, label = GugaSection.Advanced.title, onClick = {
+                            if (!advOpen) {
+                                advOpen = true
+                                if (!advOn) g.nav.replace(Route.Settings(GugaSection.Advanced.key))
+                            } else if (!advOn) {
+                                g.nav.replace(Route.Settings(GugaSection.Advanced.key))
+                            } else {
+                                advOpen = false
+                            }
+                        }).padding(vertical = Guga.rem(1.4f)).testTag(if (advOn) "settings-nav-on" else "settings-nav-advanced"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        BasicText(GugaSection.Advanced.title, Modifier.weight(1f), style = Guga.song(rsp(1.65f), FontWeight.Black, ink, letterSpacing = 0.06.em), maxLines = 1)
+                        BasicText(GugaSection.Advanced.english, Modifier.padding(end = Guga.rem(0.8f)), style = Guga.numeral(rsp(1.0f), colors.faint, letterSpacing = 0.1.em), maxLines = 1)
+                        Icon(if (advOpen) GuguIcon.ChevronDown else GuguIcon.ChevronRight, colors.dim, Guga.rem(1.2f))
+                    }
+                    Rule()
+                }
+                AnimatedVisibility(advOpen, enter = expandVertically(), exit = shrinkVertically()) {
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .drawBehind { drawLine(colors.seal, Offset(1.dp.toPx(), 0f), Offset(1.dp.toPx(), size.height), 2.dp.toPx()) }
+                            .padding(start = Guga.rem(1.8f))
+                            .testTag("settings-nav-advanced-list"),
+                    ) {
+                        for (s in GugaSection.ADVANCED_CHILDREN) {
+                            val on = s == activeNav
+                            val hover = rememberHover()
+                            val press = rememberPressState()
+                            val ink = if (on || hover.value) colors.spot else colors.ink
+                            Row(
+                                Modifier.fillMaxWidth().hover(hover).deskFocusRing(press).pressable(press, label = s.title, onClick = { if (!on || licenses) g.nav.replace(Route.Settings(s.key)) }).padding(vertical = Guga.rem(1.2f)).testTag(if (on) "settings-nav-on" else "settings-nav-row"),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                BasicText(s.title, Modifier.weight(1f), style = Guga.song(rsp(1.5f), FontWeight.Bold, ink, letterSpacing = 0.04.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                BasicText(s.english, style = Guga.numeral(rsp(0.95f), colors.faint, letterSpacing = 0.1.em), maxLines = 1)
+                            }
+                            Rule()
+                        }
+                    }
+                }
                 BasicText("${DesktopCommand.Settings.hint(LocalDesktopHost.current.modifier) ?: "Ctrl ,"} 打开设置 · Esc 返回", Modifier.padding(top = Guga.rem(1.6f)), style = Guga.note(rsp(1.1f), colors.faint), maxLines = 1)
             }
             Spacer(Modifier.width(Guga.rem(if (dWidth() == DWidth.Sm) 3.2f else DesktopSystemSpec.SETTINGS_GAP)))
             Column(Modifier.weight(1f).testTag("settings-body")) {
+                val headerSec = if (sec == GugaSection.Diagnostics) GugaSection.About else sec
                 Row(verticalAlignment = Alignment.Bottom) {
-                    BasicText(if (licenses) "开源许可" else sec.title, style = Guga.song(rsp(5.2f), FontWeight.Black, lineHeight = rsp(6f), letterSpacing = 0.06.em), maxLines = 1)
-                    BasicText(if (licenses) "LICENSES" else sec.english, Modifier.padding(start = Guga.rem(1.6f), bottom = Guga.rem(1.2f)), style = Guga.numeral(rsp(1.15f), colors.spot, letterSpacing = 0.24.em), maxLines = 1)
+                    BasicText(if (licenses) "开源许可" else headerSec.title, style = Guga.song(rsp(5.2f), FontWeight.Black, lineHeight = rsp(6f), letterSpacing = 0.06.em), maxLines = 1)
+                    BasicText(if (licenses) "LICENSES" else headerSec.english, Modifier.padding(start = Guga.rem(1.6f), bottom = Guga.rem(1.2f)), style = Guga.numeral(rsp(1.15f), colors.spot, letterSpacing = 0.24.em), maxLines = 1)
                 }
-                BasicText(if (licenses) OpenSourceLicenses.INTRO else sectionSummary(sec, facts), Modifier.padding(top = Guga.rem(0.6f), bottom = Guga.rem(2.4f)), style = Guga.song(rsp(1.4f), color = colors.dim), maxLines = if (licenses) 2 else 1, overflow = TextOverflow.Ellipsis)
+                BasicText(if (licenses) OpenSourceLicenses.INTRO else sectionSummary(headerSec, facts), Modifier.padding(top = Guga.rem(0.6f), bottom = Guga.rem(2.4f)), style = Guga.song(rsp(1.4f), color = colors.dim), maxLines = if (licenses) 2 else 1, overflow = TextOverflow.Ellipsis)
                 if (licenses) LicensesBody() else CompositionLocalProvider(LocalPageState provides pageState) {
                     when (sec) {
-                        GugaSection.Look -> LookSection(pick)
-                        GugaSection.Layout -> LayoutSection()
+                        GugaSection.Account -> AccountSection()
                         GugaSection.Playback -> {
                             PlaybackSection(pick)
                             ShortcutTable(Modifier.padding(top = Guga.rem(4f)))
                         }
-                        GugaSection.Strm -> StrmSection()
                         GugaSection.Subs -> SubsSection(pick)
                         GugaSection.Danmaku -> DanmakuSection(pick)
+                        GugaSection.Appearance -> AppearanceSection(pick)
+                        GugaSection.Backup -> BackupSection()
+                        GugaSection.Advanced -> AdvancedSection(pick == "diag")
+                        GugaSection.Strm -> StrmSection()
                         GugaSection.Cache -> CacheSection()
-                        GugaSection.Account -> AccountSection()
-                        GugaSection.About -> AboutSection()
+                        GugaSection.About -> AboutSection(startDiagOpen = pick == "diag")
+                        GugaSection.Diagnostics -> AboutSection(startDiagOpen = true)
                     }
                 }
             }
@@ -411,7 +486,11 @@ fun playerShortcuts(): List<Shortcut> {
         "[" to KeyEventLike("["), "]" to KeyEventLike("]"), "N" to KeyEventLike("n"), "Shift N" to KeyEventLike("N", shiftKey = true), "Shift P" to KeyEventLike("P", shiftKey = true),
         "Home" to KeyEventLike("Home"), "V" to KeyEventLike("v"),
     )
-    val rows = probes.mapNotNull { (cap, e) -> PlayerKeys.resolve(e, st)?.let(::commandLabel)?.let { cap to it } }
+    // [ ] 在画报里是字幕时间（盖过上游的倍速，DesktopPlayer 的键位先认它们）
+    val rows = probes.mapNotNull { (cap, e) ->
+        com.gugaart.ui.player.subtitleTimingKey(e.key)?.let { d -> cap to "字幕时间 ${if (d < 0) "-" else "+"}0.1 秒" }
+            ?: PlayerKeys.resolve(e, st)?.let(::commandLabel)?.let { cap to it }
+    }
     // 同一个动作的几个键并成一行
     val merged = rows.groupBy({ it.second }, { it.first }).map { (does, caps) -> Shortcut(caps.joinToString(" / "), does) }
     val digits = if (PlayerKeys.resolve(KeyEventLike("5"), st) is PlayerKeyCommand.Fraction) listOf(Shortcut("0 – 9", "跳到 0 % – 90 %")) else emptyList()

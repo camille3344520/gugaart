@@ -1,7 +1,9 @@
 package com.gugaart.ui.servers
 
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicText
@@ -51,7 +53,7 @@ object ServerSheet {
         // 返回键 / 点纸外：推开着管理时先收管理，再收纸片
         SheetHost({ if (state.managing != null) state.closeManage() else open = false }, tag = "server-sheet", bottom = true) {
             SlipHeader("服务器", "SERVERS", trailing = "${entries.size} 台")
-            BasicText("换一台服务器", Modifier.padding(top = 14.dp, bottom = 6.dp), style = Guga.song(Guga.type.section, FontWeight.Black, letterSpacing = 0.04.em), maxLines = 1)
+            BasicText("切换服务器", Modifier.padding(top = 14.dp, bottom = 6.dp), style = Guga.song(Guga.type.section, FontWeight.Black, letterSpacing = 0.04.em), maxLines = 1)
             // 6 行半：多了的时候下面露半行（一看就知道能往下滑）
             ServerSwitcherList(state, ServerListLook.Phone, maxHeight = 440.dp)
         }
@@ -61,6 +63,8 @@ object ServerSheet {
 /**
  * 首页报头下面的一行小字：当前服务器的名字 + 一个小折角（点它 = [ServerSheet]）。
  * 它自己**不占版面**（压在报头下线和海报流之间那一截空里），报头的刊名、海报流都不挪（1.4.0 刚把刊名摆正，不能动它）。
+ * 热区（P1-5）：字只有 [SERVER_LINE_TEXT] 高；这一行对外只占这么高（报头的版面不变），里面按 [com.gugaart.ui.theme.GugaDimens.minTarget]
+ * （手机 48 dp）排、字竖着居中——上下各透明扩出去 [SERVER_LINE_TOUCH_EXTRA]，字的大小和位置不变。
  */
 @Composable
 fun MastheadServerLine(modifier: Modifier = Modifier) {
@@ -69,7 +73,12 @@ fun MastheadServerLine(modifier: Modifier = Modifier) {
     val press = rememberPressState()
     Row(
         modifier
-            .heightIn(min = 22.dp)
+            .layout { m, c ->
+                val p = m.measure(c.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                val h = SERVER_LINE_TEXT.roundToPx()
+                layout(p.width, h) { p.place(0, (h - p.height) / 2) }
+            }
+            .height(Guga.dimens.minTarget)
             .pressGraphics(press)
             .pressable(press, label = "换服务器：现在是 $name") { ServerSheet.show() }
             .testTag("masthead-server"),
@@ -85,3 +94,9 @@ fun MastheadServerLine(modifier: Modifier = Modifier) {
         Icon(GuguIcon.ChevronDown, colors.dim, 9.dp, Modifier.padding(start = 4.dp))
     }
 }
+
+/** 首页报头下那一行：字的高度（排版上它占的那一截）。 */
+val SERVER_LINE_TEXT = 22.dp
+
+/** 那一行的热区比字高出来的一半：热区 48 dp、字 22 dp → 上下各 13 dp（P1-5）。 */
+val SERVER_LINE_TOUCH_EXTRA: androidx.compose.ui.unit.Dp @Composable get() = (Guga.dimens.minTarget - SERVER_LINE_TEXT) / 2

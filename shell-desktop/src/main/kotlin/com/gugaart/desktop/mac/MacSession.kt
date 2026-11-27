@@ -72,6 +72,9 @@ internal data class MacOptions(
     val acceptOut: File? = null,
     /** 把结果并进输出目录里已有的报告（`--accept-merge=true`，脚本第二次起应用时给）。 */
     val acceptMerge: Boolean = false,
+    /** 性能实测的输出目录（`--perf=`，环境变量 GUGAART_PERF=1 才认）；null = 不跑。 */
+    val perfOut: File? = null,
+    val perfSteps: List<String> = listOf("cold", "idle", "play", "switch"),
 )
 
 /**
@@ -108,6 +111,27 @@ internal class MacSession private constructor(val options: MacOptions) {
     /** 真窗口验收（开发开关；`docs/acceptance-mac.md`）。 */
     private val accept = options.acceptOut?.let { com.gugaart.desktop.mac.accept.AcceptRunner(options.acceptScenarios.orEmpty(), it, options.acceptMerge) }
 
+    /** 性能实测（`--perf=`；mac/MacPerf.kt）。播放器页建好控制器就交过来，和验收同一条缝。 */
+    @Volatile private var perfController: com.gugugaga.app.player.PlayController? = null
+    @Volatile private var perfSettings: com.gugaart.ui.data.GugaSettingsStore? = null
+    private val perf = options.perfOut?.let {
+        MacPerfProbe(
+            out = it,
+            steps = options.perfSteps,
+            host = com.gugaart.desktop.mac.accept.AcceptHost(
+                graph = graph,
+                window = { composeWindow },
+                mpv = { name -> kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeoutOrNull(2_000) { engines?.property(name) } } },
+                engineAvailable = engines?.available == true,
+                quit = ::quit,
+                engines = engines,
+                dataDir = options.dataDir,
+            ),
+            controllerOf = { perfController },
+            settingsOf = { perfSettings },
+        )
+    }
+
     /** 「正在播放」和媒体键（MP-6）：播放器页把它的控制器交过来，离开播放器清掉。 */
     private val nowPlaying = MacNowPlaying(
         scope = scope,
@@ -129,6 +153,7 @@ internal class MacSession private constructor(val options: MacOptions) {
     private var exitApp: (() -> Unit)? = null
 
     init {
+        PerfMarks.mark("graph")
         graph.log.sink = { level, message -> println("GuguPlayer [$level] $message") }
         // 装好的应用核对随包的内核用（accept-mac --package）：用的是哪一份 libmpv
         println("GuguPlayer [mpv] libmpv: ${engines?.libraryPath ?: "none"}")
@@ -136,11 +161,13 @@ internal class MacSession private constructor(val options: MacOptions) {
 
     /** 阻塞到应用退出（`application` 的事件循环）。 */
     fun run() {
+        PerfMarks.mark("run")
         enableVideoUnderCompose()
         installAppHandlers()
         installDesktopCrashGuard(graph)
         val saved = if (persistWindow) windowState.load() else null
         application {
+        PerfMarks.mark("appLoop")
             exitApp = { exitApplication() }
             val state = rememberWindowState(
                 placement = if (saved?.maximized == true) WindowPlacement.Maximized else WindowPlacement.Floating,
@@ -155,6 +182,7 @@ internal class MacSession private constructor(val options: MacOptions) {
                 undecorated = false,
                 onPreviewKeyEvent = { PlayerKeyRouter.dispatch(it) },
             ) {
+                PerfMarks.mark("compose")
                 // 1.5.0：「片库 › 换服务器」列出全部已保存的服务器（和顶栏胶囊同一份数据层列表）
                 val savedServers by androidx.compose.runtime.remember(graph) { com.gugaart.ui.servers.sharedServerSwitcher(graph) }.entries.collectAsState()
                 // M2-4：系统菜单栏（七个菜单；命令走命令表 / 播放接收者，不碰引擎）
@@ -192,9 +220,11 @@ internal class MacSession private constructor(val options: MacOptions) {
                     }
                 }
                 LaunchedEffect(Unit) {
+                    PerfMarks.mark("window")
                     val w = window
                     awtWindow = w
                     composeWindow = w
+                    perf?.start()
                     probe?.run(graph, { awtWindow }, ::quit)
                     accept?.start(
                         com.gugaart.desktop.mac.accept.AcceptHost(
@@ -219,17 +249,19 @@ internal class MacSession private constructor(val options: MacOptions) {
                     runCatching {
                         val tb = java.awt.Taskbar.getTaskbar()
                         if (java.awt.Taskbar.isTaskbarSupported() && tb.isSupported(java.awt.Taskbar.Feature.ICON_IMAGE)) {
-                            MacSession::class.java.getResourceAsStream("/gugaart/icon-512.png")?.use { tb.iconImage = javax.imageio.ImageIO.read(it) }
+                            AppIcon.source?.let { tb.iconImage = it }
                         }
                     }
                     controls.attach(w, state, this@Window)
                     // 播放器里开播的提示要知道这块屏幕出不出得了 HDR（MP-8、D-mac-6）：窗口出来问一次，挪了地方（可能换了屏幕）再问；不在事件线程上问
                     engines?.takeIf { it.available }?.let { e ->
-                        fun ask() = scope.launch(kotlinx.coroutines.Dispatchers.IO) { e.refreshDisplay() }
+                        // 拖窗口时 componentMoved 每秒来几十次，问一次屏幕 = dispatch_sync 到主线程等它答；
+                        // 合并成「停下 120 ms 再问一次」（TrailingRefresh）：拖动中不问，停下才问。
+                        val ask = TrailingRefresh(scope) { e.refreshDisplay() }
                         e.displayHdr?.let { flow -> scope.launch { flow.collect { hdr -> com.gugaart.ui.player.DeviceAv.caps = macAvCaps(hdr) } } }
-                        ask()
+                        ask.request()
                         w.addComponentListener(object : java.awt.event.ComponentAdapter() {
-                            override fun componentMoved(ev: java.awt.event.ComponentEvent?) { ask() }
+                            override fun componentMoved(ev: java.awt.event.ComponentEvent?) { ask.request() }
                         })
                     }
                     w.addWindowFocusListener(object : WindowAdapter() {
@@ -276,11 +308,12 @@ internal class MacSession private constructor(val options: MacOptions) {
                     com.gugaart.ui.player.LocalPlaySessionSink provides {
                         nowPlaying.attach(it.controller)
                         accept?.onController(it.controller)
+                        perfController = it.controller
                         // 画中画小窗自己的播放 / 暂停、关小窗 = 暂停、进度条和 ±跳：走这一页的控制器（和键盘、「正在播放」同一条路）
                         engines?.bindPipPlayback(it.controller)
                     },
                     // 验收缝：根界面的那一个画报设置 store 交给运行器（改设置要改界面正在用的那一份）
-                    com.gugaart.ui.screens.settings.LocalGugaSettingsSink provides { s -> accept?.onSettingsStore(s) },
+                    com.gugaart.ui.screens.settings.LocalGugaSettingsSink provides { s -> accept?.onSettingsStore(s); perfSettings = s },
                 ) {
                     // 视频层在 Compose 层之下（ADR 0004 §4「实测（MP-0）」）：Compose 会先用窗口色把画布铺满，根上清一次，
                     // 上面没画东西的地方（播放器页的洞）才透得出画面；别的页面自己铺不透明的底，不受影响。

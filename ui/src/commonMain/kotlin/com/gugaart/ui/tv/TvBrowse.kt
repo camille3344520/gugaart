@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
@@ -90,6 +91,9 @@ object TvBrowseSpec {
     const val COLUMNS = 7
     const val COLUMNS_FILTER = 5
     val WALL_TOP = 34.dp
+
+    /** 墙顶「筛选 · 排序」按钮离页眉的距离（P1-8）。 */
+    val FILTER_BUTTON_TOP = 26.dp
     val WALL_TAIL = 700.dp
     /** 筛选栏：x 1408 起、宽 416。 */
     val FILTER_W = 416.dp
@@ -141,7 +145,7 @@ fun TvLibsScreen(today: Today) {
     Column(Modifier.fillMaxSize().testTag("tv-libs")) {
         TvPageHeader("片库", "LIBRARY", today, trailing = data?.let { d -> "${d.libraries.size} 个媒体库" + d.libraries.mapNotNull { it.titles }.takeIf { it.isNotEmpty() }?.let { " · ${it.sum()} 部" }.orEmpty() })
         when {
-            data == null && load.error != null -> TvStateView("tv-libs-error", "摊手", load.error!!, "稍等一下再试；一直不行就换一条线路。", action = "再试一次", onAction = load::retry)
+            data == null && load.error != null -> TvStateView("tv-libs-error", "摊手", load.error!!, null, action = "再试一次", onAction = load::retry)
             data == null -> if (load.showSkeleton) TvStateView("tv-libs-loading", "摆稿纸", "正在排片", MascotLines.pick("wall.loading", hour = LocalHour.current, seed = today.day))
             data.libraries.isEmpty() -> TvStateView("tv-libs-empty", "捧白纸", "这台服务器上还没有媒体库", null)
             else -> Box(Modifier.fillMaxSize()) {
@@ -208,20 +212,30 @@ fun TvLibsScreen(today: Today) {
 @Composable
 private fun TvPosterWall(titles: List<Title>, columns: Int, keyPrefix: String, sub: ((Title) -> String?)? = null) {
     val g = LocalGraph.current
+    val sess by g.session.session.collectAsState()
+    val acct = sess?.let { "${it.serverId}/${it.userId}" }
+    remember(acct, titles) { TvTitlePeekCache.putAll(acct, titles) }
+    val visible = remember(titles, ItemManage.deleted.size) { titles.filterNot { ItemManage.isDeleted(it.id) } }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val boxSize = remember(density) { with(density) { androidx.compose.ui.unit.IntSize(TvKitSpec.POSTER_W.roundToPx(), (TvKitSpec.POSTER_W * 1.5f).roundToPx()) } }
+    val gridState = rememberLazyGridState()
     TvSnap(TvBrowseSpec.WALL_TOP) {
         LazyVerticalGrid(
             GridCells.Fixed(columns),
             Modifier.fillMaxSize().testTag("tv-wall"),
+            state = gridState,
             contentPadding = PaddingValues(start = TvSpec.LEFT, end = 1920.dp - TvSpec.LEFT - TvBrowseSpec.wallWidth(columns), top = TvBrowseSpec.WALL_TOP, bottom = TvBrowseSpec.WALL_TAIL),
             horizontalArrangement = Arrangement.spacedBy(TvSpec.POSTER_GAP),
             verticalArrangement = Arrangement.spacedBy(TvSpec.ROW_GAP),
         ) {
             // 长按菜单里删掉的先藏起来（ItemManage）
-            itemsIndexed(titles.filterNot { ItemManage.isDeleted(it.id) }, key = { _, t -> t.id }) { i, t ->
-                if (sub != null) TvPosterCard(t, { g.open(t.id) }, key = "$keyPrefix${t.id}", default = i == 0, onLongClick = { TvLongPressMenu.open(t) }, sub = sub(t))
-                else TvPosterCard(t, { g.open(t.id) }, key = "$keyPrefix${t.id}", default = i == 0, onLongClick = { TvLongPressMenu.open(t) })
+            itemsIndexed(visible, key = { _, t -> t.id }, contentType = { _, _ -> "poster" }) { i, t ->
+                val openClick = remember(t.id, g) { { g.open(t.id) } }
+                val longMenu = remember(t, t.id) { { TvLongPressMenu.open(t) } }
+                if (sub != null) TvPosterCard(t, openClick, key = "$keyPrefix${t.id}", default = i == 0, onLongClick = longMenu, sub = sub(t), knownSize = boxSize)
+                else TvPosterCard(t, openClick, key = "$keyPrefix${t.id}", default = i == 0, onLongClick = longMenu, knownSize = boxSize)
             }
-        }
+    }
     }
 }
 
@@ -264,8 +278,9 @@ fun TvLibraryScreen(id: String, today: Today) {
 }
 
 /**
- * 海报墙。菜单键 = 筛选 / 排序：右栏打开，墙挤成 5 列（不盖海报），焦点进右栏（关着门的焦点区：上下左右换格子、确定选中、
- * 返回或再按菜单键收起，焦点还给墙上那张卡）。筛选 / 排序的规则复用手机的 `screens/wall`（`WallFilter` `WallSort` `genreOptions` `loadWall`）。
+ * 海报墙。墙顶一个能选中的「筛选 · 排序」按钮（P1-8：不少遥控器没有菜单键；第一排按上键就到），菜单键保留作快捷方式：
+ * 右栏打开，墙挤成 5 列（不盖海报），焦点进右栏（关着门的焦点区：上下左右换格子、确定选中、
+ * 返回或再按菜单键收起，焦点还给打开它的那一格——墙上那张卡或这个按钮）。筛选 / 排序的规则复用手机的 `screens/wall`（`WallFilter` `WallSort` `genreOptions` `loadWall`）。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -329,13 +344,25 @@ private fun TvWallScreen(lib: LibraryEntry, today: Today) {
                 filter.count > 0 -> "筛出 ${shown?.size ?: 0} 部 · 共 $total 部"
                 else -> "$total 部 · 按${sort.label} · 全部题材"
             },
-            hints = listOf("菜单键" to "筛选 / 排序", "长按确定" to "菜单"),
         )
+        // 墙顶的「筛选 · 排序」（P1-8）：能选中，第一排按上键就到；确定 = 打开右栏（和菜单键同一件事）
+        if (all != null) {
+            TvButton(
+                if (filter.count > 0) "筛选 · 排序 · ${filter.count}" else "筛选 · 排序",
+                {
+                    from = g.focus.lastFocusedPress
+                    panel = true
+                },
+                Modifier.padding(start = TvSpec.LEFT, top = TvBrowseSpec.FILTER_BUTTON_TOP).testTag("tv-wall-filter-button"),
+                icon = GuguIcon.SlidersHorizontal,
+                key = "tv-wall-filter",
+            )
+        }
         Box(Modifier.fillMaxSize()) {
             when {
                 loading -> if (preset.state == "loading" || load.showSkeleton) TvWallLoading(today.day)
-                all == null -> TvStateView("tv-wall-error", "摊手", load.error!!, "稍等一下再试；一直不行就换一条线路。", action = "再试一次", onAction = load::retry)
-                all.isEmpty() -> TvStateView("tv-wall-empty", "捧白纸", "这个库还是空的", "往服务器的这个媒体库里放几部片子，这里就排出来。")
+                all == null -> TvStateView("tv-wall-error", "摊手", load.error!!, null, action = "再试一次", onAction = load::retry)
+                all.isEmpty() -> TvStateView("tv-wall-empty", "捧白纸", "这个库还是空的", null)
                 shown.isNullOrEmpty() -> TvStateView(
                     "tv-wall-none", "摊手",
                     "「${(listOf(sort.label) + filter.genres + filter.decades.map { it.label } + filter.states.map { it.label }).joinToString(" · ")}」一部都没有",
@@ -399,9 +426,9 @@ fun TvCollsScreen(today: Today, libraryId: String? = null) {
     Column(Modifier.fillMaxSize().testTag("tv-colls")) {
         TvPageHeader("合集", "COLLECTIONS", today, trailing = sets?.let { s -> "${s.size} 套" + s.mapNotNull { it.count }.takeIf { it.isNotEmpty() }?.let { " · 共 ${it.sum()} 部" }.orEmpty() })
         when {
-            sets == null && load.error != null -> TvStateView("tv-colls-error", "摊手", load.error!!, "稍等一下再试；一直不行就换一条线路。", action = "再试一次", onAction = load::retry)
+            sets == null && load.error != null -> TvStateView("tv-colls-error", "摊手", load.error!!, null, action = "再试一次", onAction = load::retry)
             sets == null -> if (load.showSkeleton) TvWallLoading(today.day)
-            sets.isEmpty() -> TvStateView("tv-colls-empty", "捧白纸", "还没有合集", "在服务器上建了合集，这里就排出来。")
+            sets.isEmpty() -> TvStateView("tv-colls-empty", "捧白纸", "还没有合集", null)
             else -> TvPosterWall(sets, TvBrowseSpec.COLUMNS, "set-", sub = { it.count?.let { n -> "$n 部" } })
         }
     }

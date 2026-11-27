@@ -416,7 +416,7 @@ fun DeskSection(number: String?, title: String, english: String, modifier: Modif
     }
 }
 
-/** 区块标题右端的斜体小计（「12 部在看」）；[onClick] 给了就是链接（悬停变亮）。 */
+/** 区块标题右端的斜体小计（「12 部」）；[onClick] 给了就是链接（悬停变亮）。 */
 @Composable
 fun RowScope.SectionNote(text: String, onClick: (() -> Unit)? = null) {
     val colors = Guga.colors
@@ -636,7 +636,7 @@ fun DeskPosterCard(
                         Row(Modifier.testTag("desk-card-actions"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.2f))) {
                             QuickAction("播放", GuguIcon.Play) { if (title.kind == Kind.Movie || title.kind == Kind.Episode) graph.play(title.id, title.positionSec?.times(1000)) else graph.open(title.id) }
                             val sealPress = rememberPressState()
-                            SealSlot(fav, Modifier.pressGraphics(sealPress).deskFocusRing(sealPress).pressable(sealPress, label = if (fav) "取消收藏" else "收藏") { graph.toggleFavorite(chrome, favId, fav) }, size = Guga.rem(2f))
+                            SealSlot(fav, Modifier.pressGraphics(sealPress).deskFocusRing(sealPress).pressable(sealPress, label = if (fav) "取消收藏" else "收藏") { graph.toggleFavorite(chrome, favId, fav) }, size = Guga.rem(2f), frame = true)
                             val tickPress = rememberPressState()
                             Box(Modifier.size(Guga.rem(2.2f)).pressGraphics(tickPress).pressable(tickPress, label = if (seen) "标成没看" else "标记已看") { graph.togglePlayed(chrome, title.id, seen) }, contentAlignment = Alignment.Center) {
                                 ProofTick(seen, size = Guga.rem(1.3f))

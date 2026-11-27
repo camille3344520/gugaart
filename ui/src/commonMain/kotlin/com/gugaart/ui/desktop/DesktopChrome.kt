@@ -208,8 +208,9 @@ fun DesktopChrome(route: Route, today: Today, modifier: Modifier = Modifier) {
                                 ) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         BasicText(tab.label, style = Guga.song(rsp(1.5f), if (on) FontWeight.Black else FontWeight.Bold, colors.ink.copy(alpha = if (on) 1f else 0.74f), letterSpacing = 0.16.em), maxLines = 1)
-                                        // 选中记号：专色小圆点（没选的格子留同样的高度，字不跳）
-                                        Box(Modifier.padding(top = Guga.rem(0.3f)).size(Guga.rem(0.4f)).then(if (on) Modifier.background(colors.spot, CircleShape) else Modifier))
+                                        // 选中记号：专色小圆点（没选的格子留同样的高度，字不跳）；「我的」有没看的称号（P2-13）：同一个位置一个朱红点
+                                        val dot = !on && tab == com.gugaart.ui.wide.WideTab.Me && com.gugaart.ui.screens.me.RankBoard.unseen
+                                        Box(Modifier.padding(top = Guga.rem(0.3f)).size(Guga.rem(0.4f)).then(if (on) Modifier.background(colors.spot, CircleShape) else if (dot) Modifier.background(colors.seal, CircleShape).testTag("desktop-tab-me-dot") else Modifier))
                                     }
                                 }
                             }

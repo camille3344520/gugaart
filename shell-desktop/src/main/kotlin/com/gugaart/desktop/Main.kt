@@ -107,10 +107,15 @@ internal fun fontImportHost(dataDir: File): com.gugaart.ui.data.FontImportHost {
 }
 
 fun main(args: Array<String>) {
+    // 冷启动计时的起点（1.5.1 perf-win）：在任何重活之前
+    com.gugaart.ui.data.BootPerf.startMs = com.gugugaga.core.currentTimeMillis()
+    // 性能实测的路标（GUGAART_PERF=1 才记；只记毫秒，见 mac/MacPerf.kt）
+    com.gugaart.desktop.mac.PerfMarks.mark("main")
     // 和上游一样：系统代理要在任何联网类加载之前装好
     com.gugugaga.core.SystemProxySelector.install()
     val opt = args.mapNotNull { a -> a.removePrefix("--").split("=", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
     val dev = System.getProperty("gugaart.dev") == "true"
+    if (dev) println("GuguPlayer [perf] args ${args.joinToString(" ")}")
     val dataDir = opt["data-dir"]?.let(::File) ?: defaultDataDir()
     // 覆盖安装后桌面图标还是旧的：换了版本第一次启动刷一次 Windows 的图标缓存（IconRefresh.kt）
     IconRefresh.runOnce(dataDir, BuildInfo.APP_VERSION, dev)
@@ -126,7 +131,7 @@ fun main(args: Array<String>) {
     // Mock Emby（tools/mock-emby）的夹具账号 demo / demo：只在开发运行时、只对 -Pgugaart.mockAccount 给的那台 Mock 用，从不是真实凭据（Windows / macOS 都认）。
     // 两个壳共用：Mac 的真窗口验收也要用 Mock 登录（不输入任何真实账号密码）。
     val mock = System.getProperty("gugaart.mockAccount")?.takeIf { dev && Regex("""^https?://[^\s"\\]+$""").matches(it) }
-    val debug = if (mock != null) DebugOptions(mockAccount = parseMockAccount("""{"server":"$mock","username":"demo","password":"demo"}""")) else DebugOptions.None
+    val debug = if (mock != null) DebugOptions(mockAccount = parseMockAccount("""{"server":"$mock","username":"demo","password":"demo"}"""), defaultSecrets = System.getenv("GUGAART_DMJIT_DANMAKU")?.let { com.gugugaga.app.platform.DefaultSecrets(danmakuApiUrl = it) }) else DebugOptions.None // DMJIT-TEMP
     // 1.5.0 跨服务器验收：--mock-servers=<地址>+<地址>+… 把几台本地 Mock 预先存成几台服务器（同样只在开发运行时，夹具账号 demo / demo）
     if (dev) com.gugaart.ui.data.DevMockServers.urls = com.gugaart.ui.data.DevMockServers.parseArg(opt["mock-servers"])
     // macOS：一扇 Compose Window（系统标题栏 + 红绿灯），不用 Win32 窗口栈（ADR 0004 §2.2）。Windows 路径一行不动。
@@ -151,11 +156,16 @@ fun main(args: Array<String>) {
                 acceptScenarios = opt["accept"]?.takeIf { dev }?.let { com.gugaart.desktop.mac.accept.parseScenarioList(it, com.gugaart.desktop.mac.accept.AcceptScenarios.NAMES) },
                 acceptOut = opt["accept-out"]?.takeIf { dev && opt["accept"] != null }?.let(::File),
                 acceptMerge = opt["accept-merge"] == "true",
+                // 性能实测（GUGAART_PERF=1 才认）：--perf=<目录> [--perf-steps=cold,idle,play,switch]
+                perfOut = opt["perf"]?.takeIf { com.gugaart.desktop.mac.PerfMarks.enabled }?.let(::File),
+                perfSteps = opt["perf-steps"]?.split(",", "+")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: listOf("cold", "idle", "play", "switch"),
             ),
         )
         return
     }
     val probe = opt["probe"]?.takeIf { dev }?.let { ViewportProbe(File(it), opt["engine"], route) }
+    // 测量驱动缝（1.5.1 perf-win2，只在开发运行 + 给了 --perf-drive 时）：程序化导航 / 切服务器 / 暂停，不改界面
+    val drive = opt["perf-drive"]?.takeIf { dev }?.let { com.gugaart.desktop.perf.PerfDrive(com.gugaart.desktop.perf.PerfDrive.parse(it)) }
     val session = StageSession.start(
         StageOptions(
             dataDir = dataDir,
@@ -173,12 +183,16 @@ fun main(args: Array<String>) {
                     com.gugaart.ui.data.LocalFontImport provides fontImportHost(dataDir),
                     com.gugaart.ui.backup.LocalBackupFiles provides backupFileHost(),
                 ) {
-                    (probe?.wrap ?: { it() })(content)
+                    (drive?.wrap ?: { it() }) { (probe?.wrap ?: { it() })(content) }
                 }
             },
         ),
     )
+    // 窗口栈已经上屏（StageSession.start 返回 = 开完窗）：冷启动的一个里程碑
+    com.gugaart.ui.data.BootPerf.elapsedMs().takeIf { it >= 0 }?.let { println("GuguPlayer [perf] boot window-shown +$it ms") }
+    if (dev) com.gugaart.desktop.perf.UiStallWatch.start()
     probe?.run(session)
+    drive?.run(session)
 }
 
 private fun defaultDataDir(): File {
@@ -219,6 +233,8 @@ internal fun desktopDeps(
     )
     // 片库搜索的本地索引（1.4.1，docs/search.md §1）：按「服务器 + 用户」一份，文件名是键的 SHA-256，里面没有令牌
     com.gugaart.ui.search.SearchIndexStore.disk = FileBlobCache(File(dataDir, "cache/search-index"), maxEntries = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_ENTRIES, maxBytes = com.gugaart.ui.search.SearchIndexStore.DISK_MAX_BYTES)
+    // 索引各阶段的耗时进控制台（perf-win 测量缝；不设就没有日志）
+    com.gugaart.ui.search.SearchIndexStore.perf = { println("GuguPlayer [perf] $it") }
     return PlatformDeps(
         uiMode = uiMode,
         identity = ClientInfo(device = if (computer != null) "Windows · $computer" else "Windows PC", deviceId = deviceId, version = BuildInfo.APP_VERSION),

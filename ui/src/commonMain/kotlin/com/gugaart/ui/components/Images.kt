@@ -10,8 +10,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.gugaart.ui.idle.LocalIdleClock
+import com.gugaart.ui.tv.TvPerfGovernor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -20,9 +25,11 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.gugaart.ui.data.Framing
+import com.gugaart.ui.data.ImageSizing
 import com.gugaart.ui.theme.GugaMotion
 import com.gugaart.ui.theme.SpotColor
 import com.gugugaga.app.data.rememberImage
@@ -137,26 +144,27 @@ class Crossfade internal constructor() {
 @Composable
 fun rememberCrossfade(image: ImageBitmap?, durationMs: Int = GugaMotion.COVER_FADE_MS): Crossfade {
     val state = remember { Crossfade() }
-    val reduced = LocalMotionPrefs.current.reducedMotion
-    LaunchedEffect(image) {
-        if (image == null || image === state.current) return@LaunchedEffect
-        val first = state.current == null
-        state.previous = state.current
+    val sysReduced = LocalMotionPrefs.current.reducedMotion
+    val reduced = remember(image, sysReduced) { sysReduced || TvPerfGovernor.degraded || !com.gugaart.ui.tv.TvFlipProbe.xfade }
+    if (image != null && (state.current == null || reduced || durationMs <= 0)) {
         state.current = image
-        if (first || reduced) {
-            state.fade.snapTo(1f)
-        } else {
+        state.previous = null
+    }
+    if (image != null && image !== state.current && !reduced && durationMs > 0) {
+        LaunchedEffect(image, durationMs) {
+            state.previous = state.current
+            state.current = image
             state.fade.snapTo(0f)
             state.fade.animateTo(1f, tween(durationMs))
+            state.previous = null
         }
-        state.previous = null
     }
     return state
 }
 
 /**
  * 一张远程图，盖满自己的盒子。没到 → 画 [placeholder]（默认什么都不画，露出下面的纸 / 斜纹）；到了 → 交叉淡入。
- * [url] 换了以后旧图留到新图解码完（不闪）。
+ * [url] 换了以后旧图留到新图解码完（不闪）。[knownSize] 已知盒子的像素尺寸时首帧直接按它算 `ImageSizing`，免一次 `onSizeChanged` 二次重组。
  */
 @Composable
 fun CoverImage(
@@ -166,22 +174,130 @@ fun CoverImage(
     alpha: Float = 1f,
     colorFilter: ColorFilter? = null,
     onImage: ((ImageBitmap) -> Unit)? = null,
+    knownSize: IntSize? = null,
+    /** 裁到自己的盒子（默认）；false 只给性能探针用（[com.gugaart.ui.tv.TvFlipProbe.clip]）。 */
+    clip: Boolean = true,
     placeholder: (@Composable () -> Unit)? = null,
 ) {
-    val bmp = rememberImage(url, keepPrevious = true)
+    // 竖版封面按盒子的像素大小要图（ImageSizing）：已知尺寸首帧即用；否则先用上次量过的地址或等一次布局
+    var box by remember { mutableStateOf(IntSize.Zero) }
+    val effective = knownSize?.takeIf { it.width > 0 && it.height > 0 } ?: box
+    val want = remember(url, effective.width, effective.height) {
+        url?.let { u -> if (effective.width > 0 && effective.height > 0) ImageSizing.sized(u, effective.width, effective.height) else ImageSizing.lastFor(u) }
+    }
+    val bmp = rememberImage(want, keepPrevious = true)
     val cf = rememberCrossfade(bmp)
     if (onImage != null && bmp != null) LaunchedEffect(bmp) { onImage(bmp) }
-    Box(modifier.clipToBounds()) {
-        if (cf.current == null && placeholder != null) placeholder()
-        Canvas(Modifier.matchParentSize()) {
+    val sizeMod = if (knownSize != null && knownSize.width > 0 && knownSize.height > 0) Modifier else Modifier.onSizeChanged { if (it != box) box = it }
+    Box(
+        (if (clip) modifier.clipToBounds() else modifier).then(sizeMod).drawBehind {
             cf.previous?.let { drawCover(it, framing, alpha, colorFilter) }
             cf.current?.let { drawCover(it, framing, alpha * cf.alpha, colorFilter) }
-        }
+        },
+    ) {
+        if (cf.current == null && placeholder != null) placeholder()
     }
 }
 
-/** 一张图虚化后的样子：缩到很小再放大（跨平台一致，不依赖系统的模糊；这是页面内容，不是玻璃）。 */
+private class RefLru<K : Any, V>(private val limit: Int = 32) {
+    private val entries = ArrayList<Pair<K, V>>()
+
+    fun get(key: K): V? {
+        val idx = entries.indexOfFirst { it.first === key }
+        if (idx < 0) return null
+        val entry = entries.removeAt(idx)
+        entries.add(entry)
+        return entry.second
+    }
+
+    fun put(key: K, value: V): V {
+        val idx = entries.indexOfFirst { it.first === key }
+        if (idx >= 0) entries.removeAt(idx)
+        entries.add(key to value)
+        while (entries.size > limit) entries.removeAt(0)
+        return value
+    }
+}
+
+private object ImageEffectsCache {
+    val soft = RefLru<ImageBitmap, Pair<Int, ImageBitmap>>(24)
+    val bright = RefLru<ImageBitmap, Boolean>(64)
+    val darkLogo = RefLru<ImageBitmap, Boolean>(64)
+    val spotNormal = RefLru<ImageBitmap, Color>(64)
+    val spotTv = RefLru<ImageBitmap, Color>(64)
+}
+
+/** 一张图虚化后的样子：缩到很小再放大（跨平台一致，不依赖系统的模糊；这是页面内容，不是玻璃）。真运行在后台算并缓存。 */
 @Composable
-fun rememberSoft(image: ImageBitmap?, width: Int = 28): ImageBitmap? = remember(image) {
-    image?.let { it.shrink(width, max(1, (width.toFloat() * it.height / it.width).roundToInt())) }
+fun rememberSoft(image: ImageBitmap?, width: Int = 28): ImageBitmap? {
+    if (image == null) return null
+    val cached = ImageEffectsCache.soft.get(image)?.takeIf { it.first == width }?.second
+    if (cached != null) return cached
+    if (LocalIdleClock.current == null) {
+        return remember(image, width) {
+            val out = image.shrink(width, max(1, (width.toFloat() * image.height / image.width).roundToInt()))
+            ImageEffectsCache.soft.put(image, width to out).second
+        }
+    }
+    var computed by remember(image, width) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(image, width) {
+        val out = withContext(Dispatchers.Default) {
+            image.shrink(width, max(1, (width.toFloat() * image.height / image.width).roundToInt()))
+        }
+        ImageEffectsCache.soft.put(image, width to out)
+        computed = out
+    }
+    return computed
+}
+
+/** 亮图判定（后台算 + 缓存，不阻塞 UI 线程）。 */
+@Composable
+fun rememberBrightImage(image: ImageBitmap?): Boolean {
+    if (image == null) return false
+    ImageEffectsCache.bright.get(image)?.let { return it }
+    if (LocalIdleClock.current == null) {
+        return remember(image) { ImageEffectsCache.bright.put(image, image.meanLuma() > BRIGHT_IMAGE_LUMA) }
+    }
+    var bright by remember(image) { mutableStateOf(false) }
+    LaunchedEffect(image) {
+        val v = withContext(Dispatchers.Default) { image.meanLuma() > BRIGHT_IMAGE_LUMA }
+        ImageEffectsCache.bright.put(image, v)
+        bright = v
+    }
+    return bright
+}
+
+/** 黑笔画 logo 判定（后台算 + 缓存，不阻塞 UI 线程）。 */
+@Composable
+fun rememberDarkLogo(image: ImageBitmap?): Boolean {
+    if (image == null) return false
+    ImageEffectsCache.darkLogo.get(image)?.let { return it }
+    if (LocalIdleClock.current == null) {
+        return remember(image) { ImageEffectsCache.darkLogo.put(image, image.isDarkLogo()) }
+    }
+    var dark by remember(image) { mutableStateOf(false) }
+    LaunchedEffect(image) {
+        val v = withContext(Dispatchers.Default) { image.isDarkLogo() }
+        ImageEffectsCache.darkLogo.put(image, v)
+        dark = v
+    }
+    return dark
+}
+
+/** 专色取色（后台算 + 缓存，不阻塞 UI 线程）。 */
+@Composable
+fun rememberSpotColor(image: ImageBitmap?, tv: Boolean = false): Color? {
+    if (image == null) return null
+    val cache = if (tv) ImageEffectsCache.spotTv else ImageEffectsCache.spotNormal
+    cache.get(image)?.let { return it }
+    if (LocalIdleClock.current == null) {
+        return remember(image, tv) { cache.put(image, image.spot(tv = tv)) }
+    }
+    var color by remember(image, tv) { mutableStateOf<Color?>(null) }
+    LaunchedEffect(image, tv) {
+        val c = withContext(Dispatchers.Default) { image.spot(tv = tv) }
+        cache.put(image, c)
+        color = c
+    }
+    return color
 }

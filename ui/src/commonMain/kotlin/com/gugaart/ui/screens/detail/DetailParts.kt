@@ -101,7 +101,7 @@ fun FactsRow(leftLabel: String?, left: String?, rightLabel: String?, right: Stri
     }
 }
 
-/** 收藏（+ 印章位）和「已看」两个文字链接。印章落在收藏旁边预留的虚线格里。 */
+/** 收藏（+ 印章位）和「已看」两个文字链接。印章落在收藏旁边预留的那一格里（没收藏时这一格空着，不画虚线，P2-7）。 */
 @Composable
 fun ActionsRow(favorite: Boolean, onFavorite: () -> Unit, playedLabel: String, played: Boolean, onPlayed: () -> Unit, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -187,23 +187,4 @@ fun CastBand(people: List<Person>, onOpen: (Person) -> Unit, modifier: Modifier 
             for (p in people) PersonChip(p, 92.dp, { onOpen(p) })
         }
     }
-}
-
-/** 一行「标签 + 内容」的小表（音轨 / 字幕 / 版本）。 */
-@Composable
-fun StreamList(title: String, english: String, rows: List<StreamRow>, modifier: Modifier = Modifier) {
-    if (rows.isEmpty()) return
-    val colors = Guga.colors
-    val type = Guga.type
-    Column(modifier.fillMaxWidth()) {
-        SectionHeader(title, english, trailing = "${rows.size}")
-        for (r in rows) {
-            Column(Modifier.fillMaxWidth().heightIn(min = 54.dp).padding(vertical = 9.dp)) {
-                BasicText(r.name, style = Guga.song(type.row * 0.92f, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (r.note.isNotEmpty()) BasicText(r.note, Modifier.padding(top = 3.dp), style = Guga.song(type.caption, color = colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Rule()
-        }
-    }
-    Box(Modifier.width(0.dp))
 }

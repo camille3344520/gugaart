@@ -25,7 +25,7 @@ import kotlin.random.Random
 /** 两张榜（按这个顺序排：新到在前）。 */
 enum class Chart(val id: String, val label: String, val title: String, val note: String) {
     Fresh("fresh", "新到", "新到榜", "按入库时间"),
-    Top("top", "高分", "高分榜", "评分前 $TOP_POOL · 每次随机抽");
+    Top("top", "高分", "高分榜", "评分前 $TOP_POOL · 随机");
 
     companion object {
         fun of(id: String?): Chart = entries.firstOrNull { it.id == id } ?: Fresh

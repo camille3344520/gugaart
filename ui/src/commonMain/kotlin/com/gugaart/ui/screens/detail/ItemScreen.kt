@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.gugaart.ui.components.ConfirmSheet
 import com.gugaart.ui.components.Chip
 import com.gugaart.ui.components.EpisodeRow
 import com.gugaart.ui.components.ErrorView
@@ -51,6 +52,7 @@ import com.gugaart.ui.data.Rules
 import com.gugaart.ui.data.Title
 import com.gugaart.ui.data.rememberLoad
 import com.gugaart.ui.data.titleOf
+import com.gugaart.ui.data.getItemShared
 import com.gugaart.ui.mascot.EditorNote
 import com.gugaart.ui.mascot.LineFacts
 import com.gugaart.ui.mascot.LocalHour
@@ -64,6 +66,7 @@ import com.gugaart.ui.screens.play
 import com.gugaart.ui.screens.toggleFavorite
 import com.gugaart.ui.screens.togglePlayed
 import com.gugaart.ui.theme.Guga
+import com.gugugaga.ds.icons.GuguIcon
 import com.gugugaga.app.data.rememberImage
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.ds.theme.UiMode
@@ -80,7 +83,7 @@ internal val PERSON_BLEED = 540.dp
 @Composable
 fun ItemScreen(id: String, day: Int) {
     val graph = LocalGraph.current
-    val item = rememberLoad("item", id) { c -> c.titleOf(c.getItem(id)) }
+    val item = rememberLoad("item", id) { c -> c.titleOf(c.getItemShared(id)) }
     val t = item.value
     when {
         t == null && item.error != null -> DetailShell("", { graph.nav.backOrHome() }) { ErrorView(item.error!!, item::retry) }
@@ -95,6 +98,17 @@ fun ItemScreen(id: String, day: Int) {
 }
 
 /** 只有顶栏的空壳（加载中 / 出错时）：返回在左上，永远能退出去。 */
+/**
+ * 手机详情页的播放那一行（P1-11）：主按钮占满；有进度时右边一个小按钮「从头」= **这一集 / 这一部从 0 开始**（全应用「从头播放」都是这个意思）。
+ */
+@Composable
+internal fun PlayRow(button: @Composable (Modifier) -> Unit, restart: (() -> Unit)?) {
+    Row(Modifier.padding(top = 18.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        button(Modifier.weight(1f))
+        if (restart != null) TextLink("从头", restart, Modifier.padding(start = 16.dp).testTag("play-restart"), icon = GuguIcon.RotateCcw)
+    }
+}
+
 @Composable
 internal fun DetailShell(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize()) {
@@ -144,6 +158,8 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
     var season by remember(head) { mutableStateOf(initialSeason(head, preset.season)) }
     var page by remember(head) { mutableIntStateOf(preset.episodePage) }
     var volumesOpen by remember { mutableStateOf(preset.volumesOpen) }
+    // P0-3：整季标已看 / 未看先弹确认框（截图预置 `markseason` 直接打开）
+    var markSeason by remember { mutableStateOf(preset.state == "markseason") }
     val slice = rememberLoad("episodes", series.id, season?.id, page) { loadEpisodes(it, series.id, season?.id, page) }
     val pages = pagesOf(slice.value)
     val fav = chrome.isFavorite(series)
@@ -161,10 +177,10 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
                 caption = when (bleedSourceOf(series.art, poster = true)) {
                     BleedSource.Poster -> "海报 · ${series.name}"
                     BleedSource.Backdrop -> "剧照 · ${series.name}"
-                    BleedSource.PosterBlur -> "没有剧照 · 用海报虚化代替"
+                    BleedSource.PosterBlur -> "海报 · ${series.name}"
                     BleedSource.None -> null
                 },
-                scrollPx = scroll.value.toFloat(),
+                scrollPx = { scroll.value.toFloat() },
             ) {
                 TitleBlock(
                     series,
@@ -176,12 +192,17 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
             Column(Modifier.padding(horizontal = dimens.margin)) {
                 FactsRow("主演", leads(series).joinToString(" ").takeIf { it.isNotEmpty() }, "全", series.count?.let { "$it 集" }, Modifier.padding(top = 12.dp))
                 val (label, time) = resumeLabel(head.upNext)
-                PrimaryButton(
-                    label,
-                    { head.upNext?.let { graph.play(it.id, it.positionSec?.times(1000)) } ?: slice.value?.episodes?.firstOrNull()?.let { graph.play(it.id) } },
-                    Modifier.padding(top = 18.dp).fillMaxWidth(),
-                    progress = head.upNext?.progress ?: 0f,
-                    trailing = time,
+                PlayRow(
+                    { m ->
+                        PrimaryButton(
+                            label,
+                            { head.upNext?.let { graph.play(it.id, it.positionSec?.times(1000)) } ?: slice.value?.episodes?.firstOrNull { !it.unaired }?.let { graph.play(it.id) } },
+                            m,
+                            progress = head.upNext?.progress ?: 0f,
+                            trailing = time,
+                        )
+                    },
+                    restart = head.upNext?.takeIf { it.progress > 0f }?.let { up -> { graph.play(up.id, 0L) } },
                 )
                 ActionsRow(
                     fav,
@@ -191,7 +212,7 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
                     },
                     "整季已看",
                     played = season?.let { chrome.isPlayed(it.id, it.unplayed == 0) } == true,
-                    onPlayed = { season?.let { s -> graph.togglePlayed(chrome, s.id, chrome.isPlayed(s.id, s.unplayed == 0)) } },
+                    onPlayed = { if (season != null) markSeason = true },
                     modifier = Modifier.padding(top = 14.dp),
                 )
                 // Trakt 追更（连着 Trakt 才有）
@@ -249,7 +270,7 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
                         Skeleton(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(58.dp))
                         Rule()
                     }
-                    episodes.isEmpty() -> BasicText(if ((slice.value?.total ?: 0) > 0) "这一页的分集还没取到。" else "这一季还没有分集。", Modifier.padding(vertical = 24.dp), style = Guga.song(type.caption, color = colors.dim))
+                    episodes.isEmpty() -> BasicText(if ((slice.value?.total ?: 0) > 0) "分集未加载" else "没有分集", Modifier.padding(vertical = 24.dp), style = Guga.song(type.caption, color = colors.dim))
                     else -> for (e in episodes) {
                         val n = e.episodeNo ?: 0
                         // 看到一半的那一集不算「已看」（服务器可能两个都标着）：它是「正在看」，不打勾
@@ -264,6 +285,7 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
                             played = played,
                             progress = e.progress,
                             onClick = { graph.play(e.id, e.positionSec?.times(1000)) },
+                            unaired = e.unaired,
                             onTick = {
                                 graph.togglePlayed(chrome, e.id, played)
                                 voice.say(MascotLines.pick(if (played) "played.off" else "played.on", LineFacts(ep = n, next = n + 1), hour, e.id.hashCode() + day))
@@ -279,12 +301,26 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
         }
         BackRow(
             series.name,
-            solid = scroll.value > solidAt,
+            solid = com.gugaart.ui.screens.scrolledPast(scroll, solidAt),
             onBack = { graph.nav.backOrHome() },
             favorite = fav,
             onFavorite = { graph.toggleFavorite(chrome, series.id, fav) },
         )
         openStill?.let { StillsViewer(stills, it) { openStill = null } }
+        season?.takeIf { markSeason }?.let { s ->
+            val seen = chrome.isPlayed(s.id, s.unplayed == 0)
+            val copy = seasonMarkCopy(s, toPlayed = !seen)
+            ConfirmSheet(
+                title = copy.title,
+                text = copy.note.orEmpty(),
+                confirm = copy.confirm,
+                onConfirm = {
+                    markSeason = false
+                    graph.togglePlayed(chrome, s.id, seen)
+                },
+                onDismiss = { markSeason = false },
+            )
+        }
     }
 }
 
@@ -318,7 +354,11 @@ fun MoviePhone(movie: Title, day: Int) {
     // 版本 = 「源」（本台的版本 + 没被合并的重复片）：选中的那个决定徽章、播放按钮右端的规格、音轨 / 字幕和开播
     val sources = rememberSourcesState(movie)
     val source = sources.selected?.mediaSource ?: movie.sources.firstOrNull()
-    var versionSheet by remember(movie.id) { mutableStateOf(preset.state == "ver") }
+    // 音轨 / 字幕跟着选中的版本走（换版本 = 回到默认）；开着哪一张纸片：ver / audio / sub
+    val picks = rememberTrackPicks(source)
+    var sheet by remember(movie.id) { mutableStateOf(preset.state?.takeIf { it == "ver" || it == "audio" || it == "sub" }) }
+    // 验收运行器（iOS pickers151）在这一页时把选择和纸片开关交出去；应用里 sink = null，什么都不做
+    LocalDetailPickerSink.current?.let { sink -> androidx.compose.runtime.LaunchedEffect(picks) { sink(DetailPickerDriver(picks) { sheet = it }) } }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("movie-phone")) {
@@ -330,10 +370,10 @@ fun MoviePhone(movie: Title, day: Int) {
                 caption = when (bleedSourceOf(movie.art, poster = true)) {
                     BleedSource.Poster -> "海报 · ${movie.name}"
                     BleedSource.Backdrop -> "剧照 · ${movie.name}" + (movie.year?.let { " · $it" } ?: "")
-                    BleedSource.PosterBlur -> "没有剧照 · 用海报虚化代替"
+                    BleedSource.PosterBlur -> "海报 · ${movie.name}"
                     BleedSource.None -> null
                 },
-                scrollPx = scroll.value.toFloat(),
+                scrollPx = { scroll.value.toFloat() },
             ) {
                 TitleBlock(
                     movie,
@@ -351,12 +391,17 @@ fun MoviePhone(movie: Title, day: Int) {
                 FactsRow("主演", cast.getOrNull(0), if (cast.size > 1) "联合主演" else null, cast.getOrNull(1), Modifier.padding(top = 14.dp))
                 // 片源的效果徽章（4K / 杜比视界 / 全景声…；用户 2026-11-16：「影片详情页也可以打上对应的图标」）：不看设备能力，照常亮（decisions.md D-mac-6）
                 FormatBadgeRow(formatBadges(source, null, null), 1.15f, Modifier.padding(top = 16.dp), notes = false)
-                PrimaryButton(
-                    if (movie.progress > 0f) "续看" else "播放",
-                    { graph.playback.play(sources.playRoute(movie.positionSec?.times(1000))) },
-                    Modifier.padding(top = 18.dp).fillMaxWidth(),
-                    progress = movie.progress,
-                    trailing = if (movie.progress > 0f) Rules.progressLabel(movie.progress, movie.runtimeSec, true) else specLine(source),
+                PlayRow(
+                    { m ->
+                        PrimaryButton(
+                            if (movie.progress > 0f) "续看" else "播放",
+                            { graph.playback.play(sources.playRoute(movie.positionSec?.times(1000), picks.audioIndex, picks.subtitleIndex)) },
+                            m,
+                            progress = movie.progress,
+                            trailing = if (movie.progress > 0f) Rules.progressLabel(movie.progress, movie.runtimeSec, true) else specLine(source),
+                        )
+                    },
+                    restart = if (movie.progress > 0f) ({ graph.playback.play(sources.playRoute(0L, picks.audioIndex, picks.subtitleIndex)) }) else null,
                 )
                 ActionsRow(
                     fav,
@@ -369,6 +414,9 @@ fun MoviePhone(movie: Title, day: Int) {
                     { graph.togglePlayed(chrome, movie.id, played) },
                     Modifier.padding(top = 14.dp),
                 )
+                // 版本 / 音轨 / 字幕：一组收起来的行（版本只有一个时不出现），点开是贴底的纸片；
+                // 紧跟在收藏 / 已看下面（P2-11：开播前要选的东西不用滑过简介去找），简介往后放
+                TrackPickerGroup(sources, picks, { sheet = it }, Modifier.padding(top = 18.dp))
                 Overview(Rules.fold(movie.overview, PHONE_FOLD_CHARS), Modifier.padding(top = 18.dp))
                 Rule(Modifier.padding(top = 18.dp))
                 EditorNote(movieNote(movie, hour, day), Modifier.padding(vertical = 14.dp), label = "看点", english = "HIGHLIGHTS", voice = voice, photo = 46.dp)
@@ -377,17 +425,13 @@ fun MoviePhone(movie: Title, day: Int) {
                 Rules.studios(movie.studios)?.let {
                     BasicText("出品  $it", Modifier.padding(top = 14.dp), style = Guga.song(type.caption, color = colors.dim), maxLines = 2)
                 }
-                // 版本：真实数据里通常只有一个，只有一个时不出现入口；多于一个 = 一行「版本 · 选中的 ›」，点开是贴底的纸片
-                if (sources.sources.size > 1) VersionRow(sources, { versionSheet = true }, Modifier.padding(top = 26.dp))
-                StreamList("音轨", "AUDIO", streamsOf(source, "Audio"), Modifier.padding(top = 26.dp))
-                StreamList("字幕", "SUBTITLES", streamsOf(source, "Subtitle"), Modifier.padding(top = 26.dp))
             }
             CastBand(movie.people, { graph.open(it.id) }, Modifier.padding(top = dimens.sectionGap))
             StillsBand(stills, { openStill = it }, Modifier.padding(top = dimens.sectionGap))
             Spacer(Modifier.height(72.dp))
         }
-        BackRow(movie.name, solid = scroll.value > solidAt, onBack = { graph.nav.backOrHome() }, favorite = fav, onFavorite = { graph.toggleFavorite(chrome, movie.id, fav) })
+        BackRow(movie.name, solid = com.gugaart.ui.screens.scrolledPast(scroll, solidAt), onBack = { graph.nav.backOrHome() }, favorite = fav, onFavorite = { graph.toggleFavorite(chrome, movie.id, fav) })
         openStill?.let { StillsViewer(stills, it) { openStill = null } }
-        if (versionSheet && sources.sources.size > 1) VersionSheet(sources) { versionSheet = false }
+        TrackPickerSheets(sheet, sources, picks) { sheet = null }
     }
 }

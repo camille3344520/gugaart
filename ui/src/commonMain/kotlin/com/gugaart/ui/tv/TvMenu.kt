@@ -115,8 +115,6 @@ object TvLongPressMenu {
         val g = LocalGraph.current
         val nav = LocalWideNav.current
         val tv = nav.tv
-        val chrome = LocalChrome.current
-        val colors = Guga.colors
         // 打开的那一刻焦点在哪张卡上：收起时还给它；那张卡的图在屏幕上的位置：纸条贴在它旁边，卡片留一个亮着的框
         var from by remember { mutableStateOf<PressState?>(null) }
         var held by remember { mutableStateOf<Rect?>(null) }
@@ -137,6 +135,16 @@ object TvLongPressMenu {
                 if (back != null && restore && !runCatching { back.focusRequester.requestFocus() }.getOrDefault(false)) tvRescueFocus(g, tv)
             }
         }
+        if (t == null) return
+        HostOpen(t, held, onSkipRestore = { restore = false })
+    }
+
+    @Composable
+    private fun HostOpen(t: Title, held: Rect?, onSkipRestore: () -> Unit) {
+        val g = LocalGraph.current
+        val tv = LocalWideNav.current.tv
+        val chrome = LocalChrome.current
+        val colors = Guga.colors
         // 纸条的两种样子：menu = 菜单；del = 删除的二次确认。status = 纸条底下的一句（管理操作的结果）
         var stage by remember(t) { mutableStateOf("menu") }
         var status by remember(t) { mutableStateOf<String?>(null) }
@@ -144,7 +152,6 @@ object TvLongPressMenu {
         var wasDel by remember(t) { mutableStateOf(false) }
         // 换成二次确认：焦点落在「取消」；从确认回到菜单：落回「删除…」（刚打开时的焦点由上面那一段给）
         LaunchedEffect(t, stage) {
-            if (t == null) return@LaunchedEffect
             if (stage == "del") wasDel = true else if (!wasDel) return@LaunchedEffect
             val key = if (stage == "del") "$TV_MENU_ZONE/del-cancel" else "$TV_MENU_ZONE/delete"
             repeat(30) {
@@ -152,11 +159,9 @@ object TvLongPressMenu {
                 delay(16)
             }
         }
-        if (t == null) return
         val manage = ItemManage.canManage() && t.kind != Kind.Person
         TvModal()
         TvBack { if (stage == "del" && !busy) stage = "menu" else if (!busy) close() }
-
         val favId = if (t.kind == Kind.Episode) t.seriesId ?: t.id else t.id
         val fav = chrome.isFavorite(favId, t.favorite && t.kind != Kind.Episode)
         val played = chrome.isPlayed(t.id, t.played)
@@ -197,7 +202,7 @@ object TvLongPressMenu {
                             busy = false
                             if (err == null) {
                                 // 那张卡已经从墙上拿掉了：焦点不还给它，交给页面上最近的一张
-                                restore = false
+                                onSkipRestore()
                                 close()
                                 delay(120)
                                 tvRescueFocus(g, tv)
@@ -263,12 +268,12 @@ object TvLongPressMenu {
                     Box(Modifier.padding(top = 14.dp, bottom = 4.dp).fillMaxWidth().height(2.dp).background(colors.onInk))
                     if (stage == "del") {
                         BasicText("确定删除？", Modifier.padding(top = 12.dp), style = Guga.song(27.sp, FontWeight.Black, TvMenuSpec.LABEL), maxLines = 1)
-                        BasicText("会从服务器删除媒体文件，不能撤销。", Modifier.padding(top = 6.dp, bottom = 10.dp).testTag("tv-menu-del-note"), style = Guga.song(22.sp, color = colors.onInk.copy(alpha = 0.8f)), maxLines = 2)
+                        BasicText("会从服务器删除媒体文件，无法撤销。", Modifier.padding(top = 6.dp, bottom = 10.dp).testTag("tv-menu-del-note"), style = Guga.song(22.sp, color = colors.onInk.copy(alpha = 0.8f)), maxLines = 2)
                     }
                     for (a in actions) {
                         TvFocusable(
                             onClick = {
-                                restore = a.stay
+                                if (!a.stay) onSkipRestore()
                                 a.run()
                                 if (a.closes) close()
                             },
@@ -293,7 +298,6 @@ object TvLongPressMenu {
                     }
                     val note = status
                     if (note != null) BasicText(note, Modifier.padding(top = 12.dp).testTag("tv-menu-status"), style = Guga.song(21.sp, color = colors.onInk), maxLines = 3)
-                    BasicText(if (stage == "del") "返回键回到菜单" else "返回键收起", Modifier.align(Alignment.End).padding(top = 12.dp), style = Guga.song(20.sp, color = colors.onInk.copy(alpha = TvMenuSpec.HINT_ALPHA)), maxLines = 1)
                 }
             }
         }
@@ -305,17 +309,19 @@ object TvLongPressMenu {
  * 位置变了（横排滑动、抬起）跟着更新。
  */
 @Composable
-fun Modifier.tvHeldPicture(focused: Boolean): Modifier {
+fun Modifier.tvHeldPicture(focused: Boolean): Modifier = tvHeldPicture { focused }
+
+@Composable
+fun Modifier.tvHeldPicture(focused: () -> Boolean): Modifier {
     val tv = LocalWideNav.current.tv
-    val last = remember { arrayOfNulls<Rect>(1) }
-    val now by rememberUpdatedState(focused)
-    DisposableEffect(focused) {
-        if (focused) tv.focusedPicture = last[0]
-        onDispose { }
+    val coords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+    LaunchedEffect(tv) {
+        androidx.compose.runtime.snapshotFlow(focused).collect { on ->
+            if (on) tv.focusedPicture = coords[0]?.takeIf { it.isAttached }?.boundsInRoot()
+        }
     }
     return onGloballyPositioned { c ->
-        val r = c.boundsInRoot()
-        last[0] = r
-        if (now) tv.focusedPicture = r
+        coords[0] = c
+        if (focused()) tv.focusedPicture = c.boundsInRoot()
     }
 }

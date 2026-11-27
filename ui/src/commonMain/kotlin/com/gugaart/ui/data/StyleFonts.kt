@@ -122,7 +122,7 @@ fun fontNote(font: StyleFont, state: FontFileState?): String? = when {
     font.downloadBytes == 0L -> null
     state is FontFileState.Ready -> "已下载"
     state is FontFileState.Busy -> "下载中…"
-    state is FontFileState.Failed -> "下载失败，点一下重试"
+    state is FontFileState.Failed -> "下载失败，点击重试"
     else -> "用到时下载 ${megabytes(font.downloadBytes)}"
 }
 
@@ -215,14 +215,14 @@ class StyleFontStore(
                 is ByteArray -> d
                 else -> return@withContext Fail(d as String)
             }
-            else -> readResource(file) ?: return@withContext Fail("随包字体读不出来")
+            else -> readResource(file) ?: return@withContext Fail("内置字体读取失败")
         }
         try {
             Placed(h.write(file.fileName, bytes))
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            Fail("没能存进应用的存储")
+            Fail("保存失败")
         }
     }
 
@@ -242,7 +242,7 @@ class StyleFontStore(
             }
             when {
                 got == null || got.status != 200 -> reason = "下载失败"
-                got.bytes.size.toLong() != file.size || Sha256.hex(got.bytes) != file.sha256 -> reason = "下载的文件校验不对"
+                got.bytes.size.toLong() != file.size || Sha256.hex(got.bytes) != file.sha256 -> reason = "文件校验失败"
                 else -> return got.bytes
             }
         }

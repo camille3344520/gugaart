@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -33,7 +34,9 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -47,6 +50,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -129,13 +133,20 @@ class TvShellState {
 
     /** 侧栏画着（登录页上没有）。 */
     var railPresent by mutableStateOf(false)
+    /** 首页当前是否露着（plain 字段，离开首页时不让 TvHomeDirectory 的 onFocusChanged 误把 inRows 清回 false）。 */
+    var homeActive: Boolean = true
+    /** 返回恢复焦点时跳过一次 200 ms 放大入场动画（外观落定后完全一致）。 */
+    var skipNextLift: Boolean = false
 
     /** 展开侧栏之前焦点在哪（收起时还给它）。 */
     var railReturn: PressState? = null
 
-    /** 这一页的菜单键处理（[TvMenuKey]）；焦点项的长按（[TvFocusable] 拿到焦点时交上来）。 */
+    /** 这一页的菜单键处理（[TvMenuKey]）；焦点项的长按菜单（[TvFocusable] 拿到焦点时交上来、失去焦点时收回；焦点项没有菜单 = null）。 */
     var onMenu: (() -> Boolean)? = null
     var focusedLongClick: (() -> Unit)? = null
+
+    /** 正按着的确定键：长按打开了菜单以后，这一次按键剩下的部分不交给菜单（[TvOkHold]）。 */
+    val okHold = TvOkHold()
 
     /** 焦点所在的图片卡，图那一格在屏幕上的位置（px）；焦点不在图片卡上 = null。长按菜单贴在它旁边。 */
     var focusedPicture: androidx.compose.ui.geometry.Rect? = null
@@ -155,6 +166,61 @@ class TvShellState {
     }
 }
 
+/**
+ * 一次按住的确定键：从第一个「按下」到「抬起」，中间的「按下」都是自动重复（安卓 `repeatCount > 0`、键盘的自动重复；看的是有没有抬起过，
+ * 不看重复计数，遥控器自己发重复也一样）。
+ *
+ * 长按在这一次按住里触发了（[longPressFired]，菜单 / 页边的管理开了），焦点也已经离开按下去的那一项：剩下的重复和抬起全部吃掉，
+ * 菜单停在第一行等新的一次确定。不吃的话，上游 `pressable` 把焦点项收到的第一个重复当成新的一次按下（`keyDownHere`），
+ * 抬起时就点中了菜单的第一行——「播放」，用户看到的是长按直接开播（1.5.1）。焦点还在那一项上时照常交给它（上游知道长按过的抬起不算点击）。
+ */
+class TvOkHold {
+    private var key: Key? = null
+    private var origin: PressState? = null
+    private var longFired = false
+    private var swallowAll = false
+
+    /** 根上的一个确定键事件；true = 吃掉。 */
+    fun onKey(k: Key, down: Boolean): Boolean {
+        if (down) {
+            if (key == null) {
+                key = k
+                origin = null
+                longFired = false
+                swallowAll = false
+                return false
+            }
+            return k == key && spent()
+        }
+        if (k != key) return false
+        val eat = spent()
+        reset()
+        return eat
+    }
+
+    /** [from] 的长按触发了（[TvFocusable] 的长按先调它）。没按着确定（菜单键、鼠标长按、测试直接调）= 不算，除非明确传 [pressedKey]。 */
+    fun longPressFired(from: PressState, pressedKey: Key? = null, swallowRemaining: Boolean = false) {
+        if (key == null) {
+            if (pressedKey != null) key = pressedKey else return
+        }
+        longFired = true
+        origin = from
+        if (swallowRemaining) swallowAll = true
+    }
+
+    /** 抬起收不到了（窗口失去焦点 / 触发短按）：这一次按住作废。 */
+    fun reset() {
+        key = null
+        origin = null
+        longFired = false
+        swallowAll = false
+    }
+
+    private fun spent() = longFired && (swallowAll || origin?.focused != true)
+}
+
+/** 上游 `pressable` 当成「确定」的键（OK / 方向键中间、回车、空格）。 */
+internal fun isOkKey(k: Key) = k == Key.Enter || k == Key.NumPadEnter || k == Key.DirectionCenter || k == Key.Spacebar
 /**
  * 测试缝：`WideNav` 是根里 `remember` 的，离屏测试从外面拿不到；页面层在的时候把它放在这里，测试读「侧栏开着没有 / 在哪个导航页 /
  * 交给玻璃场景的整幅图」。应用里没有人读它。
@@ -182,8 +248,9 @@ fun WideNav.closeRail(restore: Boolean = true) {
 }
 
 /**
- * 根上的遥控器处理（`GugaartFrame` 的根 Box，在它的 `focusable()` 左边）。做四件事：
+ * 根上的遥控器处理（`GugaartFrame` 的根 Box，在它的 `focusable()` 左边）。做这几件事：
  * 1. 数按键（上游 `FocusRegistry.keyPresses`：用户动过之后外壳不再替他放焦点）；
+ *    长按确定打开了菜单：这一次按住剩下的重复和抬起在这里吃掉（[TvOkHold]，所有页面的长按菜单一处管）；
  * 2. 菜单键（遥控器 ≡；键盘 M）→ 这一页的选项，没有就 = 焦点项的长按菜单；
  * 3. 方向键没人处理时移动焦点（Compose 桌面版不会自己把方向键变成焦点移动；安卓会，这里移动成功就吃掉，不会动两次）；
  *    **一路按左到头 = 展开侧栏**；侧栏开着时按右 = 收起并回到原来的焦点；
@@ -197,9 +264,15 @@ fun Modifier.tvRoot(graph: AppGraph, wide: WideNav): Modifier = composed {
     val fm = LocalFocusManager.current
     // 什么都没有焦点时根先拿着（按键有地方去）；页面已经放好焦点就不抢
     LaunchedEffect(tv) { if (!tv.rootHasFocus) runCatching { tv.rootFocus.requestFocus() } }
+    // 窗口失去焦点：按着的确定键的抬起不会来了
+    val window = LocalWindowInfo.current
+    LaunchedEffect(tv, window) { snapshotFlow { window.isWindowFocused }.collect { if (!it) tv.okHold.reset() } }
     this
         .onPreviewKeyEvent { e ->
             if (e.type == KeyEventType.KeyDown) graph.focus.keyPresses++
+            if (isOkKey(e.key) && (e.type == KeyEventType.KeyDown || e.type == KeyEventType.KeyUp) &&
+                tv.okHold.onKey(e.key, e.type == KeyEventType.KeyDown)
+            ) return@onPreviewKeyEvent true
             val menu = remoteKeyOf(e.key) == RemoteKey.Menu || (e.key == Key.M && !e.isCtrlPressed && !e.isAltPressed && !e.isMetaPressed)
             if (!menu) return@onPreviewKeyEvent false
             if (e.type == KeyEventType.KeyUp) tv.menuKey()
@@ -284,6 +357,7 @@ private suspend fun runTvEntryFocus(g: AppGraph, wide: WideNav, entry: Long, pre
         }
         elapsed = 0L
     }
+    var frameTries = 0
     while (true) {
         val mem = g.focusMemory.recall(entry)
         val decision = if (tv.modals > 0 || wide.railOpen) EntryFocus.Wait else decideEntryFocus(
@@ -306,8 +380,13 @@ private suspend fun runTvEntryFocus(g: AppGraph, wide: WideNav, entry: Long, pre
             EntryFocus.Wait -> {}
         }
         if (elapsed > ENTRY_SETTLE_MS) return
-        delay(ENTRY_POLL_MS)
-        elapsed += ENTRY_POLL_MS
+        if (frameTries < 3) {
+            frameTries++
+            withFrameNanos { }
+        } else {
+            delay(ENTRY_POLL_MS)
+            elapsed += ENTRY_POLL_MS
+        }
     }
 }
 
@@ -343,12 +422,18 @@ fun TvPages(route: Route, today: Today) {
     val settled = route != Route.Home || shownTab == nav.tab
     val entry = g.nav.current.key * 8L + if (route == Route.Home) nav.tab.ordinal.toLong() else 7L
     if (settled) tv.entry = entry
-
+    var prevEntry by remember { mutableStateOf(entry) }
+    val entryChanged = settled && prevEntry != entry
+    androidx.compose.runtime.SideEffect {
+        if (settled && prevEntry != entry) {
+            prevEntry = entry
+            TvPerfTiming.onBackRouteChanged(if (route == Route.Home) "Home/${nav.tab}" else route.toString())
+        }
+    }
     DisposableEffect(nav) {
         TvProbe.nav = nav
         onDispose { }
     }
-    // 每页记住最后一个带 key 的焦点（侧栏、长按菜单不是页面内容）
     DisposableEffect(g, tv) {
         g.focus.onKeyFocused = { k -> if (!k.startsWith("$TV_RAIL_ZONE/") && !k.startsWith("$TV_MENU_ZONE/") && !k.startsWith("$TV_SERVERS_ZONE/")) g.focusMemory.remember(tv.entry, k) }
         onDispose { g.focus.onKeyFocused = null }
@@ -378,12 +463,45 @@ fun TvPages(route: Route, today: Today) {
 
     // 返回栈上的每一页记住自己的滚动 / 网格位置：片库进详情再返回，回到进去的那一排，焦点也就能落回那张卡（PageStates）
     val pages = rememberPageStates(g.nav)
+    val homeShown = route == Route.Home && shownTab == WideTab.Home
+    tv.homeActive = homeShown
+    var homeKept by remember { mutableStateOf(false) }
+    LaunchedEffect(homeShown) { if (homeShown) homeKept = true }
+    var pendingHomeRestore by remember { mutableStateOf<Long?>(null) }
+    if (homeShown && entryChanged) pendingHomeRestore = entry
+    if (!homeShown) pendingHomeRestore = null
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().onFocusChanged { tv.pageHasFocus = it.hasFocus }.focusRequester(tv.pageFocus).focusGroup().testTag("tv-pages")) {
-            pages.Page(g.nav, if (route == Route.Home) shownTab?.ordinal ?: 7 else 7) { when (route) {
+        Box(Modifier.fillMaxSize().onFocusChanged { tv.pageHasFocus = it.hasFocus }.focusGroup().testTag("tv-pages")) {
+            if (homeShown || homeKept) {
+                com.gugaart.ui.KeptPage(homeShown) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .then(if (homeShown) Modifier.focusRequester(tv.pageFocus) else Modifier)
+                            .onGloballyPositioned {
+                                if (homeShown && pendingHomeRestore == entry && tv.modals == 0 && !nav.railOpen) {
+                                    val mem = g.focusMemory.recall(entry)
+                                    if (mem != null) {
+                                        tv.skipNextLift = true
+                                        if (g.focus.isAttached(mem) && g.focus.request(mem)) {
+                                            pendingHomeRestore = null
+                                        } else {
+                                            tv.skipNextLift = false
+                                        }
+                                    }
+                                }
+                            },
+                    ) {
+                        CompositionLocalProvider(com.gugaart.ui.idle.LocalPageShown provides (homeShown && com.gugaart.ui.idle.LocalPageShown.current)) {
+                            TvHomeScreen(today)
+                        }
+                    }
+                }
+            }
+            Box(Modifier.fillMaxSize().then(if (!homeShown) Modifier.focusRequester(tv.pageFocus) else Modifier)) {
+                pages.Page(g.nav, if (route == Route.Home) shownTab?.ordinal ?: 7 else 7) { when (route) {
                 Route.Home -> when (shownTab) {
                     null -> Box(Modifier.fillMaxSize())
-                    WideTab.Home -> TvHomeScreen(today)
+                    WideTab.Home -> Unit
                     WideTab.Discover -> TvDiscoverScreen(today)
                     WideTab.Libs -> TvLibsScreen(today)
                     WideTab.Colls -> TvCollsScreen(today)
@@ -398,13 +516,16 @@ fun TvPages(route: Route, today: Today) {
                 Route.Servers, is Route.Login -> TvLoginScreen(today)
                 else -> TvComing(today, "这一页")
             } }
+            }
         }
         // 侧栏展开：页面压暗
         // 侧栏展开 / 长按菜单开着：页面压暗
-        val scrim by animateFloatAsState(if (nav.railOpen || TvLongPressMenu.target != null) TvSpec.SCRIM_ALPHA else 0f, tween(300), label = "tv-scrim")
-        if (scrim > 0f) {
+        // 压暗的深浅只在绘制层读，组合里只看「压没压」（1.5.1 性能：侧栏开合那 300 ms 外壳不再每帧重组）
+        val scrim = animateFloatAsState(if (nav.railOpen || TvLongPressMenu.target != null) TvSpec.SCRIM_ALPHA else 0f, tween(300), label = "tv-scrim")
+        val scrimOn = androidx.compose.runtime.remember(scrim) { androidx.compose.runtime.derivedStateOf { scrim.value > 0f } }
+        if (scrimOn.value) {
             val paper = Guga.colors.paper
-            Box(Modifier.fillMaxSize().graphicsLayer { alpha = scrim }.background(paper).testTag("tv-scrim"))
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = scrim.value }.background(paper).testTag("tv-scrim"))
         }
     }
 }

@@ -136,6 +136,9 @@ android {
 
     packaging {
         jniLibs.useLegacyPackaging = true
+        // dex 压缩存放（1.5.1 perf-win4）：classes*.dex 约 42 MB 以前不压缩（STORED）占着 APK，压缩后省约 26 MB；
+        // 安装时系统照旧解到磁盘，运行期加载不受影响。只动这一项打包设置：不去 x86_64、不开 R8、不拆 ABI。
+        dex.useLegacyPackaging = true
         // libmpv 和 libVLC 都带 libc++_shared.so，赢的必须是最新的那份（libmpv 的，见下面的 CxxSharedTask）：
         // VLC 那份旧，没有 std::to_chars(float)，libmpv 会加载失败（阶段三在模拟器上实测到过：mpv 直接出错页）
         jniLibs.pickFirsts += listOf("**/libc++_shared.so")

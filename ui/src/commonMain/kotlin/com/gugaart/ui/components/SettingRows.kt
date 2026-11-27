@@ -64,7 +64,7 @@ object SettingSpec {
     val STEP_VALUE = 74.dp
 }
 
-/** 分组标题：宋体 + 专色斜体英文小标（「播放引擎 ENGINE」）。英文是装饰。 */
+/** 分组标题：宋体 + 专色斜体英文小标（「内核 ENGINE」）。英文是装饰。 */
 @Composable
 fun SettingGroup(title: String, english: String, modifier: Modifier = Modifier) {
     val colors = Guga.colors

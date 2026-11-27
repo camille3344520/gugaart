@@ -56,7 +56,7 @@ import kotlinx.coroutines.launch
 const val SUBTITLE_SAMPLE = "示例字幕 Sample"
 
 /** 字幕样式的总说明（设置页那一组下面、电视那一组的说明）。 */
-const val SUBTITLE_STYLE_NOTE = "改的是文字字幕（SRT / ASS 等）；图形字幕（PGS / VobSub）是图片，改不了。mpv 和 ExoPlayer 立即生效，VLC 下次开播生效"
+const val SUBTITLE_STYLE_NOTE = "只对文字字幕生效"
 
 /**
  * 字幕样式的预览：一小块暗的画面 + 一行「示例字幕 Sample」，按 [p] 的字号、粗细、描边、阴影、位置排，字体用 [family]（null = 平台黑体）。
@@ -106,9 +106,9 @@ fun SubtitlePreview(
 /** 字体那一行下面的一句状态（下载中 / 失败 / 这台设备放不了文件）；没什么可说 → null。 */
 fun subtitleFontStatus(font: StyleFont?, state: FontFileState?, canStore: Boolean): String? = when {
     font == null || font == StyleFont.System -> null
-    !canStore -> "这台设备放不了字体文件：画面上的字幕用系统字体"
-    state is FontFileState.Busy -> "正在准备「${font.label}」…（${if (font.downloadBytes > 0) "下载" else "解包"}好之前用系统字体）"
-    state is FontFileState.Failed -> "「${font.label}」${state.reason}：这次用系统字体；再选一次重试"
+    !canStore -> "这台设备只能用系统字体"
+    state is FontFileState.Busy -> "正在${if (font.downloadBytes > 0) "下载" else "解包"}「${font.label}」…"
+    state is FontFileState.Failed -> "「${font.label}」${state.reason}，已用系统字体"
     else -> null
 }
 
@@ -148,14 +148,14 @@ internal fun SubtitleStyleGroup(pick: String?) {
         choices.map { PickOption(it.key, it.label, it.note) },
         choices.filter { it.selected }.map { it.key },
         { key -> choices.firstOrNull { it.key == key }?.pick?.invoke() },
-        note = subtitleFontStatus(s.styleFont, s.styleFont?.let { states[it] }, fonts.available) ?: "和弹幕共用同一套：思源黑体、思源宋体、霞鹜文楷、得意黑随包，站酷快乐体用到时下载",
+        note = subtitleFontStatus(s.styleFont, s.styleFont?.let { states[it] }, fonts.available),
         tag = "set-sub-font",
         startOpen = pick == "subFont",
     )
     SettingRow("描边", tag = "set-sub-outline") { Segmented(SubOutline.entries.map { it to it.label }, s.outline, { o -> set { it.copy(outline = o) } }) }
     SettingRow("阴影", tag = "set-sub-shadow") { OnOff(s.shadow, { on -> set { it.copy(shadow = on) } }) }
-    SettingRow("位置", note = "最下面一行离画面底边多远", tag = "set-sub-position") { Segmented(SubPosition.entries.map { it to it.label }, s.position, { v -> set { it.copy(position = v) } }) }
-    SettingRow("也改 ASS 特效字幕", note = "默认不改：ASS 字幕自带的字体、颜色、位置照原样，只跟着字号缩放。打开 = 上面的字体、粗细、描边、位置也套到 ASS 上", tag = "set-sub-overrideAss") {
+    SettingRow("位置", tag = "set-sub-position") { Segmented(SubPosition.entries.map { it to it.label }, s.position, { v -> set { it.copy(position = v) } }) }
+    SettingRow("也改 ASS 特效字幕", tag = "set-sub-overrideAss") {
         OnOff(s.overrideAss, { on -> set { it.copy(overrideAss = on) } })
     }
     SettingRow("恢复默认的字幕样式", tag = "set-sub-reset") { ActionWord("恢复默认", { set { SubStylePrefs() } }, enabled = !s.isDefault) }

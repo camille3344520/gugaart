@@ -15,9 +15,12 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -25,6 +28,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,7 +57,9 @@ import com.gugugaga.ds.physics.LocalMotionPrefs
 import com.gugugaga.ds.physics.PressState
 import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
-
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 /**
  * 电视的焦点样式（`docs/platforms.md` §3，设计稿 `tv/css/tv.css` 的 `.fc`）：一屏里只有焦点是米白实底的，3 米外一眼找得到——
  * **米白实底（或米白 4 px 框）+ 四角朱红校对角 + 略微抬起**（卡片 ×1.08，按钮 ×1.04）。焦点色是固定的朱红 + 米白，**不跟专色**；焦点环常驻。
@@ -128,10 +142,39 @@ fun Modifier.focusFrame(on: Boolean, color: Color, width: Dp = TvFocusSpec.FRAME
 @Composable
 fun Modifier.tvCardFrame(focused: Boolean): Modifier = focusFrame(focused, Guga.colors.ink).proofCorners(focused, Guga.colors.seal)
 
+/** 绘制层读取 [focused] 的版本：焦点切换时只重绘框与校对角，不触发图片节点重组。 */
+@Composable
+fun Modifier.tvCardFrame(focused: () -> Boolean): Modifier {
+    val ink = Guga.colors.ink
+    val seal = Guga.colors.seal
+    return drawWithCache {
+        val fw = TvFocusSpec.FRAME.toPx()
+        val stroke = Stroke(fw)
+        val g = TvFocusSpec.CORNER_GAP.toPx()
+        val a = TvFocusSpec.CORNER_ARM.toPx()
+        val w = TvFocusSpec.CORNER_STROKE.toPx()
+        val l = -g + w / 2
+        val t = -g + w / 2
+        val r = size.width + g - w / 2
+        val b = size.height + g - w / 2
+        val framePos = Offset(-fw / 2, -fw / 2)
+        val frameSize = Size(size.width + fw, size.height + fw)
+        onDrawWithContent {
+            drawContent()
+            if (!focused()) return@onDrawWithContent
+            drawRect(ink, framePos, frameSize, style = stroke)
+            drawLine(seal, Offset(l - w / 2, t), Offset(l - w / 2 + a, t), w); drawLine(seal, Offset(l, t - w / 2), Offset(l, t - w / 2 + a), w)
+            drawLine(seal, Offset(r + w / 2, t), Offset(r + w / 2 - a, t), w); drawLine(seal, Offset(r, t - w / 2), Offset(r, t - w / 2 + a), w)
+            drawLine(seal, Offset(l - w / 2, b), Offset(l - w / 2 + a, b), w); drawLine(seal, Offset(l, b + w / 2), Offset(l, b + w / 2 - a), w)
+            drawLine(seal, Offset(r + w / 2, b), Offset(r + w / 2 - a, b), w); drawLine(seal, Offset(r, b + w / 2), Offset(r, b + w / 2 - a), w)
+        }
+    }
+}
 /**
  * 一个能接焦点的电视元素。内容拿到 `focused`，自己决定字的颜色（米白实底上用 `colors.onInk`）。
  * - [key]：上游 `focusKey`（区内唯一；路由记忆、测试用它找元素）。[default] = 这一页的默认焦点（上游 `routeDefault`）。
- * - 确定 = [onClick]；长按确定 = [onLongClick]（上游 `pressable` 已处理按住确定键）；菜单键在没有页面级处理时也走 [onLongClick]。
+ * - 确定 = [onClick]；长按确定 = [onLongClick]（上游 `pressable` 已处理按住确定键；那一次按住剩下的重复 / 抬起由外壳吃掉，[TvOkHold]）；
+ *   菜单键在没有页面级处理时也走 [onLongClick]。
  * - [origin]：抬起的缩放原点（横排里靠左的卡用 `TransformOrigin(0f, 0.4f)`，抬起后不出安全边）。
  * - [onFocus]：拿到焦点时调（焦点预览、右页跟着换）。
  *
@@ -157,43 +200,117 @@ fun TvFocusable(
 ) {
     val colors = Guga.colors
     val focused = press.focused
-    val reduced = LocalMotionPrefs.current.reducedMotion
+    val sysReduced = LocalMotionPrefs.current.reducedMotion
     val tv = LocalWideNav.current.tv
     val lift = when (kind) {
         TvFocusKind.Card -> TvFocusSpec.CARD_LIFT
         TvFocusKind.Block -> TvFocusSpec.BUTTON_LIFT
         else -> 1f
     }
-    val scale by animateFloatAsState(if (focused) lift else 1f, tween(if (reduced) 0 else TvFocusSpec.LIFT_MS), label = "tv-lift")
+    val skipLift = remember(focused) { focused && tv.skipNextLift.also { if (it) tv.skipNextLift = false } }
+    val scaleAnim = if (lift == 1f) null else animateFloatAsState(if (focused) lift else 1f, tween(remember(focused, sysReduced) { if (sysReduced || skipLift || TvPerfGovernor.degraded) 0 else TvFocusSpec.LIFT_MS }), label = "tv-lift")
     val small = kind == TvFocusKind.Chip
     val corners = kind != TvFocusKind.OnGlass
-    // 菜单键（没有页面级的处理时）= 焦点项的长按菜单；拿到焦点时把自己的交给外壳
+    val clickNow by rememberUpdatedState(onClick)
     val longClick by rememberUpdatedState(onLongClick)
     val focusCb by rememberUpdatedState(onFocus)
-    DisposableEffect(focused) {
+    val hasMenu = onLongClick != null
+    val scope = rememberCoroutineScope()
+    val holdMs = LocalViewConfiguration.current.longPressTimeoutMillis
+    val okState = remember { TvOkKeyState() }
+    DisposableEffect(focused, hasMenu) {
+        val mine: (() -> Unit)? = if (hasMenu) ({ longClick?.invoke() }) else null
         if (focused) {
-            tv.focusedLongClick = { longClick?.invoke() }
             tv.focusedPicture = null
             focusCb?.invoke()
+            tv.focusedLongClick = mine
+            TvPerfTiming.onFocusGained(key ?: label ?: "item")
+        } else {
+            okState.clear()
         }
-        onDispose { }
+        onDispose {
+            if (focused && mine != null && tv.focusedLongClick === mine) tv.focusedLongClick = null
+        }
     }
+    // 键盘 / 遥控器确定键：400 ms 计时器 OR 收到重复 KeyDown（repeatCount >= 1 / FLAG_LONG_PRESS / 二次 KeyDown），谁先到算谁；
+    // 判定成长按后立即触发并吞掉剩下的重复和抬起，不再依赖慢帧下的协程超时；触屏 / 鼠标仍走上游 pressable。
+    val held: (() -> Unit)? = onLongClick?.let { lc -> { tv.okHold.longPressFired(press, swallowRemaining = true); lc() } }
     Box(
         modifier
             .zIndex(if (focused) 3f else 0f)
             .focusKey(key)
             .routeDefault(default)
-            .pressable(press, enabled = enabled, label = label, onLongClick = onLongClick, onClick = onClick)
-            .testTag(if (focused) "tv-focused" else "tv-focusable"),
+            .onPreviewKeyEvent { e ->
+                if (!enabled || !isOkKey(e.key) || e.isCtrlPressed || e.isAltPressed || e.isMetaPressed) return@onPreviewKeyEvent false
+                // 预览事件先到外层：焦点在里面的子项上（登录框编辑时的文本框、套着的另一个 TvFocusable）时不截它的确定键，
+                // 只接自己拿着焦点时按下的那一次（int151d：否则输入法的「下一项」、框里的回车都被外层当成点了这一格）
+                if (!press.focused && okState.key == null) return@onPreviewKeyEvent false
+                // 没有长按菜单的项不需要抢先判定长按：照旧交给上游 pressable（int151d：电视登录页「登录」按确定没反应）
+                if (longClick == null && okState.key == null) return@onPreviewKeyEvent false
+                when (e.type) {
+                    KeyEventType.KeyDown -> {
+                        val lc = longClick
+                        if (lc != null && (okState.key == e.key || e.isRepeatOrLongPress())) {
+                            if (!okState.longFired) {
+                                okState.holdJob?.cancel()
+                                okState.holdJob = null
+                                okState.longFired = true
+                                okState.key = null
+                                press.release()
+                                tv.okHold.longPressFired(press, pressedKey = e.key, swallowRemaining = true)
+                                lc()
+                            }
+                            true
+                        } else if (okState.key == null) {
+                            okState.key = e.key
+                            okState.longFired = false
+                            press.press(Offset.Zero)
+                            if (lc != null) {
+                                okState.holdJob?.cancel()
+                                okState.holdJob = scope.launch {
+                                    delay(holdMs)
+                                    if (okState.key == e.key && !okState.longFired) {
+                                        okState.longFired = true
+                                        okState.key = null
+                                        press.release()
+                                        tv.okHold.longPressFired(press, pressedKey = e.key, swallowRemaining = true)
+                                        longClick?.invoke()
+                                    }
+                                }
+                            }
+                            true
+                        } else {
+                            true
+                        }
+                    }
+                    KeyEventType.KeyUp -> {
+                        val mine = okState.key == e.key
+                        val fired = okState.longFired
+                        okState.clear()
+                        press.release()
+                        if (mine && !fired) {
+                            tv.okHold.reset()
+                            clickNow()
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+            .pressable(press, enabled = enabled, label = label, onLongClick = held, onClick = onClick)
+            .testTag("tv-focusable"),
         propagateMinConstraints = true,
     ) {
+        val scaleMod = if (scaleAnim != null) {
+            Modifier.graphicsLayer {
+                val s = scaleAnim.value
+                scaleX = s
+                scaleY = s
+                transformOrigin = origin
+            }
+        } else Modifier
         Box(
-            Modifier
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    transformOrigin = origin
-                }
+            scaleMod
                 .proofCorners(
                     focused && corners && frame,
                     colors.seal,
@@ -293,5 +410,17 @@ fun TvModal(active: Boolean = true) {
     DisposableEffect(tv, active) {
         if (active) tv.modals++
         onDispose { if (active) tv.modals-- }
+    }
+}
+
+private class TvOkKeyState {
+    var key: Key? = null
+    var longFired = false
+    var holdJob: Job? = null
+    fun clear() {
+        key = null
+        longFired = false
+        holdJob?.cancel()
+        holdJob = null
     }
 }

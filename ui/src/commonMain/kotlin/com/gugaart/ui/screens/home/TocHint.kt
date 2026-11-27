@@ -1,20 +1,18 @@
 package com.gugaart.ui.screens.home
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,7 +50,7 @@ const val TOC_HINT_STATE = "tochint"
 
 /** 她在手记那一格说的那一句（每端按自己的操作方式说）。 */
 fun tocHintLine(mode: UiMode): String = when (mode) {
-    UiMode.Phone -> "头一回来？往下就是片单，在看的都排在那儿。"
+    UiMode.Phone -> "头一回来？往下就是片单，续看的都排在那儿。"
     UiMode.Desktop -> "头一回来？滚一下滚轮就是片单，点页脚那一排也行。"
     UiMode.Tv -> "头一回来？按遥控器的下键，下面就是片单。"
 }
@@ -97,18 +95,42 @@ fun TocJump(first: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) 
     ) {
         // 第一次：反白纸签 + 箭头轻动就够醒目。不加「往下翻 ·」：加了会盖住期号指示的最后一格（8 期，手机 412dp 宽，截图实测）
         BasicText("片单", style = Guga.song(type.caption, FontWeight.Black, ink), maxLines = 1)
-        BasicText("↓", Modifier.offset(y = (4 * bob).dp), style = Guga.song(type.caption, FontWeight.Black, if (first) ink else colors.spot), maxLines = 1)
+        BasicText("↓", Modifier.graphicsLayer { translationY = 4.dp.toPx() * bob() }, style = Guga.song(type.caption, FontWeight.Black, if (first) ink else colors.spot), maxLines = 1)
     }
 }
 
 /**
- * 箭头上下轻轻动的那一点位移（0..1 来回）。只在应用里动（有 [LocalIdleClock]）；离屏测试、减弱动效时停在 0——画面是定死的。
+ * 箭头上下轻轻动的那一点位移（0..1 来回），返回一个**在绘制层读**的函数：调用方放进 `graphicsLayer { translationY = … }`，
+ * 动画只让箭头自己那一层重画，不在组合期读值、不带整页重组（1.5.1 m151：以前整页玻璃跟着每帧重拍 + 预模糊，前台空闲 42–48 % CPU）。
+ * **跳 [BOB_TIMES] 次就停在原位**（不再无限要帧）。只在应用里动（有 [LocalIdleClock]）；离屏测试、减弱动效、电视掉帧降级时停在 0——画面是定死的。
+ * 窗口不在前台 / 最小化 / 应用在后台 / 首页被盖住时也停；回到前台重新跳三下。
  */
 @Composable
-fun tocBob(active: Boolean): Float {
+fun tocBob(active: Boolean): () -> Float {
     // 首页被别的页盖住（手机首页留在组合里不拆）时也不动：看不见的动画会一直要帧
-    if (!active || LocalIdleClock.current == null || LocalMotionPrefs.current.reducedMotion || !com.gugaart.ui.idle.LocalPageShown.current) return 0f
-    val t = rememberInfiniteTransition(label = "toc-bob")
-    val v by t.animateFloat(0f, 1f, infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "toc-bob")
-    return v
+    if (!active || LocalIdleClock.current == null || LocalMotionPrefs.current.reducedMotion || !com.gugaart.ui.idle.LocalPageShown.current || com.gugaart.ui.tv.TvPerfGovernor.degraded) return BOB_REST
+    if (!androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused) return BOB_REST
+    val anim = remember { Animatable(0f) }
+    LaunchedEffect(anim) {
+        repeat(BOB_TIMES) {
+            anim.animateTo(1f, tween(BOB_MS, easing = FastOutSlowInEasing))
+            anim.animateTo(0f, tween(BOB_MS, easing = FastOutSlowInEasing))
+        }
+    }
+    return { anim.value }
+}
+
+/** 跳三下就停（协调人 2026-11-27：无限动画带着玻璃整页重拍，前台空闲烧掉近半个核）。 */
+const val BOB_TIMES = 3
+private const val BOB_MS = 700
+private val BOB_REST: () -> Float = { 0f }
+
+/**
+ * 隔离重组的晃动箭头（电视首页用）：只在这个小组件自身的绘制层（`graphicsLayer`）读动画进度，不触发首页父容器重组和 relayout。
+ * 动法同 [tocBob]：跳三下就停。
+ */
+@Composable
+fun TocBobGlyph(glyph: String, active: Boolean, maxOffset: androidx.compose.ui.unit.Dp, style: androidx.compose.ui.text.TextStyle) {
+    val bob = tocBob(active)
+    BasicText(glyph, Modifier.graphicsLayer { translationY = maxOffset.toPx() * bob() }, style = style, maxLines = 1)
 }

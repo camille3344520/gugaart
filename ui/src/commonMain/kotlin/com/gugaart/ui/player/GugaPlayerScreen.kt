@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,6 +55,7 @@ import com.gugaart.ui.components.TextLink
 import com.gugaart.ui.components.Thumb
 import com.gugaart.ui.components.TitleLogo
 import com.gugaart.ui.components.drawCover
+import com.gugaart.ui.components.holdTouches
 import com.gugaart.ui.data.Art
 import com.gugaart.ui.data.Framing
 import com.gugaart.ui.data.Rules
@@ -80,6 +82,7 @@ import com.gugugaga.app.player.PlayerSlots
 import com.gugugaga.app.player.PlayerSnapshot
 import com.gugugaga.app.player.VeilLayer
 import com.gugugaga.app.player.playerGestures
+import com.gugugaga.app.settings.playbackPrefs
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.core.PlaybackMode
 import com.gugugaga.ds.icons.GuguIcon
@@ -176,7 +179,7 @@ fun subtitleBadgeOf(play: PlaySession, snap: PlayerSnapshot): String? {
 fun specOf(snap: PlayerSnapshot, play: PlaySession): String = listOfNotNull(specOf(snap).takeIf { it.isNotEmpty() }, subtitleBadgeOf(play, snap)).joinToString(" · ")
 
 fun specOf(snap: PlayerSnapshot): String {
-    val audio = snap.audio.firstOrNull { it.selected }?.label
+    val audio = audioWordValue(snap)
     val mode = when (snap.mode) {
         PlaybackMode.Direct -> "直连"
         null -> null
@@ -195,15 +198,27 @@ fun specOf(snap: PlayerSnapshot): String {
 @Composable
 fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val g = LocalGraph.current
+    // P2-9：能选的内核不到两个（iOS 只有 MPV）时不显示「内核」
+    val coreVisible = remember(play) { coreWordVisible(coreOptionsFor(play, g)) }
     val controller = play.controller
     val colors = Guga.colors
     val preset = LocalPreset.current
     val scope = rememberCoroutineScope()
     val snap by controller.snapshot.collectAsState()
-    val clock by controller.clock.collectAsState()
+    // 时钟（每 250 ms 走一下）不在这一层读（1.5.1 性能）：以前这里一读，在播的每一下整个播放页（画面层、弹幕宿主、控件）重组一遍；
+    // 现在只有时间轴那一格、暂停那一格、真用到位置的点击里才读
+    val clock = controller.clock.collectAsState()
+    val clockDuration = remember(clock) { derivedStateOf { clock.value.durationMs } }
     val engine by controller.engineFlow.collectAsState()
     RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（ShaderApply.kt）
     val settings by danmaku.settingsState.collectAsState()
+    val appSettings by g.settings.state.collectAsState()
+    val seekStepSec = remember(appSettings) { appSettings.playbackPrefs.seekStepSec.coerceAtLeast(1) }
+    val stepNow = rememberUpdatedState(seekStepSec * 1_000.0)
+    val danmakuConfigured = com.gugaart.ui.danmaku.rememberDanmakuConfigured()
+    val danmakuUnconfigured = (danmaku.state.phase == com.gugugaga.danmaku.match.DanmakuPhase.Unconfigured || !danmakuConfigured) &&
+        LocalDanmakuSlotOverride.current == null &&
+        DanmakuPickerBoard.stateOverride == null
     val render = remember(settings) { danmaku.prefsNow().render }
     val controls = remember { ControlsVisibility(scope, 3_000) }
     var opened by remember { mutableStateOf(PlayerPanel.of(preset.playerPanel)) }
@@ -237,8 +252,8 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val art = remember(snap.item, client) { snap.item?.let { client?.artOf(it) } ?: Art() }
     val heat = LocalHeatPreview.current ?: remember(danmaku.heat) { heatDots(danmaku.heat?.model?.values) }
     val marks = remember(snap.markers) { listOfNotNull(snap.markers.intro?.endMs?.toDouble(), snap.markers.credits?.startMs?.toDouble()) }
-    val position = clock.positionMs
-    val duration = clock.durationMs.takeIf { it > 0 } ?: snap.resolved?.durationMs?.toDouble() ?: 0.0
+    val position: () -> Double = { clock.value.positionMs }
+    val duration = clockDuration.value.takeIf { it > 0 } ?: snap.resolved?.durationMs?.toDouble() ?: 0.0
     // 网速：一直在采样，控件一出来就有数（NetSpeed.kt）
     val speed = rememberNetSpeed(play.controller)
     val showControls = controls.visible && !locked
@@ -252,7 +267,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val gestures = remember(controller) {
         GugaGestures(controller, play.platform, play.prefs, controls, locked = { lockedNow.value }, duration = { durationNow.value }, onSingleTap = {
             if (opened != null) opened = null else controls.toggle()
-        })
+        }, stepMs = { stepNow.value })
     }
     val gesturesSink = LocalPlayerGesturesSink.current
     androidx.compose.runtime.SideEffect { gesturesSink?.invoke(gestures) }
@@ -283,20 +298,31 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 for (p in PlayerPanel.WORDS) {
                     if (p == PlayerPanel.Eps && LocalPlayerEpisodes.current == null && snap.episodes.isEmpty()) continue
+                    if (p == PlayerPanel.Core && !coreVisible) continue
                     val value = when (p) {
                         PlayerPanel.Eps -> snap.item?.indexNumber?.let { "第 $it 集" }
-                        PlayerPanel.Sub -> snap.subtitles.firstOrNull { it.selected || it.index == snap.subtitleIndex }?.label?.takeIf { snap.subtitleIndex != null } ?: "关"
-                        PlayerPanel.Audio -> snap.audio.firstOrNull { it.selected }?.label
+                        PlayerPanel.Sub -> subtitleWordValue(snap)
+                        PlayerPanel.Audio -> audioWordValue(snap)
                         PlayerPanel.Speed -> rateLabel(snap.rate)
                         PlayerPanel.Quality -> if (snap.maxBitrateMbps > 0) "${snap.maxBitrateMbps.toInt()} Mbps" else specLine(snap.resolved?.mediaSource)?.substringBefore(" · ") ?: "原画"
                         PlayerPanel.Core -> engineShort(snap.engineId)
-                        PlayerPanel.Dm -> if (render.enabled) "开" else "关"
+                        PlayerPanel.Dm -> if (danmakuUnconfigured) "未配置" else if (render.enabled) "开" else "关"
                         PlayerPanel.Next, PlayerPanel.Cast -> null
                     }
-                    FunctionWord(p, value.takeIf { showValues }, panel == p, warn = p == PlayerPanel.Dm && slots.danmakuWarns?.invoke() == true, onClick = {
-                        opened = if (opened == p) null else p
-                        controls.bump()
-                    })
+                    FunctionWord(
+                        p,
+                        value.takeIf { showValues || (p == PlayerPanel.Dm && danmakuUnconfigured) },
+                        panel == p,
+                        warn = p == PlayerPanel.Dm && (danmakuUnconfigured || slots.danmakuWarns?.invoke() == true),
+                        onClick = {
+                            if (p == PlayerPanel.Dm && danmakuUnconfigured) {
+                                g.nav.navigate(Route.Settings("danmaku"))
+                            } else {
+                                opened = if (opened == p) null else p
+                                controls.bump()
+                            }
+                        },
+                    )
                 }
             }
             }
@@ -343,7 +369,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
         Box(Modifier.matchParentSize().padding(horizontal = side)) { EdgeHints(gestures) }
         // 开播那几秒：片源的效果（杜比视界 / HDR10 / 杜比全景声…）
         FormatFlash(snap, 1f, Modifier.align(Alignment.TopStart).padding(start = 16.dp + side, top = 64.dp))
-        // 字幕智能匹配的那句提示（「找到完全对得上的字幕 · 用上」/「已自动加载：… · 撤销」）：排在徽章那一行下面（开播缓冲久了两样可能同时在，不叠）（subtitle/BestMatchUi.kt）
+        // 字幕智能匹配的那句提示（「找到精确匹配的字幕 · 用上」/「已自动加载：… · 撤销」）：排在徽章那一行下面（开播缓冲久了两样可能同时在，不叠）（subtitle/BestMatchUi.kt）
         // 下面一格：「换到别台的源没成功」那一句（亮 4 秒，player/NoticeFlash.kt）；两样同时在时上下排开，不叠
         Column(Modifier.align(Alignment.TopStart).padding(start = 16.dp + if (inset) 0.dp else side, top = 64.dp + 40.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (!locked) com.gugaart.ui.subtitle.AutoBestFlash(play, controls = showControls || inset, scale = 1f, maxWidth = 380.dp)
@@ -353,7 +379,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             // 锁屏：只留左缘一个锁（点它解开）；别的手势都不响应
             Row(Modifier.align(Alignment.BottomStart).padding(start = 12.dp + side, bottom = 96.dp).background(colors.inkWell).testTag("player-lock"), verticalAlignment = Alignment.CenterVertically) {
                 BoxButton(GuguIcon.Lock, "解锁", { locked = false; controls.bump() }, onImage = true, selected = true)
-                BasicText("已锁定 · 点锁解开", Modifier.padding(start = 4.dp, end = 14.dp), style = Guga.song(11.sp, color = colors.ink, letterSpacing = 0.1.em), maxLines = 1)
+                BasicText("已锁定", Modifier.padding(start = 4.dp, end = 14.dp), style = Guga.song(11.sp, color = colors.ink, letterSpacing = 0.1.em), maxLines = 1)
             }
         } else if (showControls || inset) {
             // 两个上角的方框按钮：返回永远在左上；收藏必须在
@@ -406,13 +432,8 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                                 opened = null
                             })
                         }
-                        TextLink(if (panel == PlayerPanel.Next) "留在片尾  →" else "收起，回到全幅  →", {
-                            if (panel == PlayerPanel.Next) {
-                                dismissedNext = true
-                                controller.cancelAutoNext()
-                            }
-                            opened = null
-                        }, color = colors.dim)
+                        // 片尾的「下一集」面板自己有「取消」（P1-3），底下不再重复
+                        if (panel != PlayerPanel.Next) TextLink("收起  →", { opened = null }, color = colors.dim)
                     }
                 }
             }
@@ -438,22 +459,31 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                         // 规格行 + 网速（用户 2026-11-17：「调出菜单，能够自动显示当前的网络速度」）：规格太长时被省略号截，网速固定在后面不截
                         Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                             specOf(snap, play).takeIf { it.isNotEmpty() }?.let { BasicText(it, Modifier.weight(1f, fill = false), style = Guga.note(10.5.sp, colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            speed?.let { BasicText("网速 $it", Modifier.padding(start = 10.dp).testTag("player-speed"), style = Guga.note(10.5.sp, colors.ink), maxLines = 1) }
+                            NetSpeedText(speed, Modifier.padding(start = 10.dp).testTag("player-speed"), Guga.note(10.5.sp, colors.ink))
                         }
                     }
                 }
-                // 中间三个键：退 10 秒 / 播放暂停 / 进 10 秒
+                // 中间三个键：退 10 秒 / 播放暂停 / 进 10 秒；剧集两侧再加上一集 / 下一集（P2-10，没有的那一边是灰的）
                 // 缓冲时不排（正中是「缓冲中」那一小块）
-                if (!showBuffer) Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(54.dp)) {
-                    CenterKey(GuguIcon.RotateCcw, "退 10 秒", 26.dp) { controller.seekBy(-10_000.0); controls.bump() }
+                val episodic = snap.item?.seriesName != null || snap.prev != null || snap.next != null
+                if (!showBuffer) Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (episodic) 40.dp else 54.dp)) {
+                    if (episodic) CenterKey(GuguIcon.SkipBack, "上一集", 22.dp, enabled = snap.prev != null) { controller.playPrev(); controls.bump() }
+                    CenterKeyContent("退 $seekStepSec 秒", { controller.seekBy(-stepNow.value); controls.bump() }) {
+                        SeekStepIcon(false, seekStepSec, colors.ink, 26.dp)
+                    }
                     CenterKey(if (snap.paused) GuguIcon.Play else GuguIcon.Pause, if (snap.paused) "播放" else "暂停", 34.dp) { controller.userGesture(); controller.togglePlay(); controls.bump() }
-                    CenterKey(GuguIcon.RotateCw, "进 10 秒", 26.dp) { controller.seekBy(10_000.0); controls.bump() }
+                    CenterKeyContent("进 $seekStepSec 秒", { controller.seekBy(stepNow.value); controls.bump() }) {
+                        SeekStepIcon(true, seekStepSec, colors.ink, 26.dp)
+                    }
+                    if (episodic) CenterKey(GuguIcon.SkipForward, "下一集", 22.dp, enabled = snap.next != null) { controller.playNext(); controls.bump() }
                 }
                 strip(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp + side).padding(bottom = stripBottom))
             }
             // 引擎不支持非全窗视口时的退路：贴右边的小面板（墨底），不挡字幕区（画面下方三分之一不放）
             if (panel != null) {
-                Column(Modifier.align(Alignment.TopEnd).width(PlayerSpec.MARGIN + side).fillMaxHeight(0.66f).background(colors.paper.copy(alpha = 0.92f)).padding(start = 16.dp, end = 16.dp + side, top = 8.dp, bottom = 8.dp).testTag("player-overlay-panel")) {
+                Column(Modifier.align(Alignment.TopEnd).width(PlayerSpec.MARGIN + side).fillMaxHeight(0.66f).background(colors.paper.copy(alpha = 0.92f)).padding(start = 16.dp, end = 16.dp + side, top = 8.dp, bottom = 8.dp)
+                    // 面板空白处的点不漏到下面的画面（1.5.1 subfix：不吃事件，只挡住下面的兄弟；点画面 = 收面板，在手势层的单击里）
+                    .holdTouches().testTag("player-overlay-panel")) {
                     PanelBody(panel, play, snap, danmaku, slots, art, position, close = { opened = null })
                 }
             }
@@ -466,10 +496,17 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
 }
 
 @Composable
-private fun CenterKey(icon: GuguIcon, label: String, size: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+private fun CenterKey(icon: GuguIcon, label: String, size: androidx.compose.ui.unit.Dp, enabled: Boolean = true, onClick: () -> Unit) {
+    CenterKeyContent(label, onClick, enabled) {
+        Icon(icon, if (enabled) Guga.colors.ink else Guga.colors.faint, size, filled = icon == GuguIcon.Play || icon == GuguIcon.Pause)
+    }
+}
+
+@Composable
+private fun CenterKeyContent(label: String, onClick: () -> Unit, enabled: Boolean = true, content: @Composable () -> Unit) {
     val press = rememberPressState()
-    Box(Modifier.size(56.dp).pressGraphics(press).pressable(press, label = label, onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(icon, Guga.colors.ink, size, filled = icon == GuguIcon.Play || icon == GuguIcon.Pause)
+    Box(Modifier.size(56.dp).pressGraphics(press).pressable(press, enabled = enabled, label = label, onClick = onClick).testTag("center-$label"), contentAlignment = Alignment.Center) {
+        content()
     }
 }
 
@@ -478,7 +515,7 @@ private fun CenterKey(icon: GuguIcon, label: String, size: androidx.compose.ui.u
  * 她关掉（设置）时只剩那行字。
  */
 @Composable
-fun PauseSeat(paused: Boolean, positionMs: Double) {
+fun PauseSeat(paused: Boolean, positionMs: () -> Double) {
     if (!paused) {
         Spacer(Modifier.size(1.dp).testTag("pause-seat-empty"))
         return
@@ -486,7 +523,7 @@ fun PauseSeat(paused: Boolean, positionMs: Double) {
     val colors = Guga.colors
     Row(Modifier.padding(end = 10.dp).background(colors.inkWell).padding(horizontal = 8.dp, vertical = 4.dp).testTag("pause-seat"), verticalAlignment = Alignment.CenterVertically) {
         if (LocalGugaPrefs.current.showMascot) Byline(34.dp, live = false)
-        BasicText("暂停 · 停在 ${Rules.clock(positionMs.toLong())}", Modifier.padding(start = 8.dp), style = Guga.song(12.sp, color = colors.ink), maxLines = 1)
+        BasicText("暂停 · 停在 ${Rules.clock(positionMs().toLong())}", Modifier.padding(start = 8.dp), style = Guga.song(12.sp, color = colors.ink), maxLines = 1)
     }
 }
 
@@ -548,13 +585,11 @@ private fun ErrorPage(play: PlaySession, snap: PlayerSnapshot) {
     Box(Modifier.fillMaxSize().background(colors.paper).testTag("player-error")) {
         Row(Modifier.fillMaxSize().padding(start = 72.dp, end = 48.dp, top = 40.dp, bottom = 28.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                BasicText("放映事故 · PLAYBACK ERROR", style = Guga.kicker(), maxLines = 1)
-                // 找不到内核 = 上游那句「这台设备上没有可用的播放内核」（不另写壳文案）；别的失败仍照上游安静出错页（T35 B）。
-                BasicText(if (noEngine) PlayController.NO_ENGINE_MESSAGE else (view?.title ?: "这一集没放出来"), Modifier.padding(top = 8.dp), style = Guga.song(30.sp, FontWeight.Black), maxLines = 2)
-                if (!noEngine) BasicText(view?.hint ?: "换个版本，或者让服务器转一下，通常就好了。", Modifier.padding(top = 10.dp), style = Guga.song(14.sp, color = colors.dim, lineHeight = 24.sp), maxLines = 3)
+                // P2-1：三端统一——标题「播放失败」，下面一行原因（找不到内核 = 上游那句），按钮「重试」「返回」
+                BasicText(PLAY_ERROR_TITLE, style = Guga.song(30.sp, FontWeight.Black), maxLines = 1)
+                BasicText(playErrorReason(snap), Modifier.padding(top = 10.dp).testTag("player-error-reason"), style = Guga.song(14.sp, color = colors.dim, lineHeight = 24.sp), maxLines = 2)
                 Row(Modifier.padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val actions = view?.actions ?: listOf(ErrorActionId.Retry, ErrorActionId.Exit)
-                    for ((i, a) in actions.filter { it != ErrorActionId.UseWeb }.take(4).withIndex()) {
+                    for ((i, a) in playErrorActions(snap).withIndex()) {
                         val run: () -> Unit = {
                             when (a) {
                                 ErrorActionId.Retry -> controller.retry()
@@ -566,8 +601,7 @@ private fun ErrorPage(play: PlaySession, snap: PlayerSnapshot) {
                                 ErrorActionId.UseWeb -> {}
                             }
                         }
-                        val label = if (a == ErrorActionId.Retry) "再试一次" else a.label
-                        if (i == 0) PrimaryButton(label, run, icon = null) else TextLink(label, run)
+                        if (i == 0) PrimaryButton(a.label, run, icon = null) else TextLink(a.label, run)
                     }
                     g.deps.copyText?.let { copy -> snap.error?.let { raw -> TextLink("复制错误信息", { copy(raw) }, color = colors.dim) } }
                 }
@@ -635,12 +669,7 @@ private fun PhonePipNote(onBack: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.background(colors.paper).testTag("player-pip-note"), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 420.dp).padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             BasicText("PICTURE IN PICTURE · 画中画", style = Guga.song(10.sp, FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
-            BasicText("画面在小窗里", Modifier.padding(top = 8.dp, bottom = 10.dp), style = Guga.song(26.sp, FontWeight.Black, letterSpacing = 0.1.em), maxLines = 1)
-            BasicText(
-                "这一集正在画中画窗口里继续放，字幕跟着过去了；弹幕留在这一页，回来接着飘。",
-                style = Guga.song(12.sp, color = colors.dim, lineHeight = 20.sp).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-                maxLines = 3,
-            )
+            BasicText("画面在小窗里", Modifier.padding(top = 8.dp), style = Guga.song(26.sp, FontWeight.Black, letterSpacing = 0.1.em), maxLines = 1)
             val press = rememberPressState()
             Box(
                 Modifier.padding(top = 16.dp).pressGraphics(press).border(1.dp, colors.ink.copy(alpha = 0.6f)).pressable(press, label = "回到这里", onClick = onBack)

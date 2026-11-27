@@ -93,7 +93,10 @@ val LocalChrome = staticCompositionLocalOf { PageChrome() }
 fun ReportScroll(scroll: ScrollState) {
     val chrome = LocalChrome.current
     val returnPx = with(LocalDensity.current) { PhoneTabBarSpec.RETURN_DP.toPx() }
-    LaunchedEffect(scroll.value, scroll.maxValue) { chrome.reportScroll(scroll.value.toFloat(), scroll.maxValue.toFloat(), returnPx) }
+    // 滚动位置在协程里跟（1.5.1 性能）：以前把它当 LaunchedEffect 的键 = 每滚一帧这里重组一次、拆一个协程再起一个
+    LaunchedEffect(scroll, chrome, returnPx) {
+        androidx.compose.runtime.snapshotFlow { scroll.value to scroll.maxValue }.collect { (v, max) -> chrome.reportScroll(v.toFloat(), max.toFloat(), returnPx) }
+    }
     ScrollsToTop { scroll.animateScrollTo(0) }
 }
 
@@ -154,6 +157,16 @@ fun AppGraph.open(id: String) = nav.navigate(Route.Item(id))
 
 /** 播放：交给上游的 `PlaybackLauncher`（默认 = 进播放路由）。 */
 fun AppGraph.play(id: String, startMs: Long? = null) = playback.play(Route.Play(id, startMs = startMs))
+
+/**
+ * 这一页滚过 [px] 了没有（顶栏 / 状态栏变实心用）。派生状态（1.5.1 性能）：调用的那一页只在「过了 / 没过」翻转时重组；
+ * 以前各页直接写 `scroll.value > x`，滚动的每一帧整页（详情页、发现、我的……）都重组一遍。
+ */
+@Composable
+fun scrolledPast(scroll: androidx.compose.foundation.ScrollState, px: Float): Boolean {
+    val past = androidx.compose.runtime.remember(scroll, px) { androidx.compose.runtime.derivedStateOf { scroll.value > px } }
+    return past.value
+}
 
 /** 手机顶上的状态栏占位。滚动后（[solid]）垫实心纸色，内容从它下面硬切过去。 */
 @Composable

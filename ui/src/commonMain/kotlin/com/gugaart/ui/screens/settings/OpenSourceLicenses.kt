@@ -20,7 +20,7 @@ data class LicenseGroup(val title: String, val english: String, val entries: Lis
 enum class LicensePlatform { Windows, MacOS, Ios, Android }
 
 object OpenSourceLicenses {
-    /** `Route.Settings` 的这一段：不是九个分区之一，是「关于」下面的一页（[GugaSection.of] 认不出它）。 */
+    /** `Route.Settings` 的这一段：是「关于」下面的一页（[GugaSection.of] 认不出它）。 */
     const val KEY = "licenses"
 
     /** 本应用（界面层）的源码。 */
