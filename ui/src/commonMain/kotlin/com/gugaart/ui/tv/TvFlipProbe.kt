@@ -55,6 +55,9 @@ object TvFlipProbe {
     /** `autoflip off`：量的时候封面不自己翻（起点固定，不是性能项）。 */
     var autoFlip: Boolean = true
 
+    /** 1.6 B2 探针（默认开，`wallsem off` 关）：片库海报墙留在无障碍树里。关 = 整面墙不报给无障碍服务，只用来量无障碍占了多少。 */
+    var wallSemantics: Boolean = true
+
     /** 启动参数 → 开关。[get] = 按名字取 `--es` 的值（没有 = null）。返回一行摘要给日志。 */
     fun apply(get: (String) -> String?): String {
         fun off(name: String) = get(name)?.lowercase() == "off"
@@ -73,7 +76,8 @@ object TvFlipProbe {
         prefetch = !off("prefetch")
         bleedCache = !off("bleedcache")
         autoFlip = !off("autoflip")
+        wallSemantics = !off("wallsem")
         govGlass = get("govglass")?.lowercase() == "on"
-        return "govglass=$govGlass autoflip=$autoFlip bleedcache=$bleedCache odolayer=$odoLayer prefetch=$prefetch odo=$odometer flip3d=$flip3d bleed=$bleed xfade=$xfade clip=$clip border=$border dim=$dim posters=$posters glow=$glow gov=$governor cardlayer=$cardLayer"
+        return "wallsem=$wallSemantics govglass=$govGlass autoflip=$autoFlip bleedcache=$bleedCache odolayer=$odoLayer prefetch=$prefetch odo=$odometer flip3d=$flip3d bleed=$bleed xfade=$xfade clip=$clip border=$border dim=$dim posters=$posters glow=$glow gov=$governor cardlayer=$cardLayer"
     }
 }

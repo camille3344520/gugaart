@@ -132,16 +132,25 @@ fun errorKindOf(message: String): ErrorKind = when {
 fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load<T> {
     val graph = LocalGraph.current
     val session by graph.session.session.collectAsState()
-    val client = session?.client
-    val account = session?.let { "${it.serverId}/${it.userId}" }
+    // 1.6 A1：别台的详情页（data/RemoteBrowse.kt）里，取数用那台的客户端；缓存按那台分键
+    val remote = LocalBrowseServer.current
+    val client = if (remote != null) remote.client else session?.client
+    val account = if (remote != null) "remote:${remote.serverId}" else session?.let { "${it.serverId}/${it.userId}" }
     val site = currentCompositeKeyHash
     val keyList = keys.toList()
     val offMain = com.gugaart.ui.idle.LocalIdleClock.current != null
     // 回到这一页：先拿上次的内容（LoadCache），随后照常重新取
     @Suppress("UNCHECKED_CAST")
     val load = remember { Load<T>().also { l -> (LoadCache.get(listOf(account, site) + keyList) as T?)?.let { l.value = it; l.account = account; l.valueKeys = keyList } } }
-    LaunchedEffect(client, load.generation, *keys) {
-        if (client == null) return@LaunchedEffect
+    LaunchedEffect(client, load.generation, remote?.failed, *keys) {
+        if (client == null) {
+            // 别台连不上 / 要重新登录：整页「连不上「名字」」（各端入口的出错页）
+            if (remote?.failed == true) {
+                load.error = unreachableTitle(remote.name)
+                load.refreshing = false
+            }
+            return@LaunchedEffect
+        }
         if (accountSwitched(load.account, account)) {
             // 切回来秒开（规划 §2.1）：先找这个账号的近期缓存——有，第一帧就是它上次的内容，后台刷新；
             // 没有才清掉（上一个账号的内容不能留在画面上，D14），骨架按 ≥150 ms 的规则出。

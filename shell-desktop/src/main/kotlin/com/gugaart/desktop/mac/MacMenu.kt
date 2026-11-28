@@ -91,7 +91,6 @@ object MacMenuModel {
                     MacMenuItem("首页", cmd = DesktopCommand.GoHome),
                     MacMenuItem("发现", cmd = DesktopCommand.GoDiscover),
                     MacMenuItem("片库", cmd = DesktopCommand.GoLibs),
-                    MacMenuItem("合集", cmd = DesktopCommand.GoColls),
                     MacMenuItem("我的", cmd = DesktopCommand.GoMe),
                     MacMenuItem("返回", cmd = DesktopCommand.Back),
                     MacMenuItem("前进", cmd = DesktopCommand.Forward, enabled = DesktopCommands.enabled(DesktopCommand.Forward, route, tab)),

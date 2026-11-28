@@ -31,6 +31,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -219,10 +223,26 @@ private fun TvPosterWall(titles: List<Title>, columns: Int, keyPrefix: String, s
     val density = androidx.compose.ui.platform.LocalDensity.current
     val boxSize = remember(density) { with(density) { androidx.compose.ui.unit.IntSize(TvKitSpec.POSTER_W.roundToPx(), (TvKitSpec.POSTER_W * 1.5f).roundToPx()) } }
     val gridState = rememberLazyGridState()
+    // 1.6 B2：按住方向键翻墙时，下一行（再是上一行）的海报先解码、先上传——一个协程按顺序做，可见的行变了就取消重来（不是每张卡各起一个）
+    val images = g.images
+    LaunchedEffect(gridState, visible, columns, boxSize) {
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.let { v -> if (v.isEmpty()) null else (v.first().index / columns) to (v.last().index / columns) } }
+            .distinctUntilChanged()
+            .collectLatest { rows ->
+                if (rows == null) return@collectLatest
+                for (i in wallPrefetchOrder(rows.first, rows.second, columns, visible.size)) {
+                    val u = visible[i].art.poster ?: continue
+                    images.load(com.gugaart.ui.data.ImageSizing.sized(u, boxSize.width, boxSize.height), com.gugugaga.app.data.ImagePriority.Prefetch)?.prepareToDraw()
+                }
+            }
+    }
+    // 1.6 B2：墙在滚的时候（按住方向键）不报给无障碍服务，停下来再报。开着无障碍服务的电视（海信开了 4 个）上，Compose 每滚一帧都要把
+    // 整棵语义树重算一遍再按几何排序（真机 simpleperf：主线程 27 %）；滚动中不报，按住下键 P90 34 → 27 ms（探针 `wallsem off` 量的）。停下来焦点卡照常报。
+    val scrolling by remember(gridState) { androidx.compose.runtime.derivedStateOf { gridState.isScrollInProgress } }
     TvSnap(TvBrowseSpec.WALL_TOP) {
         LazyVerticalGrid(
             GridCells.Fixed(columns),
-            Modifier.fillMaxSize().testTag("tv-wall"),
+            Modifier.fillMaxSize().testTag("tv-wall").then(if (TvFlipProbe.wallSemantics && !scrolling) Modifier else Modifier.clearAndSetSemantics { }),
             state = gridState,
             contentPadding = PaddingValues(start = TvSpec.LEFT, end = 1920.dp - TvSpec.LEFT - TvBrowseSpec.wallWidth(columns), top = TvBrowseSpec.WALL_TOP, bottom = TvBrowseSpec.WALL_TAIL),
             horizontalArrangement = Arrangement.spacedBy(TvSpec.POSTER_GAP),
@@ -432,4 +452,14 @@ fun TvCollsScreen(today: Today, libraryId: String? = null) {
             else -> TvPosterWall(sets, TvBrowseSpec.COLUMNS, "set-", sub = { it.count?.let { n -> "$n 部" } })
         }
     }
+}
+
+/**
+ * 海报墙预取的顺序（1.6 B2）：可见的是第 [firstRow]–[lastRow] 行；先下一行（按住下键要进来的），再上一行（按住上键），每行从左到右。
+ * 返回条目下标；越界的不给。纯函数，有单测。
+ */
+fun wallPrefetchOrder(firstRow: Int, lastRow: Int, columns: Int, count: Int): List<Int> {
+    if (columns <= 0 || count <= 0) return emptyList()
+    val rows = listOf(lastRow + 1, firstRow - 1).filter { it >= 0 && it * columns < count }.distinct()
+    return rows.flatMap { r -> (r * columns until minOf((r + 1) * columns, count)).toList() }
 }

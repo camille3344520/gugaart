@@ -3,7 +3,6 @@ package com.gugaart.ui.screens.settings
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.gugaart.ui.data.GugaPrefs
 import com.gugaart.ui.data.GugaSettingsStore
-import com.gugaart.ui.data.MascotPref
 import com.gugugaga.app.player.StrmSettings
 import com.gugugaga.app.settings.AUDIO_LANGS
 import com.gugugaga.app.settings.SettingsSection
@@ -147,30 +146,6 @@ fun scaleText(v: Double): String {
 val AREA_CHOICES: List<Pair<Double, String>> = listOf(0.1 to "10%", 0.25 to "¼ 屏", 0.5 to "半屏", 0.75 to "¾ 屏", 1.0 to "全屏")
 
 fun areaChoice(area: Double): Double? = AREA_CHOICES.firstOrNull { abs(it.first - area) < 0.011 }?.first
-
-/* ---- 画报自己的四项（gugaart.settings.v1） ---- */
-
-/** 「手记」三档 ↔ 存着的两项（mascot、editorNotes）。常写 = 她在、说话；少写 = 只留署名照；不写 = 手记那一格收起。 */
-enum class NotesChoice(val label: String) { Often("常写"), Seldom("少写"), Never("不写") }
-
-fun notesChoiceOf(p: GugaPrefs): NotesChoice = when {
-    !p.editorNotes -> NotesChoice.Never
-    p.mascot == MascotPref.Subtle -> NotesChoice.Seldom
-    else -> NotesChoice.Often
-}
-
-/** 改「手记」：只动 editorNotes 和 mascot 的 on / subtle；她已经关掉（off）时不替用户打开。 */
-fun withNotes(p: GugaPrefs, c: NotesChoice): GugaPrefs {
-    val off = p.mascot == MascotPref.Off
-    return when (c) {
-        NotesChoice.Often -> p.copy(editorNotes = true, mascot = if (off) MascotPref.Off else MascotPref.On)
-        NotesChoice.Seldom -> p.copy(editorNotes = true, mascot = if (off) MascotPref.Off else MascotPref.Subtle)
-        NotesChoice.Never -> p.copy(editorNotes = false)
-    }
-}
-
-/** 「咕咕嘎嘎出现在版面上」开 / 关：关 = off；开 = 回到 on（少写的那一档由「手记」管）。 */
-fun withMascot(p: GugaPrefs, on: Boolean): GugaPrefs = p.copy(mascot = if (!on) MascotPref.Off else if (p.mascot == MascotPref.Off) MascotPref.On else p.mascot)
 
 /**
  * 根界面的那一个 [GugaSettingsStore]（设置页改了，整本画报立刻跟着变）。根没给（离屏测试直接画某一页）时设置页自己造一个，

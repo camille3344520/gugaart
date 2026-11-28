@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.composed
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.DisposableEffect
 import com.gugugaga.app.ui.LocalGraph
 import androidx.compose.ui.semantics.contentDescription
@@ -91,6 +92,7 @@ fun PaperField(
     ime: ImeAction = ImeAction.Next,
     onIme: (() -> Unit)? = null,
     tag: String = "paper-field",
+    fieldFocus: androidx.compose.ui.focus.FocusRequester? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val colors = Guga.colors
@@ -105,7 +107,12 @@ fun PaperField(
                 BasicTextField(
                     value,
                     onChange,
-                    Modifier.fillMaxWidth().testTag(tag).typingTarget().semantics { contentDescription = label },
+                    Modifier
+                        .fillMaxWidth()
+                        .then(if (fieldFocus != null) Modifier.focusRequester(fieldFocus) else Modifier)
+                        .testTag(tag)
+                        .typingTarget()
+                        .semantics { contentDescription = label },
                     enabled = enabled,
                     textStyle = Guga.song(size, FontWeight.Black, if (enabled) colors.ink else colors.dim, letterSpacing = if (masked) 0.4.em else TextUnit.Unspecified),
                     singleLine = true,

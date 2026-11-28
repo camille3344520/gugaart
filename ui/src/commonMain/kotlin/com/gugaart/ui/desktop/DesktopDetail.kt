@@ -19,7 +19,12 @@ import com.gugaart.ui.desktop.detail.DesktopSet
  */
 @Composable
 fun DesktopItemScreen(id: String, today: Today) {
-    val item = rememberLoad("item", id) { c -> c.titleOf(c.getItemShared(id)) }
+    // 1.6 A1：别台的条目 = 那台的客户端、同一套版式，顶上小签写服务器名（data/RemoteBrowse.kt）
+    com.gugaart.ui.data.RemoteRef.parse(id)?.let { ref ->
+        com.gugaart.ui.data.RemoteBrowseHost(ref) { DesktopItemScreen(ref.itemId, today) }
+        return
+    }
+    val item =rememberLoad("item", id) { c -> c.titleOf(c.getItemShared(id)) }
     val t = item.value
     when {
         t == null && item.error != null -> DesktopErrorPage(item.error!!, item::retry)

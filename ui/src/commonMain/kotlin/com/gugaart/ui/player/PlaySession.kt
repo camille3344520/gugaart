@@ -123,6 +123,26 @@ class PlaySession internal constructor(
         controller.selectSubtitle(index)
         subtitleWhy = "手动"
         onSubtitleChosen?.invoke(index)
+        // 第一字幕换成了第二字幕那一条：第二字幕关掉（同一条不叠两遍）
+        if (index != null && index == secondSubtitleIndex) secondSubtitleIndex = null
+    }
+
+    /** 第二字幕（1.6 C1，只有 mpv）：Emby 的字幕编号，null = 关（[RememberSecondSubtitleApply] 把它交给引擎）。 */
+    var secondSubtitleIndex: Int? by mutableStateOf(null)
+        internal set
+
+    /** 用户在哪一份片源（itemId|sourceId）上自己选过第二字幕：开播时不再按「上次的选择」改它。 */
+    internal var secondChosenFor: String? = null
+
+    /** 用户选了第二字幕之后要做的事（记进这部的「上次的选择」）。 */
+    internal var onSecondSubtitleChosen: ((Int?) -> Unit)? = null
+
+    /** 面板 / 电视页边里选第二字幕：换，并且记下来。 */
+    fun chooseSecondSubtitle(index: Int?) {
+        val s = controller.value
+        secondChosenFor = s.itemId + "|" + s.resolved?.mediaSource?.id
+        secondSubtitleIndex = index
+        onSecondSubtitleChosen?.invoke(index)
     }
 
     /** 记「这一集 + 这条字幕」的字幕时间（[rememberPlaySession] 接上本地存储；测试里没有 = 只改不记）。 */
@@ -181,9 +201,16 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
         var holder: PlaySession? = null
         val restart = if (restartTick > 0) PlayerRestart.take() else null
         // 字幕搜索的「仅本次播放」：这一集有本机字幕时加进协商结果（subtitle/LocalSubtitles.kt；没有就原样转发）
-        val home = com.gugaart.ui.subtitle.SubtitleAwareClient(clientOverride?.invoke(s) ?: EmbyPlayerClient(s.client))
+        // 1.6 批次 E：下好了的条目放本地文件（断网也能放），进度先记本地、联网后回报；没下的照常走 Emby
+        val emby = clientOverride?.invoke(s) ?: EmbyPlayerClient(s.client)
+        val home = com.gugaart.ui.subtitle.SubtitleAwareClient(
+            if (com.gugaart.ui.download.Downloads.available) com.gugaart.ui.download.DownloadedPlayerClient(emby, s.serverId, s.userId) else emby,
+        )
         // 1.5.0 B3：详情页选了别台的源（或在别台的源上换了内核）→ 一开始就用那台的客户端（池里找片源时建好的）
-        val handoff = RemotePlay.take(route.id)
+        // 1.6 A1：路由里就是别台的条目（搜索「其它服务器」→ 那台的详情 → 播放 / 下一集，没走交接单）= 同样用那台的客户端开播
+        val handoff = RemotePlay.take(route.id) ?: com.gugaart.ui.data.RemoteRef.parse(route.id)?.let { ref ->
+            RemoteHandoff(route.id, ref.serverId, com.gugaart.ui.data.RemoteBrowse.nameOf(ref.serverId), ref.itemId, route.mediaSourceId, route.startMs)
+        }
         val remoteClient = handoff?.let { com.gugaart.ui.data.OtherServers.poolFor(g).clientNow(it.serverId) }
         val remote = if (handoff != null && remoteClient != null) RemoteSource(handoff.serverId, handoff.serverName, handoff.itemId, route.id, remoteClient) else null
         val remotePlayer = remote?.let { RemotePlay.playerClientOf(it.client) }
@@ -206,16 +233,21 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
                 // 上一集 / 下一集 / 自动下一集：换路由（返回栈里只留一个播放器），队列跟着走
                 onNavigate = { item ->
                     g.queue.nowPlaying(item.id)
-                    g.nav.replace(Route.Play(item.id))
+                    g.nav.replace(Route.Play(com.gugaart.ui.data.RemoteBrowse.wrap(g.nav, item.id)))
                 },
                 onStartup = { r ->
                     g.startupLog.add(r)
                     g.log.add("perf", r.line())
                     g.log.add("perf", r.timingLine())
                 },
-                cachedItem = { id -> g.queries.cachedItem(id) },
+                // 放着别台的源时不认本台的查询缓存（条目 id 只在那一台有意义，几台上的 id 可能撞）
+                cachedItem = { id -> if (holder?.remote != null) null else g.queries.cachedItem(id) },
                 parallelStart = g.playerParallelStart,
-                prefetchedPlayback = { o, caps -> g.playbackPrefetch.consume("${s.serverId}|${s.userId}", o, caps) },
+                // 下好了的条目不用详情页预取的那份（那是 Emby 的地址）：放本地文件
+                prefetchedPlayback = { o, caps ->
+                    if (com.gugaart.ui.download.Downloads.playable(s.serverId, s.userId, o.itemId) != null) null
+                    else g.playbackPrefetch.consume("${s.serverId}|${s.userId}", o, caps)
+                },
                 log = { level, message -> g.log.add(level, message) },
                 scrubDwellMs = { g.scrubDwellMs },
             ),
@@ -321,10 +353,11 @@ fun rememberPlaySession(route: Route.Play): PlaySession? {
     LaunchedEffect(play, route) {
         // 放着别台的源、路由还是本台那一条：不是「换了条目」，别把本台的条目 id 交给别台的客户端
         if (play.remote?.homeItemId == route.id) return@LaunchedEffect
-        play.controller.changeItem(PlayRequest(route.id, route.mediaSourceId, route.startMs, route.audio, route.subtitle))
+        // 别台的条目（1.6 A1）：路由里带着服务器，交给控制器的是那台上的 id（控制器此刻用的就是那台的客户端）
+        play.controller.changeItem(PlayRequest(com.gugaart.ui.data.RemoteRef.plain(route.id), route.mediaSourceId, route.startMs, route.audio, route.subtitle))
     }
     // 不是队列交过来的条目（从详情页、记录里点开的）：队列到此为止
-    LaunchedEffect(route.id) { if (g.queue.current != null && g.queue.playingId != route.id) g.queue.clear() }
+    LaunchedEffect(route.id) { if (g.queue.current != null && g.queue.playingId != com.gugaart.ui.data.RemoteRef.plain(route.id)) g.queue.clear() }
     return play
 }
 

@@ -63,10 +63,17 @@ internal object TvTitlePeekCache {
  */
 @Composable
 fun TvItemScreen(id: String, today: Today) {
+    // 1.6 A1：别台的条目 = 那台的客户端、同一套版式，顶上小签写服务器名（data/RemoteBrowse.kt）
+    com.gugaart.ui.data.RemoteRef.parse(id)?.let { ref ->
+        com.gugaart.ui.data.RemoteBrowseHost(ref) { TvItemScreen(ref.itemId, today) }
+        return
+    }
     val g = LocalGraph.current
     val session by g.session.session.collectAsState()
-    val account = session?.let { "${it.serverId}/${it.userId}" }
-    val peek = remember(account, id) { TvTitlePeekCache.get(account, id) }
+    val remote = com.gugaart.ui.data.LocalBrowseServer.current
+    val account = if (remote != null) null else session?.let { "${it.serverId}/${it.userId}" }
+    // 别台的条目不认本台的预览（条目 id 只在那一台有意义）
+    val peek = remember(account, id) { if (remote != null) null else TvTitlePeekCache.get(account, id) }
     val item = rememberLoad("tv-item", id) { c -> c.titleOf(c.getItem(id)) }
     val t = item.value ?: peek
     when {

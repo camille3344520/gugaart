@@ -56,6 +56,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
@@ -117,6 +118,23 @@ class MainActivity : ComponentActivity() {
         backupOpen?.complete(uri)
         backupOpen = null
     }
+
+    /** 1.6 B5：电视搜索的语音——系统的识别界面（RecognizerIntent）；结果回到 [voiceWait] 里等着的那个协程。 */
+    private var voiceWait: kotlinx.coroutines.CompletableDeferred<String?>? = null
+    private val voiceLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { r ->
+        val text = if (r.resultCode == RESULT_OK) r.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() else null
+        Log.i(TAG, "[voice] result=${r.resultCode} heard=${text != null}")
+        voiceWait?.complete(text)
+        voiceWait = null
+    }
+
+    private fun voiceIntent() = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
+        .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+        .putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+
+    /** 这台设备有没有接语音识别的界面（没有 = 搜索页不显示「语音」）。 */
+    private fun voiceAvailable(): Boolean = runCatching { packageManager.queryIntentActivities(voiceIntent(), 0).isNotEmpty() }.getOrDefault(false)
 
     private val backupFiles by lazy {
         com.gugaart.ui.backup.BackupFileHost(
@@ -219,7 +237,8 @@ class MainActivity : ComponentActivity() {
         val root = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         val layer = VideoLayer(this)
         layer.install(root)
-        val host = AndroidEngineHost(this, layer).also { engineHost = it }
+        // 1.6 C2「音频直通」：每次开播时读设置（ExoPlayer 的音频输出、mpv 的 audio-spdif、VLC 的 S/PDIF）
+        val host = AndroidEngineHost(this, layer, passthrough = { appGraph?.deps?.let { com.gugaart.ui.data.audioPassthroughOf(it.local, it.platformLabel) } ?: true }).also { engineHost = it }
         val platform = AndroidPlayerPlatform(this, host, tv).also { player = it }
 
         val deps = androidDeps(override, platform)
@@ -248,6 +267,24 @@ class MainActivity : ComponentActivity() {
             }
         }
         applyDebugExtras(intent, graph, first = true)
+        // 1.6 B1：匹配片源帧率（只在电视上）——界面说要合哪个帧率，这里挑显示模式写进窗口；null = 写回进播放器之前的值
+        if (tv) com.gugaart.ui.player.FrameRateMatch.host = { fps -> runOnUiThread { applyFrameRate(fps) } }
+        if (tv) {
+            // 1.6 B4：系统首页的「继续观看」（Watch Next）；没有 TvProvider 的电视上 host 自己什么都不做
+            val watchNext = WatchNextHost(applicationContext)
+            com.gugaart.ui.tv.TvWatchNext.host = { entries -> watchNext.sync(entries) }
+            // 1.6 B5：有语音识别才给 host（搜索页据此显示「语音」）
+            val voice = voiceAvailable()
+            Log.i(TAG, "[voice] available=$voice")
+            com.gugaart.ui.tv.TvVoice.host = if (!voice) null else ({
+                val wait = kotlinx.coroutines.CompletableDeferred<String?>()
+                voiceWait?.complete(null)
+                voiceWait = wait
+                val launched = runCatching { voiceLauncher.launch(voiceIntent()) }.isSuccess
+                if (launched) wait.await() else null
+            })
+            openWatchNext(intent, graph)
+        }
 
         // 返回（按键 / 手势 / 预测式返回）：先播放页，再应用的返回栈；在首页要 2 秒内第二次才离开
         val exitConfirm = ExitConfirm(clock = { android.os.SystemClock.uptimeMillis() })
@@ -287,6 +324,62 @@ class MainActivity : ComponentActivity() {
         composeView = compose
         root.addView(compose, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
+    }
+
+    /**
+     * 1.6 B4：从系统首页的「继续观看」点进来（intent 带 [WatchNextHost.EXTRA] = `服务器 id|用户 id|条目 id`）：等会话恢复好，
+     * 是同一台服务器同一个用户就直接开播；不是（换过账号）就只是打开应用。
+     */
+    private fun openWatchNext(intent: Intent?, graph: AppGraph) {
+        val parsed = com.gugaart.ui.tv.TvWatchNext.parseKey(intent?.getStringExtra(WatchNextHost.EXTRA)) ?: return
+        intent?.removeExtra(WatchNextHost.EXTRA)
+        val (account, itemId) = parsed
+        scope?.launch {
+            val st = kotlinx.coroutines.withTimeoutOrNull(15_000) { graph.session.status.first { it != SessionStatus.Restoring } }
+            val s = graph.session.session.value
+            val mine = st == SessionStatus.SignedIn && s != null && "${s.serverId}|${s.userId}" == account
+            Log.i(TAG, "[watchnext] open item=$itemId same-account=$mine")
+            if (mine) kotlinx.coroutines.withContext(Dispatchers.Main) { graph.nav.navigate(Route.Play(itemId)) }
+        }
+    }
+
+    /** 进播放器之前窗口的 preferredDisplayModeId（null = 现在没切着）。 */
+    private var modeBeforePlay: Int? = null
+
+    /**
+     * 1.6 B1：按片源帧率切显示模式（`preferredDisplayModeId`，API 23+；电视 minSdk 28）。[fps] = null：切回进播放器之前的模式。
+     * 只在同分辨率的模式里挑（`pickDisplayMode`）；电视只报一个模式 / 没有合拍的 = 不切。每一次都打一行日志（`[fps]`），真机验收看它和 `dumpsys display`。
+     */
+    private fun applyFrameRate(fps: Double?) {
+        val attrs = window.attributes
+        if (fps == null) {
+            val before = modeBeforePlay ?: run {
+                Log.i(TAG, "[fps] leave: nothing to restore")
+                return
+            }
+            modeBeforePlay = null
+            attrs.preferredDisplayModeId = before
+            window.attributes = attrs
+            Log.i(TAG, "[fps] restore mode=$before")
+            return
+        }
+        @Suppress("DEPRECATION")
+        val display = (if (Build.VERSION.SDK_INT >= 30) this.display else null) ?: windowManager.defaultDisplay
+        val cur = display.mode
+        val modes = display.supportedModes.map { com.gugaart.ui.player.DisplayModeInfo(it.modeId, it.physicalWidth, it.physicalHeight, it.refreshRate) }
+        val current = com.gugaart.ui.player.DisplayModeInfo(cur.modeId, cur.physicalWidth, cur.physicalHeight, cur.refreshRate)
+        val id = com.gugaart.ui.player.pickDisplayMode(modes, current, fps)
+        val list = modes.joinToString(" ") { "${it.id}:${it.width}x${it.height}@${it.refreshRate}" }
+        if (id == null || (id == cur.modeId && modeBeforePlay == null)) {
+            Log.i(TAG, "[fps] source=$fps keep mode=${cur.modeId}@${cur.refreshRate} modes=[$list]")
+            // 上一集切过、这一集没有合拍的模式：回到原来的
+            if (id == null && modeBeforePlay != null) applyFrameRate(null)
+            return
+        }
+        if (modeBeforePlay == null) modeBeforePlay = attrs.preferredDisplayModeId
+        attrs.preferredDisplayModeId = id
+        window.attributes = attrs
+        Log.i(TAG, "[fps] source=$fps switch ${cur.modeId}@${cur.refreshRate} -> $id modes=[$list]")
     }
 
     /** 没人接住的异常：写进运行日志；主线程上的仍然交还给系统（吞掉会留下一个死掉的窗口）。 */
@@ -347,7 +440,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        appGraph?.let { applyDebugExtras(intent, it, first = false) }
+        appGraph?.let {
+            applyDebugExtras(intent, it, first = false)
+            if (tv) openWatchNext(intent, it)
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -412,10 +508,24 @@ class MainActivity : ComponentActivity() {
         val secureForApp = com.gugaart.ui.danmaku.withDanmakuRelay(secure, local, null)
         // Trakt：编进包里的应用（.env；没配 = 设置里写「这一版不能连 Trakt」）
         com.gugaart.ui.trakt.TraktService.install(BuildConfig.TRAKT_CLIENT_ID, BuildConfig.TRAKT_CLIENT_SECRET)
+        // 离线下载（1.6 批次 E）：只在手机上（电视不设 = 没有下载入口）。整个进程一份，Activity 重建时只换它记着的 Activity
+        if (!tv) {
+            val dl = (com.gugaart.ui.download.Downloads.host as? AndroidDownloadHost) ?: AndroidDownloadHost(applicationContext).also { com.gugaart.ui.download.Downloads.host = it }
+            dl.activity = java.lang.ref.WeakReference(this)
+        }
         // DLNA 投屏：手机能投到电视（电视自己是被投的一方，不装）
         if (!tv) com.gugaart.ui.cast.Cast.host = com.gugaart.ui.cast.DlnaCastHost {
             val wifi = applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
             val lock = wifi.createMulticastLock("gugaart-dlna").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            AutoCloseable { runCatching { lock.release() } }
+        }
+        // 局域网发现 Emby（手机、电视都要；拿 Wi-Fi 组播锁避免部分设备收不到 UDP 广播回包）
+        com.gugaart.ui.screens.login.JvmLanDiscoveryLock.acquire = {
+            val wifi = applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            val lock = wifi.createMulticastLock("gugaart-emby-discovery").apply {
                 setReferenceCounted(false)
                 acquire()
             }

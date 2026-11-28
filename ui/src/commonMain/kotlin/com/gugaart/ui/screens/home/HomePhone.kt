@@ -230,6 +230,8 @@ fun HomePhone(data: HomeData, volume: Int, date: String, day: Int, offline: Bool
                 PhoneMasthead(volume, date)
             }
 
+            // 断网：下好的片在目录区最前面一栏（1.6 批次 E；没有下好的 = 不出现）
+            if (offline) com.gugaart.ui.download.DownloadsShelf(Modifier.padding(top = 26.dp))
             // ---- 目录区 ----
             Column(Modifier.padding(horizontal = dimens.margin).onGloballyPositioned { tocAt[0] = it }) {
                 if (data.resume.isNotEmpty()) {
@@ -284,6 +286,30 @@ private fun PhoneMasthead(volume: Int, date: String) {
         Masthead(volume = "VOL. $volume", date = date, issue = volume, dateSlot = { com.gugaart.ui.screens.me.RankChip(date, it) })
         // 报头高 44，下线之下 0–22 dp：海报流离报头 18 dp（矮屏 ×0.86），这一行的字落在这一截里
         MastheadServerLine(Modifier.align(Alignment.BottomStart).offset(y = SERVER_LINE_DROP))
+    }
+}
+
+/** 有下好的片（这个账号的）。 */
+@Composable
+internal fun hasFinishedDownloads(): Boolean =
+    com.gugaart.ui.download.rememberDownloads()?.mine?.any { it.entry.status == com.gugaart.ui.download.DlStatus.Done } == true
+
+/**
+ * 手机首页、断网、一份数据都没取到（冷启动就没网），但有下好的片（1.6 批次 E）：报头 + 「断线」条 + 「下载」一栏，
+ * 点了直接放本地文件。没有下好的片时照旧是出错页（[HomeScreen]）。
+ */
+@Composable
+internal fun OfflineHome(volume: Int, date: String, onRetry: () -> Unit) {
+    val dimens = Guga.dimens
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("home-offline")) {
+            Spacer(Modifier.height(dimens.statusBar + 8.dp))
+            OfflineBar(onRetry = onRetry, cachedList = false)
+            PhoneMasthead(volume, date)
+            com.gugaart.ui.download.DownloadsShelf(Modifier.padding(top = 40.dp))
+            Spacer(Modifier.height(150.dp + dimens.tabLift))
+        }
+        StatusBand(solid = false)
     }
 }
 

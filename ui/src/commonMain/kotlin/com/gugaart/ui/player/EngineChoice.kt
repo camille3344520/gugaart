@@ -20,6 +20,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * 点了才改全局首选（设置 › 播放 › 播放内核，键 playback.engine）。上游的控制器只在开始时读一次首选，所以这里在交给控制器的
  * 播放设置里把这一部记住的内核盖上去（[playbackFor]），换了就在当前位置、同一个版本 / 音轨 / 字幕重开一个控制器（[PlayerRestart]）。
  * 审计 P2-9：真有的内核不到两个（macOS、iOS 只有 MPV）时不显示「内核」（[coreWordVisible]）。
+ * 1.6（批次 mpvcopy2）：电视上超过 1080p 的片子，首选 mpv 时上游这一次改用 ExoPlayer（mpv 在电视上放不了 4K），「内核」如实写 EXO；
+ * 在面板里选回 MPV 时请求带 `engineChosen`，上游照选的放。
  */
 
 /** 内核的三个字母。 */
@@ -121,6 +123,15 @@ private fun itemOf(play: PlaySession): String = if (play.remote == null) play.co
 fun filmEnginePref(play: PlaySession, graph: AppGraph): EnginePref =
     EngineMemory(graph.deps.local).get(itemOf(play), seriesOf(graph, play)) ?: currentEnginePref(graph)
 
+/**
+ * 面板里亮的那一格（1.6 mpvcopy2）：这一部的首选；首选是某个内核、这一次实际在用另一个时（电视上 4K 首选 MPV 会自动改用 EXO），
+ * 亮正在用的那个，和底栏「内核」那一格一致。首选是「自动」时照旧亮「自动」（它的小字写着现在用的是哪个）。
+ */
+fun shownEnginePref(pref: EnginePref, running: com.gugugaga.core.EngineId?): EnginePref {
+    if (pref == EnginePref.Auto || running == null || pref.id == running.id) return pref
+    return EnginePref.entries.firstOrNull { it.id == running.id } ?: pref
+}
+
 /** 「设为默认」：把这一部的内核存成全局首选，这一部的记录清掉（以后跟着默认走）。 */
 fun setEngineDefault(play: PlaySession, graph: AppGraph, pref: EnginePref) {
     graph.settings.patch("playback", "engine" to JsonPrimitive(pref.id))
@@ -154,6 +165,9 @@ object PlayerRestart {
             audioIndex = snap.audioIndex,
             // 字幕关着的（null）就保持关：-1
             subtitleIndex = snap.subtitleIndex ?: -1,
+            // 1.6 批次 mpvcopy2：在播放器里亲手选的内核照他的选，上游不再按片子自动改（电视上 4K 首选 mpv 会自动改用 EXO，
+            // 选回 MPV 就是 MPV）；选「自动」仍按自动的规矩走
+            engineChosen = pref != EnginePref.Auto,
         )
         // 1.5.0 B3：放着别台的源 → 新控制器也要用那台的客户端（条目 id 是那台的）
         play.remote?.let { r -> RemotePlay.handOff(RemoteHandoff(play.homeItemId, r.serverId, r.serverName, r.itemId, snap.sourceId)) }

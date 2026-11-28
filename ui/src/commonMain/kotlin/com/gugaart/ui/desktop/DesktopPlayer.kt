@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -147,6 +148,9 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /** 电脑播放器的版式数（设计稿 `desktop/css/d4.css` 的 `.pl`；rem）。 */
 object DesktopPlayerSpec {
+    /** 1.6 C3：进度条缩略图的宽（rem；16:9 → 高 9 rem），在悬停小横条正上方。 */
+    const val SEEK_THUMB_REM = 16f
+
     /** 控件出现时画面四边让出的页边：顶栏 / 底部控制坞 / 左右。 */
     const val TOP = 6.4f
     const val BOTTOM = 11.8f
@@ -213,6 +217,7 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
     val clockDuration = remember(clock) { androidx.compose.runtime.derivedStateOf { clock.value.durationMs } }
     val engine by controller.engineFlow.collectAsState()
     com.gugaart.ui.player.RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（ShaderApply.kt）
+    com.gugaart.ui.player.RememberSecondSubtitleApply(play) // 双语字幕（1.6 C1）：第二字幕按片记住、交给 mpv
     val settings by danmaku.settingsState.collectAsState()
     val appSettings by g.settings.state.collectAsState()
     val prefs by play.prefs.state.collectAsState()
@@ -616,6 +621,8 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                         right.placeRelative(w - right.width, (h - right.height) / 2)
                     }
                 }
+                // 1.6 C3：悬停 / 拖进度条时小横条上方出缩略图（Emby 的 BIF；第一次悬停才问服务器，没有就照旧只有时间）
+                val seekThumbs = com.gugaart.ui.player.rememberSeekThumbs()
                 DesktopTimeline(
                     position, duration, heat, introEnd, creditsStart,
                     sampleHover = if (preset.state == "hover") DesktopPlayerSpec.HOVER_SAMPLE else null,
@@ -623,6 +630,8 @@ fun DesktopPlayer(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots)
                     onScrub = { controller.scrubTo(it) },
                     onScrubEnd = { controller.seekTo(it); controller.setScrubbing(false); controls.bump() },
                     onSeek = { controller.seekTo(it); controls.bump() },
+                    thumbAt = seekThumbs::image,
+                    onPreview = { seekThumbs.prepare(play, g) },
                 )
             }
         }
@@ -814,7 +823,8 @@ private fun DesktopPauseSeat(paused: Boolean, positionMs: () -> Double) {
 /**
  * 电脑的时间轴（4.4 rem 高）：一排弹幕热度圆点（播过的专色）、轨道、当前位置的小竖条、片头 / 片尾的刻度和小字。
  * 鼠标悬停：一条专色细线 + **预览小横条**（时间 + 这一刻在哪一段），落在控制坞里，不压画面。
- * 预览图：上游没有给界面层取截帧的公开入口，所以小横条里只排时间和章节，不放假图。点 = 跳过去；按住拖 = 拖动（松手才 seek）。
+ * 预览图（1.6 C3）：服务器生成过缩略图（Emby 的 BIF）就在小横条正上方放这一刻的那张；没有就照旧只排时间和章节，不放假图。
+ * 点 = 跳过去；按住拖 = 拖动（松手才 seek）。
  */
 @Composable
 private fun DesktopTimeline(
@@ -828,10 +838,16 @@ private fun DesktopTimeline(
     onScrub: (Double) -> Unit,
     onScrubEnd: (Double) -> Unit,
     onSeek: (Double) -> Unit,
+    /** 1.6 C3：这一刻的缩略图（没有 = null，小横条照旧只有时间和章节）。 */
+    thumbAt: ((Double) -> androidx.compose.ui.graphics.ImageBitmap?)? = null,
+    /** 第一次悬停 / 拖：让缩略图去问服务器。 */
+    onPreview: () -> Unit = {},
 ) {
     val colors = Guga.colors
     var drag by remember { mutableStateOf<Double?>(null) }
     var hoverX by remember { mutableStateOf(sampleHover) }
+    val previewing = hoverX != null || drag != null
+    androidx.compose.runtime.LaunchedEffect(previewing) { if (previewing) onPreview() }
     val shown = drag ?: positionMs()
     val dur = rememberUpdatedState(durationMs)
     BoxWithConstraints(Modifier.fillMaxWidth().height(Guga.rem(4.4f)).testTag("player-timeline")) {
@@ -904,6 +920,17 @@ private fun DesktopTimeline(
             ) {
                 BasicText(Rules.clock(ms.toLong()), style = Guga.numeral(rsp(1.7f)), maxLines = 1)
                 chapterAt(ms, introEndMs, creditsStartMs)?.let { BasicText(it, style = Guga.note(rsp(1.1f), colors.faint), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+            // 缩略图：小横条正上方，同一根中线（不出两边）
+            thumbAt?.invoke(drag ?: ms)?.let { img ->
+                val tw = Guga.rem(DesktopPlayerSpec.SEEK_THUMB_REM)
+                val th = tw * img.height.toFloat() / img.width.coerceAtLeast(1)
+                androidx.compose.foundation.Image(
+                    img, "预览",
+                    Modifier.align(Alignment.TopStart).offset(x = (width * h - tw / 2).coerceIn(0.dp, (width - tw).coerceAtLeast(0.dp)), y = -Guga.rem(3.4f) - th - Guga.rem(0.4f))
+                        .wrapContentSize(Alignment.TopStart, unbounded = true).size(tw, th).border(1.dp, colors.ink).testTag("player-seek-thumb"),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                )
             }
         }
     }

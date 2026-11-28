@@ -731,7 +731,7 @@ private fun LibraryCells(data: HomeData, mini: Boolean) {
                         drawLine(colors.line, Offset(0f, size.height - w / 2), Offset(size.width, size.height - w / 2), w)
                     }
                     .deskFocusRing(press)
-                    .pressable(press, label = lib.name) { if (lib.kind == "boxsets") nav.tab = WideTab.Colls else graph.nav.navigate(Route.Library(lib.id)) }
+                    .pressable(press, label = lib.name) { graph.nav.navigate(Route.Library(lib.id)) }
                     .padding(start = Guga.rem(2f), end = Guga.rem(2f), top = Guga.rem(2f), bottom = Guga.rem(1.8f))
                     .testTag("desktop-lib-cell"),
             ) {

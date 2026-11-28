@@ -116,8 +116,12 @@ fun TvLogin(today: Today) {
     LaunchedEffect(model.step, listReady, servers?.size) {
         if (model.step != LoginStep.List) groups.enterWhenReady("form", g.focus) else if (listReady) groups.enterWhenReady("servers", g.focus)
     }
-    DisposableEffect(model.step, servers?.size) {
-        val un = if (model.step != LoginStep.List && !servers.isNullOrEmpty()) back.push { model.openList(); true } else null
+    val backToAdd = model.step == LoginStep.Login && model.found != null && model.target == model.found
+    DisposableEffect(model.step, backToAdd, servers?.size) {
+        val un = if (backToAdd || (model.step != LoginStep.List && !servers.isNullOrEmpty())) back.push {
+            if (backToAdd) model.openAdd() else model.openList()
+            true
+        } else null
         onDispose { un?.invoke() }
     }
     val cur = groups.current

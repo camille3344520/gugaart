@@ -1,6 +1,8 @@
 package com.gugaart.ui.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +35,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -44,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.gugaart.ui.Today
+import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.PaperField
 import com.gugaart.ui.data.ErrorKind
 import com.gugaart.ui.components.Segments
@@ -53,6 +58,9 @@ import com.gugaart.ui.screens.login.LoginFlow
 import com.gugaart.ui.screens.login.LoginModel
 import com.gugaart.ui.screens.login.LoginStep
 import com.gugaart.ui.screens.login.SCHEMES
+import com.gugaart.ui.screens.login.discoverySubtitle
+import com.gugaart.ui.screens.login.PublicUser
+import com.gugaart.ui.screens.login.userGlyph
 import com.gugaart.ui.screens.login.rememberLoginFlow
 import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.wide.LocalWideNav
@@ -345,6 +353,33 @@ private fun DeskAddServer(model: LoginModel, flow: LoginFlow) {
     // 边打边找（P2-19）：停下来就自己去找
     LaunchedEffect(model.address, model.scheme) { model.probeWhenIdle() }
     DeskKick("STEP 1 / 2 · 添加服务器")
+    if (model.discovered.isNotEmpty()) {
+        DeskKick("ON THIS NETWORK · 这个网络里的服务器", Modifier.padding(top = Guga.rem(1.8f)))
+        Spacer(Modifier.height(Guga.rem(0.4f)))
+        for (s in model.discovered) {
+            val press = rememberPressState()
+            val hover = rememberHover()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .hover(hover)
+                    .drawBehind { drawLine(colors.line, Offset(0f, size.height - 0.5.dp.toPx()), Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx()) }
+                    .deskFocusRing(press)
+                    .pressable(press, label = s.name) { model.pickDiscovered(s) }
+                    .padding(vertical = Guga.rem(1.2f))
+                    .testTag("desktop-discovered-server"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    BasicText(s.name, style = Guga.song(rsp(1.65f), FontWeight.Black, if (hover.over) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BasicText(discoverySubtitle(s), Modifier.padding(top = Guga.rem(0.35f)), style = Guga.note(rsp(1.2f), colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.width(Guga.rem(1.2f)))
+                Icon(GuguIcon.ChevronRight, colors.dim, Guga.rem(1.3f))
+            }
+        }
+        Spacer(Modifier.height(Guga.rem(1f)))
+    }
     PaperField(
         "服务器地址",
         model.address,
@@ -428,6 +463,7 @@ private fun DeskSignIn(model: LoginModel) {
         runCatching { (if (model.username.isBlank()) user else secret).requestFocus() }
     }
     DeskKick("STEP 2 / 2 · 登录「${target.name}」")
+    val pub = model.publicUsers.filter { u -> target.accounts.none { it.userId == u.id || it.userName == u.name } }
     if (target.accounts.isNotEmpty()) {
         FlowRow(Modifier.fillMaxWidth().padding(top = Guga.rem(1.8f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1f)), verticalArrangement = Arrangement.spacedBy(Guga.rem(0.8f))) {
             for (a in target.accounts) {
@@ -443,16 +479,27 @@ private fun DeskSignIn(model: LoginModel) {
             )
         }
     }
+    if (pub.isNotEmpty()) {
+        DeskKick("PUBLIC USERS · 公开用户", Modifier.padding(top = Guga.rem(1.8f)))
+        FlowRow(Modifier.fillMaxWidth().padding(top = Guga.rem(1f)), horizontalArrangement = Arrangement.spacedBy(Guga.rem(1f)), verticalArrangement = Arrangement.spacedBy(Guga.rem(0.8f))) {
+            for (u in pub) {
+                DeskPublicUserChip(u, selected = u.name == model.username) {
+                    model.pickPublicUser(u)
+                    runCatching { secret.requestFocus() }
+                }
+            }
+        }
+    }
     // 用户名框里按 Enter = 去密码框（Tab 也行）；密码框里按 Enter = 登录
     PaperField(
-        "用户名", model.username, { model.username = it }, Modifier.padding(top = Guga.rem(2f)).focusRequester(user),
-        enabled = !model.busy, ime = ImeAction.Next, onIme = { runCatching { secret.requestFocus() } }, tag = "desktop-login-user",
+        "用户名", model.username, { model.username = it }, Modifier.padding(top = Guga.rem(2f)),
+        enabled = !model.busy, ime = ImeAction.Next, onIme = { runCatching { secret.requestFocus() } }, tag = "desktop-login-user", fieldFocus = user,
     )
     PaperField(
         "密码",
         model.password,
         { model.password = it },
-        Modifier.padding(top = Guga.rem(2f)).focusRequester(secret),
+        Modifier.padding(top = Guga.rem(2f)),
         placeholder = "没有密码就留空",
         password = true,
         error = model.badPassword,
@@ -460,6 +507,7 @@ private fun DeskSignIn(model: LoginModel) {
         ime = ImeAction.Done,
         onIme = model::signIn,
         tag = "desktop-login-password",
+        fieldFocus = secret,
     )
     val fail = model.error != null
     BasicText(
@@ -475,5 +523,39 @@ private fun DeskSignIn(model: LoginModel) {
     Row(Modifier.padding(top = Guga.rem(3.2f)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.6f))) {
         DeskButton(if (model.busy) "正在登录……" else "登录", model::signIn, Modifier.testTag("desktop-login-submit"), icon = null, note = "Enter")
         DeskLink("换一个服务器", model::openList)
+    }
+}
+
+@Composable
+private fun DeskPublicUserChip(u: PublicUser, selected: Boolean, onClick: () -> Unit) {
+    val colors = Guga.colors
+    val press = rememberPressState()
+    val hover = rememberHover()
+    Row(
+        Modifier
+            .hover(hover)
+            .background(if (selected) colors.ink else colors.paper)
+            .border(1.dp, if (selected || hover.over) colors.ink else colors.dim)
+            .deskFocusRing(press)
+            .pressable(press, label = u.name, onClick = onClick)
+            .padding(start = Guga.rem(0.6f), end = Guga.rem(1.2f), top = Guga.rem(0.5f), bottom = Guga.rem(0.5f))
+            .testTag("desktop-public-user"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Guga.rem(0.8f)),
+    ) {
+        Box(
+            Modifier
+                .size(Guga.rem(2.6f))
+                .clip(CircleShape)
+                .border(1.dp, if (selected) colors.onInk.copy(alpha = 0.3f) else colors.line, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            CoverImage(u.avatarUrl, Modifier.fillMaxSize().clip(CircleShape)) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    BasicText(userGlyph(u.name), style = Guga.song(rsp(1.2f), FontWeight.Bold, if (selected) colors.onInk else colors.dim), maxLines = 1)
+                }
+            }
+        }
+        BasicText(u.name, style = Guga.song(rsp(1.35f), if (selected) FontWeight.Bold else FontWeight.Normal, if (selected) colors.onInk else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

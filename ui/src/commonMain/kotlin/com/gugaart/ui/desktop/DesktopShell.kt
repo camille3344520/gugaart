@@ -119,7 +119,6 @@ fun DesktopPages(route: Route, today: Today) {
                     WideTab.Home -> DesktopHomeScreen(today)
                     WideTab.Discover -> DesktopDiscoverScreen(today)
                     WideTab.Libs -> DesktopLibsScreen(today)
-                    WideTab.Colls -> DesktopCollsScreen(today)
                     WideTab.Me -> DesktopMeScreen(today, null)
                 }
                 Route.Discover -> DesktopDiscoverScreen(today)

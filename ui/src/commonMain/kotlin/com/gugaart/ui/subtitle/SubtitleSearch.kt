@@ -14,6 +14,9 @@ import com.gugugaga.core.RetryMode
 import com.gugugaga.core.encodeURIComponent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -230,15 +233,19 @@ sealed interface PrintState {
 
 /** 选中一条之后。 */
 sealed interface ApplyState {
+    /** 哪一条（[SubtitleHit.key]）。 */
+    val key: String
+
     /** [step]：「下载中…」「存进 Emby…」「等服务器刷新…」。 */
-    data class Working(val key: String, val step: String) : ApplyState
-    data class Done(val key: String, val note: String) : ApplyState
+    data class Working(override val key: String, val step: String) : ApplyState
+    data class Done(override val key: String, val note: String) : ApplyState
 
     /**
      * [upload]：「保存到服务器」（迅雷 / 射手的结果传进 Subtitle Manager 插件）失败的是哪一种——决定那一行还剩哪几个按钮（[hitActionsOf]）；
      * null = 不是上传失败（下载失败、服务器源失败…）。
+     * [danmaku]：下载下来一看是弹幕（§4.5）——行上写 [DANMAKU_LABEL]，一个按钮都不留。
      */
-    data class Failed(val key: String, val why: String, val upload: UploadFail? = null) : ApplyState
+    data class Failed(override val key: String, val why: String, val upload: UploadFail? = null, val danmaku: Boolean = false) : ApplyState
 }
 
 /** 「保存到服务器」失败的三种（docs/subtitle-search.md §4.4）。 */
@@ -275,6 +282,8 @@ enum class HitAction(val label: String) {
  */
 fun hitActionsOf(hit: SubtitleHit, inPlayer: Boolean, canUpload: Boolean, apply: ApplyState?): List<HitAction> {
     if (hit.toEmby) return listOf(HitAction.ServerSave)
+    // 下载下来是弹幕：不加载、不上传，什么都不留（§4.5）
+    if ((apply as? ApplyState.Failed)?.takeIf { it.key == hit.key }?.danmaku == true) return emptyList()
     val local = if (inPlayer) HitAction.Local else HitAction.PlayLoad
     if (!canUpload) return listOf(local)
     val failed = (apply as? ApplyState.Failed)?.takeIf { it.key == hit.key }?.upload
@@ -386,8 +395,29 @@ class SubtitleSearchSession(
     /** 「最合适」：分数最高且过门槛的那条；一条都没过 = null。 */
     var best: ScoredHit? by mutableStateOf(null)
         private set
-    var apply: ApplyState? by mutableStateOf(null)
-        internal set
+    private var applyState: ApplyState? by mutableStateOf(null)
+    var apply: ApplyState?
+        get() = applyState
+        internal set(value) {
+            applyState = value
+            // 行上写着「这是弹幕，不是字幕」的那一条：一换别的事就从单子里拿掉（§4.5）
+            if (labelled != null && value?.key != labelled) {
+                labelled = null
+                publish()
+            }
+        }
+
+    /** 判成弹幕的下载地址（§4.5）：从单子、「最合适」、自动加载里去掉。 */
+    private var danmakuUrls: Set<String> = emptySet()
+
+    /** 判过不是弹幕的下载地址（名字像弹幕的，查完是干净的就不再压后）。 */
+    private var cleanUrls: Set<String> = emptySet()
+
+    /** 正在后台预查的下载地址：还没出结果的不当「最合适」。 */
+    private var screening: Set<String> = emptySet()
+
+    /** 点的时候刚判成弹幕、行上正写着 [DANMAKU_LABEL] 的那一条（留在单子里让人看到这一句；别的地方都不算它）。 */
+    private var labelled: String? = null
 
     /** 迅雷 / 射手的结果能「保存到服务器」（服务器装了 Subtitle Manager 插件、账号是管理员；[subtitleUploadAvailable]）。 */
     var canUpload: Boolean by mutableStateOf(false)
@@ -402,12 +432,24 @@ class SubtitleSearchSession(
     /** 还在搜（还没开始的也算：栏刚出来那一下不写「没有搜到」）。 */
     val searching: Boolean get() = listOf(server, thunder, shooter).any { it == SourceState.Busy || it == SourceState.Idle } || print == PrintState.Busy
 
+    /** 判成弹幕了（§4.5）。 */
+    private fun isDanmaku(h: SubtitleHit): Boolean = h.url != null && h.url in danmakuUrls
+
+    /** 名字像弹幕、还没查出是干净的：先压到后面、不当「最合适」（§4.5；服务器源查不了内容，名字像就一直压后）。 */
+    private fun suspected(h: SubtitleHit): Boolean = DanmakuSniff.nameLooksLikeDanmaku(h.name) && (h.url == null || h.url !in cleanUrls)
+
     private fun publish() {
         val all = serverHits + shooterHits + thunderHits
-        hits = rankHits(all, target.runtimeMs)
+        val kept = all.filterNot(::isDanmaku)
+        // 刚点出来是弹幕的那一行留着写标签（不计数、不打分、不当最合适）
+        val shown = all.filter { !isDanmaku(it) || it.key == labelled }
+        hits = rankHits(shown, target.runtimeMs).sortedBy { if (suspected(it)) 1 else 0 }
         // 智能匹配（1.4.1 P2）：同一批结果再按「和这一集对不对得上」打一次分，界面拿 smartHits / best 显示「最合适」
-        smartHits = SmartMatch.rank(all, smartFile())
-        best = smartHits.firstOrNull { it.score.passes }
+        smartHits = SmartMatch.rank(kept, smartFile()).sortedBy { if (suspected(it.hit)) 1 else 0 }
+        best = smartHits.firstOrNull { it.score.passes && !suspected(it.hit) && it.hit.url !in screening }
+        // 状态行的条数 = 去掉弹幕以后的（不加说明文字）
+        if (thunder is SourceState.Done) thunder = SourceState.Done(thunderHits.count { !isDanmaku(it) })
+        if (shooter is SourceState.Done) shooter = SourceState.Done(shooterHits.count { !isDanmaku(it) })
     }
 
     /** 打分用的「这一集」：手动改过查询词就拿查询词当片名 token（同一套打分）。 */
@@ -422,6 +464,7 @@ class SubtitleSearchSession(
         serverHits = emptyList()
         thunderHits = emptyList()
         shooterHits = emptyList()
+        screening = emptySet()
         publish()
         server = SourceState.Busy
         if (online) {
@@ -615,11 +658,60 @@ class SubtitleSearchSession(
                 hits = (hits + more).distinctBy { it.key }
             }
         }
-        thunder = if (r.ok) {
-            thunderHits = hits
-            publish()
-            SourceState.Done(hits.size)
-        } else SourceState.Failed(r.failed ?: "迅雷回了 ${r.status}")
+        if (!r.ok) {
+            thunder = SourceState.Failed(r.failed ?: "迅雷回了 ${r.status}")
+            return
+        }
+        thunderHits = hits
+        // 先上单子（名字像弹幕的压在后面、正在查的不当最合适），状态行等查完再写条数
+        screening = screenTargets(hits).mapNotNull { it.url }.toSet()
+        publish()
+        screen(hits)
+        thunder = SourceState.Done(thunderHits.count { !isDanmaku(it) })
+    }
+
+    /** 后台预查哪几条：按智能匹配的顺序取前 [SCREEN_TAKE] 条（最可能当「最合适」的先查）。 */
+    private fun screenTargets(hits: List<SubtitleHit>): List<SubtitleHit> =
+        SmartMatch.rank(hits, smartFile()).map { it.hit }.filter { it.url != null && it.subFormat != null }.take(SCREEN_TAKE)
+
+    /**
+     * 迅雷的结果在后台先下载、判一次是不是弹幕（§4.5）：最多 [SCREEN_TAKE] 条、同时 [SCREEN_PARALLEL] 个、每个 [SCREEN_TIMEOUT_MS]、
+     * 单个最大 [SCREEN_MAX_BYTES]；判过的按 url 记在 [DanmakuCache]（同一次播放里不重复下载）。下载 / 解码失败 = 不知道（照常留着，点的时候再查）。
+     */
+    private suspend fun screen(hits: List<SubtitleHit>) {
+        val targets = screenTargets(hits)
+        // 前 12 条以外、以前判过的（点过的、上一次搜索查过的）也直接用记下的结果
+        for (h in hits) {
+            val url = h.url ?: continue
+            when (DanmakuCache.get(url)?.isDanmaku) {
+                true -> danmakuUrls = danmakuUrls + url
+                false -> cleanUrls = cleanUrls + url
+                null -> {}
+            }
+        }
+        val gate = Semaphore(SCREEN_PARALLEL)
+        val verdicts = coroutineScope {
+            targets.map { h ->
+                async {
+                    val url = h.url!!
+                    url to (DanmakuCache.get(url) ?: gate.withPermit { screenOne(url, h.subFormat!!) }?.also { DanmakuCache.put(url, it) })
+                }
+            }.awaitAll()
+        }
+        for ((url, v) in verdicts) when (v?.isDanmaku) {
+            true -> danmakuUrls = danmakuUrls + url
+            false -> cleanUrls = cleanUrls + url
+            null -> {}
+        }
+        screening = emptySet()
+        publish()
+    }
+
+    private suspend fun screenOne(url: String, format: SubFormat): DanmakuVerdict? {
+        val r = withTimeoutOrNull(SCREEN_TIMEOUT_MS) { net.getBytesCapped(url, SCREEN_MAX_BYTES, SCREEN_TIMEOUT_MS) } ?: return null
+        if (!r.ok) return null
+        val d = SubtitleText.decode(r.bytes, format, r.contentType) as? DecodedSubtitle.Ok ?: return null
+        return DanmakuSniff.judge(d.text, format)
     }
 
     /** 这批结果里写明是这一集的（集号对上、季号不冲突）够不够 [EPISODE_HITS] 条；不是单集 = 够。 */
@@ -685,17 +777,49 @@ class SubtitleSearchSession(
         apply = ApplyState.Working(hit.key, "下载中…")
         val r = net.getBytes(url)
         if (!r.ok) throw SubtitleFetchException(r.failed?.let { "下载失败：$it" } ?: "下载失败（${r.status}）")
-        return when (val d = SubtitleText.decode(r.bytes, format, r.contentType)) {
-            is DecodedSubtitle.Ok -> d.text to format
+        val text = when (val d = SubtitleText.decode(r.bytes, format, r.contentType)) {
+            is DecodedSubtitle.Ok -> d.text
             is DecodedSubtitle.Bad -> throw SubtitleFetchException(d.why)
         }
+        // 点的时候再查一次（§4.5）：是弹幕 → 不加载、不上传（调用方都在拿到文本之前停下），从单子里去掉
+        val v = DanmakuSniff.judge(text, format)
+        DanmakuCache.put(url, v)
+        if (v.isDanmaku) {
+            markDanmaku(hit)
+            throw DanmakuFileException(v)
+        }
+        return text to format
+    }
+
+    /** 点的时候判成弹幕：记下、这一行留着写标签（[labelled]），别的地方都不算它。 */
+    private fun markDanmaku(hit: SubtitleHit) {
+        val url = hit.url ?: return
+        danmakuUrls = danmakuUrls + url
+        cleanUrls = cleanUrls - url
+        labelled = hit.key
+        publish()
     }
 }
 
-class SubtitleFetchException(message: String) : Exception(message)
+open class SubtitleFetchException(message: String) : Exception(message)
+
+/** 下载下来是弹幕（§4.5）：不加载、不上传；行上写 [DANMAKU_LABEL]。 */
+class DanmakuFileException(val verdict: DanmakuVerdict) : SubtitleFetchException(DANMAKU_LABEL)
 
 /** 默认词的迅雷结果里至少这么多条写明是这一集，才不再问备选。 */
 private const val EPISODE_HITS = 3
+
+/** 弹幕预查（§4.5）：最多查前几条迅雷结果。 */
+const val SCREEN_TAKE = 12
+
+/** 弹幕预查：同时下几个。 */
+const val SCREEN_PARALLEL = 3
+
+/** 弹幕预查：每个的超时。 */
+const val SCREEN_TIMEOUT_MS = 10_000L
+
+/** 弹幕预查：单个最大（超过不下、不判）。 */
+const val SCREEN_MAX_BYTES = 2L shl 20
 
 /** `scheme://host:port`（比较是不是同一台）。 */
 internal fun hostOf(url: String): String {

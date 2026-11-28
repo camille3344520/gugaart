@@ -61,7 +61,8 @@ internal object IosMedia {
         val main = NSOperationQueue.mainQueue
         // 离开应用（上拉回主屏、切到别的应用、锁屏前一刻）：在放就进画中画
         center.addObserverForName(UIApplicationWillResignActiveNotification, null, main) { _ ->
-            if (player.visible && autoPip) engines.pictureInPicture?.enterIfPlaying()
+            // while the picture is on an AirPlay device mpv is paused here: nothing to put into picture-in-picture
+            if (player.visible && autoPip && com.gugaart.ui.cast.AirPlayVideo.cast == null) engines.pictureInPicture?.enterIfPlaying()
         }
         center.addObserverForName(UIApplicationDidEnterBackgroundNotification, null, main) { _ ->
             backgroundedAt = platform.Foundation.NSDate().timeIntervalSince1970
@@ -103,12 +104,20 @@ internal object IosMedia {
 }
 
 /**
- * AirPlay（D-lead-35）：弹系统的路由选择器。AVRoutePickerView 自己是一个钮，这里借它里面那个 UIButton 发一次「点按」——
- * 视图放在窗口里看不见的角上（系统要它在窗口里才弹得出来）。只换声音的输出设备；mpv 的声音跟系统路由走。
+ * AirPlay (D-lead-35; video too from 1.6 F2, D-ios-16): shows the system route picker. AVRoutePickerView is a button itself; this sends
+ * one tap to the UIButton inside it - the view sits in an invisible corner of the window (the system shows the picker only from a
+ * view in the window). Video devices are listed first; choosing an AirPlay device makes the player page's `AirPlayVideo` hand the
+ * item to an AVPlayer (choosing the phone ends it). The picker's closing is passed on (choosing the same device again hands off again).
  */
 @OptIn(ExperimentalForeignApi::class)
 internal object AirPlayPicker {
     private var picker: AVRoutePickerView? = null
+
+    private val delegate = object : platform.darwin.NSObject(), platform.AVKit.AVRoutePickerViewDelegateProtocol {
+        override fun routePickerViewDidEndPresentingRoutes(routePickerView: AVRoutePickerView) {
+            com.gugaart.ui.cast.AirPlayVideo.pickerClosed()
+        }
+    }
 
     /** 诊断：上一次为什么没弹出来。 */
     var lastProblem: String? = null
@@ -125,6 +134,8 @@ internal object AirPlayPicker {
         val p = picker ?: AVRoutePickerView(frame = CGRectMake(0.0, 0.0, 44.0, 44.0)).also {
             it.alpha = 0.02
             it.userInteractionEnabled = false
+            it.prioritizesVideoDevices = true
+            it.delegate = delegate
             picker = it
         }
         val w = window.bounds.useContents { size.width }

@@ -101,13 +101,17 @@ fun FactsRow(leftLabel: String?, left: String?, rightLabel: String?, right: Stri
     }
 }
 
-/** 收藏（+ 印章位）和「已看」两个文字链接。印章落在收藏旁边预留的那一格里（没收藏时这一格空着，不画虚线，P2-7）。 */
+/**
+ * 收藏（+ 印章位）和「已看」两个文字链接。印章落在收藏旁边预留的那一格里（没收藏时这一格空着，不画虚线，P2-7）。
+ * [extra]：「已看」左边再放一个（手机电影 / 单集详情的「下载」，1.6 批次 E）。
+ */
 @Composable
-fun ActionsRow(favorite: Boolean, onFavorite: () -> Unit, playedLabel: String, played: Boolean, onPlayed: () -> Unit, modifier: Modifier = Modifier) {
+fun ActionsRow(favorite: Boolean, onFavorite: () -> Unit, playedLabel: String, played: Boolean, onPlayed: () -> Unit, modifier: Modifier = Modifier, extra: (@Composable () -> Unit)? = null) {
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         TextLink("收藏", onFavorite, icon = GuguIcon.Heart)
         SealSlot(favorite)
         Spacer(Modifier.weight(1f))
+        extra?.invoke()
         TextLink(if (played) "改成未看" else playedLabel, onPlayed, icon = GuguIcon.Check)
     }
 }

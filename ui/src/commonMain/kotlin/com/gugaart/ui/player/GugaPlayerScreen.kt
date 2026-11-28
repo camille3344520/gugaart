@@ -121,6 +121,14 @@ val LocalPlayerPanelDriver = staticCompositionLocalOf<androidx.compose.runtime.S
  */
 @Composable
 fun GugaPlayerScreen(route: Route.Play) {
+    // 1.6 A1：路由里是别台的条目 → 播放器里的取数（剧的分集、「源」）也用那台的客户端（data/RemoteBrowse.kt）
+    val ref = com.gugaart.ui.data.RemoteRef.parse(route.id)
+    if (ref != null && com.gugaart.ui.data.LocalBrowseServer.current == null) {
+        val pool = com.gugaart.ui.data.OtherServers.poolFor(LocalGraph.current)
+        val server = remember(ref.serverId) { com.gugaart.ui.data.BrowseServer(ref.serverId, com.gugaart.ui.data.RemoteBrowse.nameOf(ref.serverId), pool.clientNow(ref.serverId)) }
+        androidx.compose.runtime.CompositionLocalProvider(com.gugaart.ui.data.LocalBrowseServer provides server) { GugaPlayerScreen(route) }
+        return
+    }
     val g = LocalGraph.current
     val play = rememberPlaySession(route)
     if (play == null) {
@@ -139,7 +147,10 @@ fun GugaPlayerScreen(route: Route.Play) {
     val back = com.gugugaga.ds.focus.LocalBackDispatcher.current
     androidx.compose.runtime.DisposableEffect(back, play) {
         val un = back.push {
-            val t = playerBackTarget(g.nav.routes(), play.controller.value.item, route.id)
+            // 放着别台的源、路由是本台那一条：条目是那台的，按路由走；路由本身是别台的（1.6 A1）：回那台的详情
+            val homeRoute = play.remote != null && ref == null
+            val t = playerBackTarget(g.nav.routes(), if (homeRoute) null else play.controller.value.item, route.id)
+                ?.let { Route.Item(com.gugaart.ui.data.RemoteBrowse.wrap(g.nav, it.id)) }
             if (t != null) g.nav.replace(t)
             t != null
         }
@@ -154,7 +165,11 @@ fun GugaPlayerScreen(route: Route.Play) {
         when (Guga.uiMode) {
             UiMode.Phone -> PlayerPhone(play, danmaku, slots)
             UiMode.Desktop -> com.gugaart.ui.desktop.DesktopPlayer(play, danmaku, slots)
-            UiMode.Tv -> com.gugaart.ui.tv.TvPlayer(play, danmaku, slots)
+            UiMode.Tv -> {
+                // 1.6 B1：匹配片源帧率（只在电视上；切模式是壳的事，FrameRateMatch.host）
+                RememberFrameRateMatch(play)
+                com.gugaart.ui.tv.TvPlayer(play, danmaku, slots)
+            }
         }
     }
 }
@@ -211,6 +226,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     val clockDuration = remember(clock) { derivedStateOf { clock.value.durationMs } }
     val engine by controller.engineFlow.collectAsState()
     RememberShaderApply(play) // 画质面板记住的着色器选择：引擎 / 选择一变就应用（ShaderApply.kt）
+    RememberSecondSubtitleApply(play) // 双语字幕（1.6 C1）：第二字幕按片记住、交给 mpv
     val settings by danmaku.settingsState.collectAsState()
     val appSettings by g.settings.state.collectAsState()
     val seekStepSec = remember(appSettings) { appSettings.playbackPrefs.seekStepSec.coerceAtLeast(1) }
@@ -237,7 +253,12 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
             play.platform.keepAwake(false)
         }
     }
-    LaunchedEffect(playing, panel) { controls.canHide = playing && panel == null && !preset.playerPin }
+    // AirPlay hand-off: the picture is on the TV, the top bar (back, AirPlay) stays
+    val castingNow = com.gugaart.ui.cast.AirPlayVideo.host != null && com.gugaart.ui.cast.AirPlayVideo.castFor(controller) != null
+    LaunchedEffect(playing, panel, castingNow) {
+        controls.canHide = playing && panel == null && !preset.playerPin && !castingNow
+        if (castingNow) controls.bump()
+    }
     LaunchedEffect(preset.playerControls, snap.phase) { if (!preset.playerControls && snap.phase == PlayPhase.Ready) controls.hide() }
     // 缓冲超过 150 ms 才出现（不闪）
     var showBuffer by remember { mutableStateOf(false) }
@@ -271,6 +292,13 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
     }
     val gesturesSink = LocalPlayerGesturesSink.current
     androidx.compose.runtime.SideEffect { gesturesSink?.invoke(gestures) }
+    // AirPlay hand-off (iPhone, 1.6 F2): the page follows the system route; while handed off the picture area is the cast state with its own controls, the centre keys and the strip go
+    if (com.gugaart.ui.cast.AirPlayVideo.host != null) LaunchedEffect(controller) {
+        val t0 = kotlin.time.TimeSource.Monotonic.markNow()
+        com.gugaart.ui.cast.AirPlayVideo.watch(controller) { t0.elapsedNow().inWholeMilliseconds }
+    }
+    val airCast = com.gugaart.ui.cast.AirPlayVideo.castFor(controller)
+    LaunchedEffect(airCast != null) { if (airCast != null) opened = null }
 
     when (snap.phase) {
         PlayPhase.Error -> {
@@ -284,13 +312,16 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
         else -> {}
     }
 
+    // 1.6 C3：拖进度条时的缩略图（Emby 的 BIF；第一次拖的时候才问服务器，没有就照旧只显示时间）
+    val thumbs = rememberSeekThumbs()
     val strip: @Composable (Modifier) -> Unit = { m ->
         Column(m) {
             Timeline(
                 position, duration, heat, marks,
-                onScrubStart = { controller.setScrubbing(true); controls.bump() },
+                onScrubStart = { thumbs.prepare(play, g); controller.setScrubbing(true); controls.bump() },
                 onScrub = { controller.scrubTo(it) },
                 onScrubEnd = { controller.seekTo(it); controller.setScrubbing(false); controls.bump() },
+                thumbAt = thumbs::image,
             )
             // 窄的时候（iOS 横屏开着面板：画面一栏只有 530 dp 上下）七个功能词只写词、不写值，免得挤在一起；安卓、全幅照旧
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -356,7 +387,11 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
         // 画中画期间（iOS M5-10，D-lead-24）：画面那一格是纸面说明，时间轴和功能词留着；点「回到这里」= 收回小窗
         val pip = play.platform.pictureInPicture.takeIf { com.gugaart.ui.theme.LocalPhoneHost.current.pipInPage }
         if (pip != null && pip.active) PhonePipNote(onBack = { pip.toggle() }, Modifier.matchParentSize())
-        if (showBuffer) {
+        // AirPlay hand-off: the picture area shows the cast state - play / pause, seek, stop (its own controls, they do not hide)
+        airCast?.let { cast ->
+            PhoneAirPlayNote(cast, play, clock, duration, stepMs = stepNow.value, onStop = { com.gugaart.ui.cast.AirPlayVideo.stop(controller) }, Modifier.matchParentSize())
+        }
+        if (showBuffer && airCast == null) {
             // 缓冲：正中一小块墨底——细线、「缓冲中」、一行小字（引擎回退 / 换线路的通知排在这里，不弹窗）
             Column(Modifier.align(Alignment.Center).background(colors.inkWell).padding(horizontal = 22.dp, vertical = 12.dp).testTag("player-buffer"), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.width(96.dp).height(1.dp).background(colors.ink))
@@ -388,12 +423,14 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                 // AirPlay（iOS，D-lead-35：只换声音的输出设备，系统的路由选择器）：宿主给了才画；设计稿 ios notes §1 第 11 条的顺序
                 // [AirPlay][她的一格][收藏][画中画][锁]
                 com.gugaart.ui.theme.LocalPhoneHost.current.airPlay?.let { air -> BoxButton(GuguIcon.Airplay, "AirPlay", air, Modifier.testTag("player-airplay"), onImage = true) }
-                if (!inset) PauseSeat(paused = snap.paused && snap.phase == PlayPhase.Ready, positionMs = position)
+                // not while handed off: no mascot over a picture that is on the TV (design/ios/notes.md §1 item 11)
+                if (!inset && airCast == null) PauseSeat(paused = snap.paused && snap.phase == PlayPhase.Ready, positionMs = position)
                 // 投屏（DLNA）：手机能投才有
                 if (com.gugaart.ui.cast.Cast.host != null) BoxButton(GuguIcon.Tv, "投屏", { opened = if (opened == PlayerPanel.Cast) null else PlayerPanel.Cast }, onImage = true, selected = com.gugaart.ui.cast.Cast.active != null)
                 BoxButton(GuguIcon.Heart, if (snap.favorite == true) "取消收藏" else "收藏", { controller.toggleFavorite() }, onImage = true, selected = snap.favorite == true)
                 // 画中画（iOS M5-10）：宿主要页内的钮（PhoneHost.pipInPage）、平台也有这个能力才画（上游规则：不能用的钮不如没有）
-                play.platform.pictureInPicture?.takeIf { com.gugaart.ui.theme.LocalPhoneHost.current.pipInPage }?.let { pip -> PipBoxButton(pip.active, { pip.toggle(); controls.bump() }) }
+                // not while handed off (the picture is on the TV, mpv is paused here)
+                play.platform.pictureInPicture?.takeIf { com.gugaart.ui.theme.LocalPhoneHost.current.pipInPage && airCast == null }?.let { pip -> PipBoxButton(pip.active, { pip.toggle(); controls.bump() }) }
                 BoxButton(GuguIcon.Lock, "锁屏", { locked = true; opened = null }, onImage = true)
             }
         }
@@ -457,7 +494,8 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                         val ep = snap.item?.indexNumber?.let { "第 $it 集　" }.orEmpty()
                         BasicText(ep + (snap.item?.name ?: snap.title), style = Guga.song(15.sp, FontWeight.Bold, letterSpacing = 0.06.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         // 规格行 + 网速（用户 2026-11-17：「调出菜单，能够自动显示当前的网络速度」）：规格太长时被省略号截，网速固定在后面不截
-                        Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        // not while handed off (that is this device's stream; the TV plays another one)
+                        if (airCast == null) Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                             specOf(snap, play).takeIf { it.isNotEmpty() }?.let { BasicText(it, Modifier.weight(1f, fill = false), style = Guga.note(10.5.sp, colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             NetSpeedText(speed, Modifier.padding(start = 10.dp).testTag("player-speed"), Guga.note(10.5.sp, colors.ink))
                         }
@@ -466,7 +504,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                 // 中间三个键：退 10 秒 / 播放暂停 / 进 10 秒；剧集两侧再加上一集 / 下一集（P2-10，没有的那一边是灰的）
                 // 缓冲时不排（正中是「缓冲中」那一小块）
                 val episodic = snap.item?.seriesName != null || snap.prev != null || snap.next != null
-                if (!showBuffer) Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (episodic) 40.dp else 54.dp)) {
+                if (!showBuffer && airCast == null) Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (episodic) 40.dp else 54.dp)) {
                     if (episodic) CenterKey(GuguIcon.SkipBack, "上一集", 22.dp, enabled = snap.prev != null) { controller.playPrev(); controls.bump() }
                     CenterKeyContent("退 $seekStepSec 秒", { controller.seekBy(-stepNow.value); controls.bump() }) {
                         SeekStepIcon(false, seekStepSec, colors.ink, 26.dp)
@@ -477,7 +515,7 @@ fun PlayerPhone(play: PlaySession, danmaku: PlayerDanmaku, slots: PlayerSlots) {
                     }
                     if (episodic) CenterKey(GuguIcon.SkipForward, "下一集", 22.dp, enabled = snap.next != null) { controller.playNext(); controls.bump() }
                 }
-                strip(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp + side).padding(bottom = stripBottom))
+                if (airCast == null) strip(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp + side).padding(bottom = stripBottom))
             }
             // 引擎不支持非全窗视口时的退路：贴右边的小面板（墨底），不挡字幕区（画面下方三分之一不放）
             if (panel != null) {
@@ -655,6 +693,59 @@ private fun PipBoxButton(active: Boolean, onClick: () -> Unit) {
     Box(Modifier.size(48.dp).pressable(press, label = if (active) "收回画中画" else "画中画", onClick = onClick).testTag("player-pip"), contentAlignment = Alignment.Center) {
         Box(Modifier.pressGraphics(press).size(40.dp).background(colors.inkWell).border(1.dp, colors.ink.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
             com.gugaart.ui.desktop.PipGlyph(if (active) colors.seal else colors.ink, 20.dp)
+        }
+    }
+}
+
+/**
+ * The picture area during an AirPlay hand-off (iPhone, 1.6 F2): title, 「正在投屏 · <device>」, back / play-pause / forward, the
+ * timeline, 「停止」. Paper, no mascot (the picture is on the TV). Every control goes through the controller: upstream forwards
+ * play / pause / seek to the AVPlayer and the timeline reads the AVPlayer's clock.
+ */
+@Composable
+private fun PhoneAirPlayNote(
+    cast: com.gugaart.ui.cast.AirPlayCast,
+    play: PlaySession,
+    clock: androidx.compose.runtime.State<com.gugugaga.app.player.ClockSnapshot>,
+    duration: Double,
+    stepMs: Double,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = Guga.colors
+    val controller = play.controller
+    val connecting = cast.phase == com.gugaart.ui.cast.AirPlayPhase.Connecting
+    Box(modifier.background(colors.paper).testTag("player-airplay-note"), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 520.dp).padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            BasicText("AIRPLAY · 投屏", style = Guga.song(10.sp, FontWeight.SemiBold, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
+            BasicText(cast.title, Modifier.padding(top = 8.dp), style = Guga.song(24.sp, FontWeight.Black, letterSpacing = 0.08.em), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicText(
+                com.gugaart.ui.cast.airPlayWord(cast) + " · " + cast.device,
+                Modifier.padding(top = 6.dp).testTag("airplay-state"),
+                style = Guga.song(13.sp, color = colors.dim, letterSpacing = 0.1.em),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!connecting) {
+                val paused = clock.value.paused
+                Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(36.dp)) {
+                    CenterKeyContent("退 ${(stepMs / 1000).toInt()} 秒", { controller.seekBy(-stepMs) }) { SeekStepIcon(false, (stepMs / 1000).toInt(), colors.ink, 24.dp) }
+                    CenterKey(if (paused) GuguIcon.Play else GuguIcon.Pause, if (paused) "播放" else "暂停", 30.dp) { controller.togglePlay() }
+                    CenterKeyContent("进 ${(stepMs / 1000).toInt()} 秒", { controller.seekBy(stepMs) }) { SeekStepIcon(true, (stepMs / 1000).toInt(), colors.ink, 24.dp) }
+                }
+                Timeline(
+                    { clock.value.positionMs }, duration, FloatArray(0), emptyList(),
+                    onScrubStart = {}, onScrub = {}, onScrubEnd = { controller.seekTo(it) },
+                    modifier = Modifier.widthIn(max = 460.dp),
+                )
+            }
+            val press = rememberPressState()
+            Box(
+                Modifier.padding(top = 14.dp).pressGraphics(press).border(1.dp, colors.ink.copy(alpha = 0.6f)).pressable(press, label = "停止投屏", onClick = onStop)
+                    .padding(horizontal = 18.dp, vertical = 9.dp).testTag("player-airplay-stop"),
+            ) {
+                BasicText("停止", style = Guga.song(13.sp, FontWeight.Bold, letterSpacing = 0.2.em), maxLines = 1)
+            }
         }
     }
 }

@@ -8,6 +8,8 @@ import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsBytes
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
@@ -44,6 +46,15 @@ interface SubtitleNet {
     suspend fun getBytes(url: String, headers: Map<String, String> = emptyMap(), timeoutMs: Long = 20_000): NetBytes
 
     suspend fun range(url: String, headers: Map<String, String>, span: ByteSpan, timeoutMs: Long = 8_000): RangeAnswer?
+
+    /**
+     * 下载但最多 [maxBytes]（弹幕预查用，§4.5）：超过 = `failed = "文件太大"`。默认实现下完整个再看大小（测试的假网络用它）；
+     * Ktor 那一个读到上限就断开。
+     */
+    suspend fun getBytesCapped(url: String, maxBytes: Long, timeoutMs: Long): NetBytes {
+        val r = getBytes(url, emptyMap(), timeoutMs)
+        return if (r.ok && r.bytes.size > maxBytes) NetBytes(r.status, ByteArray(0), r.contentType, failed = "文件太大") else r
+    }
 }
 
 /** 发给字幕站的 User-Agent（只写应用名，不带任何用户信息）。 */
@@ -87,6 +98,27 @@ class KtorSubtitleNet(
         }
     }
 
+    override suspend fun getBytesCapped(url: String, maxBytes: Long, timeoutMs: Long): NetBytes = guard({ NetBytes(0, ByteArray(0), failed = it) }) {
+        withTimeout(timeoutMs) {
+            follow.prepareGet(url) { header(HttpHeaders.UserAgent, SUBTITLE_USER_AGENT) }.execute { r ->
+                val len = r.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                val ct = r.headers[HttpHeaders.ContentType]?.lowercase()
+                if (len != null && len > maxBytes) return@execute NetBytes(r.status.value, ByteArray(0), ct, failed = "文件太大")
+                // 没写长度（分块）：读到上限 + 1 就停，不把一个大文件整个拉下来
+                val ch = r.bodyAsChannel()
+                val out = ByteArrayOutputBuffer()
+                val buf = ByteArray(16 * 1024)
+                while (true) {
+                    val n = ch.readAvailable(buf, 0, buf.size)
+                    if (n < 0) break
+                    out.write(buf, n)
+                    if (out.size > maxBytes) return@execute NetBytes(r.status.value, ByteArray(0), ct, failed = "文件太大")
+                }
+                NetBytes(r.status.value, out.toByteArray(), ct)
+            }
+        }
+    }
+
     override suspend fun range(url: String, headers: Map<String, String>, span: ByteSpan, timeoutMs: Long): RangeAnswer? = try {
         withTimeout(timeoutMs) {
             noFollow.prepareGet(url) {
@@ -124,6 +156,21 @@ class KtorSubtitleNet(
     companion object {
         const val MAX_SUBTITLE_BYTES = 16L shl 20
     }
+}
+
+/** 攒字节（commonMain 没有 ByteArrayOutputStream）。 */
+private class ByteArrayOutputBuffer {
+    private var data = ByteArray(64 * 1024)
+    var size = 0
+        private set
+
+    fun write(src: ByteArray, n: Int) {
+        if (size + n > data.size) data = data.copyOf(maxOf(data.size * 2, size + n))
+        src.copyInto(data, size, 0, n)
+        size += n
+    }
+
+    fun toByteArray(): ByteArray = data.copyOf(size)
 }
 
 /** `bytes 0-20479/14148643` → 14148643；`bytes *` 斜杠 `14148643` 也认；没有 / 总长是 `*` → null。纯函数，有单测。 */

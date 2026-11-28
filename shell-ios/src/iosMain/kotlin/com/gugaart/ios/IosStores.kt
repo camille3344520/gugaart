@@ -64,6 +64,13 @@ import platform.Security.kSecValueData
 /** `…/Library/Application Support/GugaArt`（没有就建）。 */
 internal fun appSupportDir(): String = userDir(NSApplicationSupportDirectory, "GugaArt")
 
+/**
+ * `…/Library/Application Support/GugaArt/downloads`: offline downloads (1.6 batch F3). Not in Caches (never purged when space runs low), not in
+ * Documents (not shown in the Files app); [com.gugaart.ui.download.IosDownloadStorage] excludes it from backups. Also the only local folder
+ * mpv may open (`AppleMpvEngines(localFiles)`).
+ */
+internal fun downloadsDir(): String = "${appSupportDir()}/downloads"
+
 /** `…/Library/Caches/GugaArt`：图片 / 片名 logo / 弹幕的磁盘缓存（系统空间紧时会清，清了就是没缓存）。 */
 internal fun cachesDir(): String = userDir(NSCachesDirectory, "GugaArt")
 

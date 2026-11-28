@@ -82,6 +82,11 @@ internal val PERSON_BLEED = 540.dp
  */
 @Composable
 fun ItemScreen(id: String, day: Int) {
+    // 1.6 A1：别台的条目（搜索「其它服务器」点开的）= 用那台的客户端排同一套版式，顶上小签写服务器名
+    com.gugaart.ui.data.RemoteRef.parse(id)?.let { ref ->
+        com.gugaart.ui.data.RemoteBrowseHost(ref) { ItemScreen(ref.itemId, day) }
+        return
+    }
     val graph = LocalGraph.current
     val item = rememberLoad("item", id) { c -> c.titleOf(c.getItemShared(id)) }
     val t = item.value
@@ -262,6 +267,10 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
                         for (p in pages) Chip(p.label, p.index == page, { page = p.index })
                     }
                 }
+                // 1.6 批次 E：整季下载（先问「下载第 1 季，共 12 集？」）；没有下载权限 / 不是手机 = 不出现
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    com.gugaart.ui.download.SeasonDownloadLink(series.id, season)
+                }
                 val episodes = slice.value?.episodes
                 when {
                     episodes == null && slice.error != null -> ErrorView(slice.error!!, slice::retry)
@@ -286,6 +295,7 @@ fun SeriesPhone(head: SeriesHead, day: Int) {
                             progress = e.progress,
                             onClick = { graph.play(e.id, e.positionSec?.times(1000)) },
                             unaired = e.unaired,
+                            download = { com.gugaart.ui.download.EpisodeDownloadCell(e) },
                             onTick = {
                                 graph.togglePlayed(chrome, e.id, played)
                                 voice.say(MascotLines.pick(if (played) "played.off" else "played.on", LineFacts(ep = n, next = n + 1), hour, e.id.hashCode() + day))
@@ -413,6 +423,8 @@ fun MoviePhone(movie: Title, day: Int) {
                     played,
                     { graph.togglePlayed(chrome, movie.id, played) },
                     Modifier.padding(top = 14.dp),
+                    // 1.6 批次 E：下载原画（选中的版本）；没有下载权限 / 不是手机 = 不出现
+                    extra = { com.gugaart.ui.download.DownloadLink(movie, source?.id) },
                 )
                 // 版本 / 音轨 / 字幕：一组收起来的行（版本只有一个时不出现），点开是贴底的纸片；
                 // 紧跟在收藏 / 已看下面（P2-11：开播前要选的东西不用滑过简介去找），简介往后放

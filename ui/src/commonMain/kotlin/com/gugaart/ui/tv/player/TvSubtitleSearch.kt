@@ -96,7 +96,9 @@ fun tvHitPick(actions: List<HitAction>): HitAction? = actions.singleOrNull()
  * 一条结果右端的去向小签（纯函数，有单测）：只有一个去向 = 写它（「保存到服务器」/「仅本次播放」）；两个（装了 Subtitle Manager、是管理员）=
  * 不写——按确定展开的两个按钮已经说明了（int151e 协调人定）。
  */
-fun tvHitTag(hit: SubtitleHit, actions: List<HitAction>): String? = if (actions.size > 1) null else destinationOf(hit, inPlayer = true)
+fun tvHitTag(hit: SubtitleHit, actions: List<HitAction>): String? =
+    // 没有去向（下载下来是弹幕，§4.5）/ 两个去向：都不写
+    if (actions.size != 1) null else destinationOf(hit, inPlayer = true)
 
 /**
  * 字幕搜索（电视，docs/subtitle-search.md §5.3）：画面照常全幅在后面放，左边一栏墨色的纸——状态行、结果（确定 = 用这一条，进度写在那一行）、
@@ -134,8 +136,10 @@ fun BoxScope.TvSubtitleSearch(
     val open = expanded?.takeIf { openActions.isNotEmpty() }
     val keys = tvSubtitleKeys(hits.size, s.online, best = best != null, expanded = open, actions = openActions.size)
     fun pick(key: String, hit: SubtitleHit) {
-        val one = tvHitPick(hitActionsOf(hit, inPlayer = true, canUpload = s.canUpload, apply = s.apply))
-        if (one != null) SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, hit, g, scope, one) else onExpanded(key)
+        val actions = hitActionsOf(hit, inPlayer = true, canUpload = s.canUpload, apply = s.apply)
+        if (actions.isEmpty()) return // 下载下来是弹幕：这一行只剩标签
+        val one = tvHitPick(actions)
+        if (one != null)SubtitleSearchBoard.chooseIn(s, SubtitleSearchBoard.play, hit, g, scope, one) else onExpanded(key)
     }
     fun act(a: HitAction) {
         val hit = openHit ?: return

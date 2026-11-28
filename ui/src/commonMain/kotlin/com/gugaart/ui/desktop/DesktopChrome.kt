@@ -98,7 +98,7 @@ fun DesktopChrome(route: Route, today: Today, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val session by g.session.session.collectAsState()
     // 海报墙（片库 / 合集库里的一页）也算在「片库 / 合集」这一格下面
-    val active = nav.activeTab(route) ?: if (route is Route.Library) (if (nav.tab == WideTab.Colls) WideTab.Colls else WideTab.Libs) else null
+    val active = nav.activeTab(route) ?: if (route is Route.Library) WideTab.Libs else null
     val tabs = WideTab.entries
     val index = active?.let { tabs.indexOf(it) } ?: -1
     val ind = rememberSlidingIndicator(index.coerceAtLeast(0).toFloat(), tabs.size)

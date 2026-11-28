@@ -28,8 +28,7 @@ enum class DesktopCommand(val label: String, val ctrlHint: String?, val cmdHint:
     GoHome("首页", null, "⌘1"),
     GoDiscover("发现", null, "⌘2"),
     GoLibs("片库", null, "⌘3"),
-    GoColls("合集", null, "⌘4"),
-    GoMe("我的", null, "⌘5"),
+    GoMe("我的", null, "⌘4"),
     Filter("筛选", "Ctrl F", "⌘F"),
     Favorite("收藏 · 盖章", "V", "V"),
     Played("标记已看", "W", "W"),
@@ -134,7 +133,6 @@ object DesktopCommands {
             DesktopCommand.GoHome -> go(nav, graph, WideTab.Home)
             DesktopCommand.GoDiscover -> go(nav, graph, WideTab.Discover)
             DesktopCommand.GoLibs -> go(nav, graph, WideTab.Libs)
-            DesktopCommand.GoColls -> go(nav, graph, WideTab.Colls)
             DesktopCommand.GoMe -> go(nav, graph, WideTab.Me)
             DesktopCommand.Filter -> DesktopKeys.onFilter?.invoke() ?: false
             DesktopCommand.Favorite -> DesktopKeys.target?.let { t ->

@@ -224,6 +224,11 @@ fun MeScreen(today: Today, onOpenFavs: (() -> Unit)? = null, onOpenSets: (() -> 
             Rule()
             PageRow(++n, "收藏", data?.favorites?.let { if (it > 0) "$it 部收藏" else "还没有收藏" }) { (onOpenFavs ?: { graph.nav.navigate(Route.History("favorites")) })() }
             Rule()
+            // 离线下载（1.6 批次 E，只在手机上）：账号能下载、或者已经下过东西才有这一行
+            com.gugaart.ui.download.rememberDownloads()?.takeIf { it.allowed || it.mine.isNotEmpty() }?.let { dl ->
+                PageRow(++n, "下载", com.gugaart.ui.download.downloadsHint(dl.mine.map { it.entry })) { graph.nav.navigate(Route.History(com.gugaart.ui.download.DOWNLOADS_TAB)) }
+                Rule()
+            }
             // 特别称号：一页两排六枚，左右滑翻页（拿到的排前面、彩色）；点一枚看拿法
             SectionHeader("特别称号", "SPECIAL", Modifier.padding(top = 26.dp), trailing = "${RankBoard.owned.size} / ${Specials.COUNT}")
             SpecialGrid(RankBoard.owned, Modifier.padding(top = 16.dp).testTag("me-specials"), columns = 6, badge = 46.dp, nameSize = 11.sp, rows = 2) { id -> RankBoard.special = SpecialNews(listOf(id), browse = true) }

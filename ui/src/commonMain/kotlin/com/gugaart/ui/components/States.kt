@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -116,13 +117,15 @@ fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
 /**
  * 首页顶上的一条「断线」（设计稿 `home-offline`）：已有内容保留，只在报头上方多一条——朱红「断线」签 + 一句话 + 「重试」。
  * 排在页面流里（把报头往下推），不盖内容。
+ * [cachedList] = false：冷启动就断网、首页只有「下载」一栏（1.6 批次 E）——没有缓存的片单可说，只留短标签「离线」（int16a 协调人定）。
  */
 @Composable
-fun OfflineBar(modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
+fun OfflineBar(modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null, cachedList: Boolean = true) {
     val colors = Guga.colors
     Row(modifier.fillMaxWidth().padding(horizontal = Guga.dimens.margin).padding(bottom = 10.dp).testTag("offline-bar"), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        BasicText("断线", Modifier.background(colors.seal).padding(horizontal = 6.dp, vertical = 2.dp), style = Guga.song(Guga.type.kicker, FontWeight.Black, colors.ink, letterSpacing = 0.2.em), maxLines = 1)
-        BasicText("连不上服务器，显示缓存的片单", Modifier.weight(1f), style = Guga.song(Guga.type.caption, color = colors.dim), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        BasicText(if (cachedList) "断线" else "离线", Modifier.background(colors.seal).padding(horizontal = 6.dp, vertical = 2.dp), style = Guga.song(Guga.type.kicker, FontWeight.Black, colors.ink, letterSpacing = 0.2.em), maxLines = 1)
+        if (cachedList) BasicText("连不上服务器，显示缓存的片单", Modifier.weight(1f), style = Guga.song(Guga.type.caption, color = colors.dim), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        else Spacer(Modifier.weight(1f))
         if (onRetry != null) TextLink("重试", onRetry)
     }
 }

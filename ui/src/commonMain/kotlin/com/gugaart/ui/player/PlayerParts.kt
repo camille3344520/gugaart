@@ -17,8 +17,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -203,6 +207,8 @@ fun Timeline(
     onScrub: (Double) -> Unit,
     onScrubEnd: (Double) -> Unit,
     modifier: Modifier = Modifier,
+    /** 1.6 C3：拖到某处时的缩略图（Emby 的 BIF，[SeekThumbs]）；没有 = 照旧只显示时间。 */
+    thumbAt: ((Double) -> androidx.compose.ui.graphics.ImageBitmap?)? = null,
 ) {
     val colors = Guga.colors
     var drag by remember { mutableStateOf<Double?>(null) }
@@ -210,10 +216,24 @@ fun Timeline(
     val dur = rememberUpdatedState(durationMs)
     Row(modifier.fillMaxWidth().height(48.dp).testTag("player-timeline"), verticalAlignment = Alignment.Bottom) {
         BasicText(Rules.clock(shown.toLong()), Modifier.width(58.dp).padding(bottom = 2.dp), style = Guga.numeral(13.sp), maxLines = 1)
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).height(48.dp)) {
+        // 拖的时候：进度条上方一张缩略图（跟着手指，不出两边）
+        val thumb = drag?.let { d -> thumbAt?.invoke(d) }
+        if (thumb != null && durationMs > 0) {
+            val f = (drag!! / durationMs).toFloat().coerceIn(0f, 1f)
+            val tw = SEEK_THUMB_PHONE_W
+            val th = tw * thumb.height.toFloat() / thumb.width.coerceAtLeast(1)
+            androidx.compose.foundation.Image(
+                thumb, "预览",
+                // 底边贴着时间轴这一格的上沿（中间三个键在它上面，不压）；这一格只有 48 高：图要量出格子
+                Modifier.offset(x = (maxWidth * f - tw / 2).coerceIn(0.dp, (maxWidth - tw).coerceAtLeast(0.dp)), y = -th - 2.dp)
+                    .wrapContentSize(Alignment.TopStart, unbounded = true).size(tw, th).border(1.dp, colors.ink).testTag("player-seek-thumb"),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+        }
         Canvas(
             Modifier
-                .weight(1f)
-                .height(48.dp)
+                .fillMaxSize()
                 .semantics { contentDescription = "进度 ${Rules.clock(shown.toLong())} / ${Rules.clock(durationMs.toLong())}" }
                 .pointerInput(Unit) {
                     detectTapGestures { p -> if (dur.value > 0) onScrubEnd((p.x / size.width).coerceIn(0f, 1f) * dur.value) }
@@ -264,9 +284,13 @@ fun Timeline(
                 colors.ink,
             )
         }
+        }
         BasicText(Rules.clock(durationMs.toLong()), Modifier.width(58.dp).padding(start = 12.dp, bottom = 2.dp), style = Guga.numeral(13.sp), maxLines = 1)
     }
 }
+
+/** 手机拖进度条时缩略图的宽（16:9 → 高 72；再大会碰到画面中间那排键）。 */
+private val SEEK_THUMB_PHONE_W = 128.dp
 
 /** 一个功能词：宋体 700 的词 + 斜体的当前值。打开着的那个：专色 + 下划线（不靠颜色单独表达）。 */
 @Composable
@@ -343,11 +367,14 @@ fun PanelOption(text: String, selected: Boolean, onClick: () -> Unit, note: Stri
  * 面板里的一行步进：标签 + 〔−〕值〔+〕。直接改值，画面实时变。[cycle]：值是一串名字（字体）里轮着换——键换成 ‹ ›，值占满中间一栏（名字比数字长）。
  */
 @Composable
-fun PanelStepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit, cycle: Boolean = false) {
+fun PanelStepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit, cycle: Boolean = false, labelAbove: Boolean = false) {
     val colors = Guga.colors
     val t = Guga.player
+    // [labelAbove]：标签自己一行、‹ 值 › 一行（手机横屏的页边窄，「第二字幕」这种长名字和值挤不下，同「字幕时间」）
+    if (labelAbove) BasicText(label, Modifier.padding(top = 6.dp * t.k), style = Guga.song(t.label, color = colors.dim), maxLines = 1)
     Row(Modifier.fillMaxWidth().heightIn(min = 40.dp * t.k).testTag("panel-stepper"), verticalAlignment = Alignment.CenterVertically) {
-        BasicText(label, Modifier.width(48.dp * t.k), style = Guga.song(t.label, color = colors.dim), maxLines = 1)
+        // 两个字的标签占 48；更长的（「第二字幕」）按字宽撑开，不裁字
+        if (!labelAbove) BasicText(label, Modifier.widthIn(min = 48.dp * t.k), style = Guga.song(t.label, color = colors.dim), maxLines = 1)
         if (!cycle) Spacer(Modifier.weight(1f))
         StepKey(if (cycle) GuguIcon.ChevronLeft else GuguIcon.Minus, if (cycle) "$label 上一个" else "$label 减", onMinus)
         BasicText(

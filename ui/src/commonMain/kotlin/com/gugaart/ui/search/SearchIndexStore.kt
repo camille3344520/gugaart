@@ -92,6 +92,26 @@ object SearchIndexStore {
     /** 现在内存里的那份（没有 → null，不取）。 */
     fun peek(client: EmbyClient): Snapshot? = mem[accountOf(client)]
 
+    /** 别台的索引（1.6 A1 多台一起搜）：只读内存 / 磁盘里已经有的，不向服务器取、不刷新、不挤掉本台在内存里的那份。 */
+    private var others: Map<String, Snapshot> = emptyMap()
+
+    /**
+     * 这台（别的服务器）本地已经有的索引：内存 → 磁盘；都没有 = null（调用方改问 Emby 的 SearchTerm）。
+     * 以前切到过那台、建过索引才会有。读过的留在一张小表里（最多 [DISK_MAX_ENTRIES] 份）。
+     */
+    suspend fun cachedOnly(client: EmbyClient): Snapshot? {
+        val account = accountOf(client)
+        mem[account]?.let { return it }
+        others[account]?.let { return it }
+        val gate = lock.withLock { locks.getOrPut(account) { Mutex() } }
+        val snap = gate.withLock { readDisk(client, account) } ?: return null
+        val m = LinkedHashMap(others)
+        m[account] = snap
+        while (m.size > DISK_MAX_ENTRIES) m.remove(m.keys.first())
+        others = m
+        return snap
+    }
+
     /** 拿索引：内存 → 磁盘 → 服务器；旧了就在后台刷新（这次先给旧的）。 */
     suspend fun get(client: EmbyClient): Snapshot {
         val account = accountOf(client)
@@ -114,6 +134,7 @@ object SearchIndexStore {
     /** 测试：丢掉内存里的。 */
     fun clearMemory() {
         mem = emptyMap()
+        others = emptyMap()
     }
 
     /** 测试基准用：直接往内存索引放入一份造好的数据（和真实构建同结构）。 */

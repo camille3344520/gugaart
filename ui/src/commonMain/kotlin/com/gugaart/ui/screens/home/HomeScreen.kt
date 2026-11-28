@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import com.gugaart.ui.components.Masthead
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -170,11 +171,15 @@ fun HomeScreen(volume: Int, date: String, day: Int) {
     val data = load.value
     // 冷启动「首页出内容」（不是骨架）的那一刻：壳接 Android 的 reportFullyDrawn（1.5.1 性能批次的口径）
     if (data != null) LaunchedEffect(Unit) { HomeFirstContent.reached() }
+    // 断网（取数失败，或者系统说没有网）：手机首页出「下载」一栏（1.6 批次 E；壳没有下载能力时网永远当作在线）
+    val net by com.gugaart.ui.download.Downloads.network.collectAsState()
+    val offline = load.error != null || !net.online
     when {
         data != null -> when (Guga.uiMode) {
-            UiMode.Phone -> HomePhone(data, volume, date, day, offline = load.error != null, onRefresh = { CoverDeck.requestNew(); load.retry() }, initialIssue = LocalPreset.current.homeIssue, initialScroll = LocalPreset.current.scroll)
+            UiMode.Phone -> HomePhone(data, volume, date, day, offline = offline, onRefresh = { CoverDeck.requestNew(); load.retry() }, initialIssue = LocalPreset.current.homeIssue, initialScroll = LocalPreset.current.scroll)
             UiMode.Desktop, UiMode.Tv -> HomeWide(data, volume, date)
         }
+        load.error != null && Guga.uiMode == UiMode.Phone && hasFinishedDownloads() -> OfflineHome(volume, date, onRetry = load::retry)
         load.error != null -> ErrorView(load.error!!, load::retry)
         load.showSkeleton -> HomeLoading(volume, date)
         else -> HomeLoading(volume, date, quiet = true)

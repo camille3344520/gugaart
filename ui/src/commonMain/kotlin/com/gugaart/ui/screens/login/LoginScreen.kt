@@ -32,6 +32,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -45,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.gugaart.ui.Today
+import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.BoxButton
 import com.gugaart.ui.components.ConfirmSheet
 import com.gugaart.ui.components.Masthead
@@ -145,7 +149,7 @@ class LoginFlow(val model: LoginModel, val signedIn: Boolean, val restoring: Boo
 fun rememberLoginFlow(): LoginFlow {
     val graph = LocalGraph.current
     val scope = graph.scope
-    val model = remember(graph) { LoginModel(graph.session, scope) }
+    val model = remember(graph) { LoginModel(graph.session, scope, graph.deps.transport) }
     LocalLoginModelSink.current?.invoke(model)
     val status by graph.session.status.collectAsState()
     val session by graph.session.session.collectAsState()
@@ -280,6 +284,29 @@ private fun AddServer(model: LoginModel) {
     androidx.compose.runtime.LaunchedEffect(model.address, model.scheme) { model.probeWhenIdle() }
     Column(Modifier.testTag(if (found != null) "login-found" else "login-add-step")) {
         Headline("添加服务器 · STEP 1 / 2", "片子", "放在哪儿", "填 Emby 服务器的地址")
+        if (model.discovered.isNotEmpty()) {
+            SectionHeader("这个网络里的服务器", "ON THIS NETWORK", Modifier.padding(top = 24.dp))
+            for (s in model.discovered) {
+                val press = rememberPressState()
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 66.dp)
+                        .pressGraphics(press)
+                        .pressable(press, label = s.name) { model.pickDiscovered(s) }
+                        .padding(vertical = 12.dp)
+                        .testTag("discovered-server"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        BasicText(s.name, style = Guga.song(18.sp, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        BasicText(discoverySubtitle(s), Modifier.padding(top = 4.dp), style = Guga.note(Guga.type.caption, colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(GuguIcon.ChevronRight, colors.dim, 12.dp)
+                }
+                Rule()
+            }
+        }
         PaperField(
             "地址",
             model.address,
@@ -332,6 +359,8 @@ private fun SignIn(model: LoginModel) {
     val colors = Guga.colors
     val target = model.target ?: return
     val fail = model.error != null
+    val secretFocus = remember { FocusRequester() }
+    val pub = model.publicUsers.filter { u -> target.accounts.none { it.userId == u.id || it.userName == u.name } }
     Column(Modifier.testTag(if (model.busy) "login-busy" else if (fail) "login-fail" else "login-form")) {
         Headline("登录 · STEP 2 / 2 · ${target.name}", "你是", "哪一位")
         if (target.accounts.isNotEmpty()) {
@@ -344,6 +373,17 @@ private fun SignIn(model: LoginModel) {
                 UserTile("+", "别的账号", selected = false, dashed = true) {
                     model.username = ""
                     model.password = ""
+                }
+            }
+        }
+        if (pub.isNotEmpty()) {
+            SectionHeader("公开用户", "PUBLIC USERS", Modifier.padding(top = 22.dp))
+            Row(Modifier.padding(top = 14.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                for (u in pub) {
+                    PublicUserTile(u, selected = u.name == model.username) {
+                        model.pickPublicUser(u)
+                        runCatching { secretFocus.requestFocus() }
+                    }
                 }
             }
         }
@@ -360,6 +400,7 @@ private fun SignIn(model: LoginModel) {
             ime = ImeAction.Done,
             onIme = model::signIn,
             tag = "login-password",
+            fieldFocus = secretFocus,
         )
         if (fail) {
             Row(Modifier.padding(top = 14.dp).testTag("login-error"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -420,6 +461,29 @@ private fun UserTile(glyph: String, name: String, selected: Boolean, dashed: Boo
             }
         }
         BasicText(name, Modifier.padding(top = 10.dp).widthIn(max = 84.dp), style = Guga.song(13.sp, if (selected) FontWeight.Bold else FontWeight.Normal, if (selected) colors.ink else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun PublicUserTile(u: PublicUser, selected: Boolean, onClick: () -> Unit) {
+    val colors = Guga.colors
+    val press = rememberPressState()
+    Column(Modifier.pressGraphics(press).pressable(press, label = u.name, onClick = onClick).testTag("login-public-user"), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .size(LoginSpec.TILE)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(if (selected) colors.ink else colors.paper)
+                .border(if (selected) 2.dp else 1.dp, if (selected) colors.spot else colors.dim, androidx.compose.foundation.shape.CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            CoverImage(u.avatarUrl, Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape)) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    BasicText(userGlyph(u.name), style = Guga.song(24.sp, FontWeight.Black, if (selected) colors.onInk else colors.dim), maxLines = 1)
+                }
+            }
+        }
+        BasicText(u.name, Modifier.padding(top = 10.dp).widthIn(max = 84.dp), style = Guga.song(13.sp, if (selected) FontWeight.Bold else FontWeight.Normal, if (selected) colors.ink else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

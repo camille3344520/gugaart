@@ -42,9 +42,11 @@ val GUGA_SUBTITLE_LANGS: List<com.gugugaga.app.settings.LangOption> by lazy {
 fun effectiveSubtitleLangs(langs: List<String>, seeded: Boolean): List<String> =
     if (!seeded && langs == UPSTREAM_DEFAULT_SUBTITLE_LANGS) DEFAULT_GUGA_SUBTITLE_LANGS else langs
 
-/** 「咕咕嘎嘎出现在版面上」的三档。 */
-enum class MascotPref(val id: String) {
-    On("on"), Subtle("subtle"), Off("off");
+/** 「咕咕嘎嘎」的三档：常在（出现+说话）/ 只露面（出现+不说话）/ 不出现。 */
+enum class MascotPref(val id: String, val label: String) {
+    On("on", "常在"),
+    Subtle("subtle", "只露面"),
+    Off("off", "不出现");
 
     companion object {
         fun of(id: String?): MascotPref = entries.firstOrNull { it.id == id } ?: On
@@ -92,10 +94,8 @@ data class WallPref(
 data class GugaPrefs(
     /** 专色跟随封面；关 = 一直用兜底朱红。 */
     val spotColorFollowsCover: Boolean = true,
-    /** 她：on = 全量；subtle = 只留署名照、不说话；off = 所有她的格子收起。 */
+    /** 咕咕嘎嘎：on = 常在；subtle = 只露面；off = 不出现。 */
     val mascot: MascotPref = MascotPref.On,
-    /** 主编手记这一格。 */
-    val editorNotes: Boolean = true,
     /** 「开播字幕」：自动 / 跟随上次 / 关闭（[SubtitleDefault]）。 */
     val subtitleDefault: SubtitleDefault = SubtitleDefault.Follow,
     /** 设置 › 播放「默认着色器」：关（默认）/ Anime4K 模式 A/B/C / FSR（[ShaderPreset]）。 */
@@ -133,14 +133,29 @@ data class GugaPrefs(
     val danmakuFont: String? = null,
     /** 片尾自动播下一集（审计 P1-3）：进了片尾标记倒数 10 秒接下一集。没有片尾标记的片子不受它管（播完照旧接，跟「自动播放下一集」）。 */
     val creditsAutoNext: Boolean = true,
+    /**
+     * 音频直通（1.6 C2，设置 › 播放；只在安卓、安卓电视、Windows 显示）：开 = 杜比 / DTS 原样交给输出（接功放 / 回音壁时由它解码，输出不收就照旧解码），
+     * 关 = 内核一律解码成 PCM（ExoPlayer 关直通、mpv `audio-spdif` 清空、VLC 关 S/PDIF）。
+     * null = 没存过，按这一端的默认（[audioPassthroughFor]：安卓、安卓电视开 = 上游原来的 `passthrough = true`；Windows 关 = 原来的 mpv 不直通，
+     * 免得电脑音箱出杂音；协调人 int16a 定）。存过的照存下的。
+     */
+    val audioPassthrough: Boolean? = null,
+    /**
+     * 匹配片源帧率（1.6 B1，只有电视有这个开关）：播放时把电视的显示模式切到和片源帧率合拍的刷新率（23.976 → 23.976 / 24 Hz……），
+     * 退出播放切回原来的。电视没有合适的模式就不切。
+     */
+    val matchFrameRate: Boolean = true,
+    /** 离线下载只在不按流量计费的网络（Wi-Fi）上走（1.6 批次 E；设置 › 高级 › 缓存）。默认开。 */
+    val downloadWifiOnly: Boolean = true,
 ) {
     /** 她的格子出不出现。 */
     val showMascot: Boolean get() = mascot != MascotPref.Off
     /** 她说不说话（手记 / 按语那一行字）。 */
-    val mascotSpeaks: Boolean get() = mascot == MascotPref.On && editorNotes
-
+    val mascotSpeaks: Boolean get() = mascot == MascotPref.On
     /** 这一端实际的「闲置回首页」开关：存过按存下的，没存过电脑 / Mac 默认关、电视保持开（P2-16）。 */
     fun idleHomeFor(mode: com.gugugaga.ds.theme.UiMode): Boolean = idleHome ?: (mode == com.gugugaga.ds.theme.UiMode.Tv)
+    /** 这一端实际的「音频直通」：存过按存下的，没存过 Windows 关、别的（安卓手机 / 电视）开。[platformLabel] = 壳的 `PlatformDeps.platformLabel`。 */
+    fun audioPassthroughFor(platformLabel: String): Boolean = audioPassthrough ?: audioPassthroughDefault(platformLabel)
 
     /** 这部片实际的着色器预设：记过按这部片自己的，没记过用设置里的默认着色器（P2-20）。 */
     fun shaderFor(itemKey: String?): ShaderPreset = itemKey?.let { itemShaders[it] } ?: defaultShader
@@ -157,10 +172,17 @@ data class GugaPrefs(
         fun parse(raw: String?): GugaPrefs {
             val o = parseObject(raw) ?: return GugaPrefs()
             fun bool(k: String, d: Boolean) = (o[k] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull ?: d
+            val rawMascot = MascotPref.of((o["mascot"] as? JsonPrimitive)?.takeIf { it.isString }?.content)
+            val oldNotes = (o["editorNotes"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull
+            val migratedMascot = when {
+                rawMascot == MascotPref.Off -> MascotPref.Off
+                rawMascot == MascotPref.Subtle -> MascotPref.Subtle
+                oldNotes == false -> MascotPref.Subtle
+                else -> MascotPref.On
+            }
             return GugaPrefs(
                 spotColorFollowsCover = bool("spotColorFollowsCover", true),
-                mascot = MascotPref.of((o["mascot"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
-                editorNotes = bool("editorNotes", true),
+                mascot = migratedMascot,
                 subtitleDefault = SubtitleDefault.of((o["subtitleDefault"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
                 defaultShader = ShaderPreset.of((o["defaultShader"] as? JsonPrimitive)?.takeIf { it.isString }?.content),
                 itemShaders = (o["itemShaders"] as? JsonObject)?.mapNotNull { (k, v) ->
@@ -178,6 +200,9 @@ data class GugaPrefs(
                 subtitleAutoBest = bool("subtitleAutoBest", false),
                 subStyle = SubStylePrefs.parse(o["subStyle"] as? JsonObject),
                 creditsAutoNext = bool("creditsAutoNext", true),
+                audioPassthrough = (o["audioPassthrough"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull,
+                matchFrameRate = bool("matchFrameRate", true),
+                downloadWifiOnly = bool("downloadWifiOnly", true),
                 danmakuFont = (o["danmakuFont"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { id -> StyleFont.of(id)?.let { it.danmaku == null } == true },
             )
         }
@@ -192,10 +217,9 @@ data class GugaPrefs(
     /** 写回：在 [previous]（存着的原文）上只改自己认识的键。 */
     fun encode(previous: String? = null): String = buildJsonObject {
         // 认识的键下面都会重写；nullable / 空映射拿掉，不能留着旧值
-        parseObject(previous)?.forEach { (k, v) -> if (k != "danmakuFont" && k != "itemShaders" && k != "idleHome") put(k, v) }
+        parseObject(previous)?.forEach { (k, v) -> if (k != "danmakuFont" && k != "itemShaders" && k != "idleHome" && k != "editorNotes" && k != "audioPassthrough") put(k, v) }
         put("spotColorFollowsCover", spotColorFollowsCover)
         put("mascot", mascot.id)
-        put("editorNotes", editorNotes)
         put("subtitleDefault", subtitleDefault.id)
         put("defaultShader", defaultShader.id)
         if (itemShaders.isNotEmpty()) put("itemShaders", buildJsonObject { itemShaders.forEach { (k, v) -> put(k, v.id) } })
@@ -209,10 +233,23 @@ data class GugaPrefs(
         put("subtitleAutoBest", subtitleAutoBest)
         put("subStyle", subStyle.encode())
         put("creditsAutoNext", creditsAutoNext)
+        audioPassthrough?.let { put("audioPassthrough", it) }
+        put("matchFrameRate", matchFrameRate)
+        put("downloadWifiOnly", downloadWifiOnly)
         danmakuFont?.let { put("danmakuFont", it) }
     }.toString()
 }
 
+
+/** 壳读「音频直通」（每次开播时问一次；读的是设置文件里存着的值，和设置页同一个键；没存过按 [platformLabel] 那一端的默认）。 */
+fun audioPassthroughOf(local: LocalStore, platformLabel: String): Boolean =
+    GugaPrefs.parse(local.get(GugaSettingsStore.KEY)).audioPassthroughFor(platformLabel)
+
+/** 「音频直通」没存过时的默认：Windows 关（原来的 mpv 不直通），安卓手机 / 安卓电视开（原来的自动）。纯函数，有单测。 */
+fun audioPassthroughDefault(platformLabel: String): Boolean = !platformLabel.startsWith("Windows")
+
+/** 「音频直通」这一行出不出现：安卓手机、安卓电视、Windows（Mac / iPhone 的内核不做直通）。纯函数，有单测。 */
+fun audioPassthroughVisible(android: Boolean, mac: Boolean, ios: Boolean): Boolean = if (android) !ios else !mac
 
 /** 按「这一部」记住着色器时的键：剧集按整部（seriesId），电影按条目（itemId）。 */
 fun shaderItemKey(seriesId: String?, itemId: String): String =
@@ -250,6 +287,13 @@ class GugaSettingsStore(private val local: LocalStore) {
     private val _prefs = MutableStateFlow(GugaPrefs.parse(local.get(KEY)))
     val prefs: StateFlow<GugaPrefs> = _prefs
 
+    init {
+        val raw = local.get(KEY)
+        val obj = GugaPrefs.parseObject(raw)
+        if (obj != null && "editorNotes" in obj) {
+            local.set(KEY, _prefs.value.encode(raw))
+        }
+    }
     fun update(change: (GugaPrefs) -> GugaPrefs) {
         val next = change(_prefs.value)
         local.set(KEY, next.encode(local.get(KEY)))

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
@@ -292,6 +293,10 @@ fun SearchScreen(initial: String?) {
     val scroll = rememberScrollState(preset.scroll)
     ReportScroll(scroll)
     val q = query.trim()
+    // 1.6 A1 多台一起搜：本台的片出来了、不到 5 条（或者翻到了底）→ 并发问其它已保存的服务器，结果另起一组「其它服务器」
+    val homeSettled = q.isNotEmpty() && !search.isSearching(query, index.value != null || peopleIndex.value != null || effectiveRemote != null) && !index.pending
+    val reachedEnd = rememberReachedEnd(scroll)
+    val other = rememberOtherServerSearch(query, homeSettled && OtherSearchRules.shouldAsk(hits.size, reachedEnd), hits.map { it.title })
     // 找过 + 词云（打开了哪一条 / 按了键盘上的「搜索」/ 点了词云里的词 = 记一笔）
     val recents = rememberSearchRecents()
     val cloud = remember(index.value, recents.items) {
@@ -341,7 +346,8 @@ fun SearchScreen(initial: String?) {
                 q.isEmpty() -> PhoneSearchIdle(recents.items, cloud, ::pick, recents::clear)
                 hits.isEmpty() && episodes.isEmpty() && people.isEmpty() ->
                     when {
-                        index.pending || waitingRemote || searching ->
+                        other.hits.isNotEmpty() -> PhoneOtherServers(other, 1, Modifier.padding(top = 26.dp)) { openHit(it) }
+                        index.pending || waitingRemote || searching || other.searching ->
                             BasicText("搜索中…", Modifier.padding(top = 16.dp), style = Guga.note(type.caption, colors.faint))
                         index.error != null || remote.error != null -> Column(Modifier.padding(top = 16.dp)) {
                             BasicText(index.error ?: remote.error!!, style = Guga.note(type.caption, colors.dim), maxLines = 2)
@@ -408,11 +414,41 @@ fun SearchScreen(initial: String?) {
                     }
                     // 缩写 / 片名：演员排在片子和单集后面
                     if (star == null && people.isNotEmpty()) PeopleSection(dimens.sectionGap)
+                    if (other.hits.isNotEmpty()) PhoneOtherServers(other, hits.size + 1, Modifier.padding(top = dimens.sectionGap)) { openHit(it) }
                 }
             }
             Spacer(Modifier.height(150.dp + dimens.tabLift))
         }
         StatusBand(solid = scroll.value > with(LocalDensity.current) { 2.dp.toPx() })
+    }
+}
+
+/**
+ * 「其它服务器」一组（1.6 A1）：接着本台的编号；每行 斜体编号 + 片名（命中的字专色）+ 类型 · 年份 + 右边服务器名（几台都有写「2 台」）+ 小海报。
+ * 点开 = 那台上这部片的详情（不切换当前服务器）。
+ */
+@Composable
+private fun PhoneOtherServers(other: OtherSearchView, startNo: Int, modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
+    val colors = Guga.colors
+    val type = Guga.type
+    Column(modifier.testTag("search-other")) {
+        SectionHeader("其它服务器", "OTHER SERVERS", trailing = "${other.hits.size}")
+        for ((i, h) in other.hits.withIndex()) {
+            val t = h.title
+            val press = rememberPressState()
+            Row(Modifier.fillMaxWidth().heightIn(min = 86.dp).pressGraphics(press).pressable(press, label = t.name) { onOpen(h.routeId) }.padding(vertical = 12.dp).testTag("search-other-row"), verticalAlignment = Alignment.CenterVertically) {
+                BasicText(Rules.episodeNo(startNo + i), Modifier.width(54.dp), style = Guga.numeral(26.sp, colors.spot), maxLines = 1)
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    BasicText(highlighted(t.name, h.range, colors.spot), style = Guga.song(type.row, FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    BasicText(listOfNotNull(searchKindLabel(t.kind), t.year?.toString()).joinToString(" · "), Modifier.padding(top = 4.dp), style = Guga.song(type.caption, color = colors.dim).copy(fontStyle = FontStyle.Normal), maxLines = 1)
+                }
+                BasicText(h.label, Modifier.padding(end = 12.dp).widthIn(max = 110.dp).testTag("search-other-server"), style = Guga.song(type.caption, FontWeight.Bold, colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Box(Modifier.width(46.dp).aspectRatio(2f / 3f)) {
+                    CoverImage(t.art.poster, Modifier.fillMaxSize(), Framing(0.5f, 0.5f)) { HatchPlate(Rules.monogram(t.name, false), Modifier.fillMaxSize()) }
+                }
+            }
+            Rule()
+        }
     }
 }
 

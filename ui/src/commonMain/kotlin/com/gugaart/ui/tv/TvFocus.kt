@@ -55,7 +55,7 @@ import com.gugugaga.ds.icons.GuguIcon
 import com.gugugaga.ds.icons.Icon
 import com.gugugaga.ds.physics.LocalMotionPrefs
 import com.gugugaga.ds.physics.PressState
-import com.gugugaga.ds.physics.pressable
+import com.gugugaga.ds.physics.keyPressable
 import com.gugugaga.ds.physics.rememberPressState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -64,7 +64,7 @@ import kotlinx.coroutines.launch
  * 电视的焦点样式（`docs/platforms.md` §3，设计稿 `tv/css/tv.css` 的 `.fc`）：一屏里只有焦点是米白实底的，3 米外一眼找得到——
  * **米白实底（或米白 4 px 框）+ 四角朱红校对角 + 略微抬起**（卡片 ×1.08，按钮 ×1.04）。焦点色是固定的朱红 + 米白，**不跟专色**；焦点环常驻。
  *
- * 焦点的移动、记忆、返回栈是上游的（`com.gugugaga.ds.focus`、`pressable` 的 `PressState.focused`）；这里只画样子。
+ * 焦点的移动、记忆、返回栈是上游的（`com.gugugaga.ds.focus`、`keyPressable` 的 `PressState.focused`）；这里只画样子。
  */
 object TvFocusSpec {
     const val CARD_LIFT = 1.08f
@@ -173,7 +173,7 @@ fun Modifier.tvCardFrame(focused: () -> Boolean): Modifier {
 /**
  * 一个能接焦点的电视元素。内容拿到 `focused`，自己决定字的颜色（米白实底上用 `colors.onInk`）。
  * - [key]：上游 `focusKey`（区内唯一；路由记忆、测试用它找元素）。[default] = 这一页的默认焦点（上游 `routeDefault`）。
- * - 确定 = [onClick]；长按确定 = [onLongClick]（上游 `pressable` 已处理按住确定键；那一次按住剩下的重复 / 抬起由外壳吃掉，[TvOkHold]）；
+ * - 确定 = [onClick]；长按确定 = [onLongClick]（上游 `keyPressable` 已处理按住确定键；那一次按住剩下的重复 / 抬起由外壳吃掉，[TvOkHold]）；
  *   菜单键在没有页面级处理时也走 [onLongClick]。
  * - [origin]：抬起的缩放原点（横排里靠左的卡用 `TransformOrigin(0f, 0.4f)`，抬起后不出安全边）。
  * - [onFocus]：拿到焦点时调（焦点预览、右页跟着换）。
@@ -196,6 +196,8 @@ fun TvFocusable(
     onFocus: (() -> Unit)? = null,
     /** false = 不在整块外面画焦点框 / 校对角：卡片自己把它们画在图上（[tvCardFrame]），片名在框外面。 */
     frame: Boolean = true,
+    /** 1.6 B2：true = 无障碍树里这一格是一片叶子（[label] 说它是什么，里面的图 / 片名 / 角标不单独报）——海报卡、横卡用。 */
+    leaf: Boolean = false,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     val colors = Guga.colors
@@ -233,7 +235,7 @@ fun TvFocusable(
         }
     }
     // 键盘 / 遥控器确定键：400 ms 计时器 OR 收到重复 KeyDown（repeatCount >= 1 / FLAG_LONG_PRESS / 二次 KeyDown），谁先到算谁；
-    // 判定成长按后立即触发并吞掉剩下的重复和抬起，不再依赖慢帧下的协程超时；触屏 / 鼠标仍走上游 pressable。
+    // 判定成长按后立即触发并吞掉剩下的重复和抬起，不再依赖慢帧下的协程超时。
     val held: (() -> Unit)? = onLongClick?.let { lc -> { tv.okHold.longPressFired(press, swallowRemaining = true); lc() } }
     Box(
         modifier
@@ -245,7 +247,7 @@ fun TvFocusable(
                 // 预览事件先到外层：焦点在里面的子项上（登录框编辑时的文本框、套着的另一个 TvFocusable）时不截它的确定键，
                 // 只接自己拿着焦点时按下的那一次（int151d：否则输入法的「下一项」、框里的回车都被外层当成点了这一格）
                 if (!press.focused && okState.key == null) return@onPreviewKeyEvent false
-                // 没有长按菜单的项不需要抢先判定长按：照旧交给上游 pressable（int151d：电视登录页「登录」按确定没反应）
+                // 没有长按菜单的项不需要抢先判定长按：照旧交给上游 keyPressable（int151d：电视登录页「登录」按确定没反应）
                 if (longClick == null && okState.key == null) return@onPreviewKeyEvent false
                 when (e.type) {
                     KeyEventType.KeyDown -> {
@@ -297,7 +299,8 @@ fun TvFocusable(
                     else -> false
                 }
             }
-            .pressable(press, enabled = enabled, label = label, onLongClick = held, onClick = onClick)
+            // 1.6 B2：只接按键的 Modifier.Node 版（上游 keyPressable）——没有 composed {}、没有触摸 pointerInput（电视遥控器没有指针），语义只在标签 / 可用性变了才失效
+            .keyPressable(press, enabled = enabled, label = label, onLongClick = held, leaf = leaf, onClick = onClick)
             .testTag("tv-focusable"),
         propagateMinConstraints = true,
     ) {

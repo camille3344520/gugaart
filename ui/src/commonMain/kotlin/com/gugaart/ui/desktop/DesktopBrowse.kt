@@ -273,7 +273,7 @@ fun DesktopLibsScreen(today: Today) {
                             .hover(hover)
                             .drawBehind { drawLine(colors.line, Offset(0f, size.height - 0.5.dp.toPx()), Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx()) }
                             .deskFocusRing(press)
-                            .pressable(press, label = lib.name) { if (lib.kind == "boxsets") nav.tab = WideTab.Colls else graph.nav.navigate(Route.Library(lib.id)) }
+                            .pressable(press, label = lib.name) { graph.nav.navigate(Route.Library(lib.id)) }
                             .padding(vertical = Guga.rem(2.4f))
                             .testTag("desktop-lib-row"),
                         verticalAlignment = Alignment.CenterVertically,
@@ -805,7 +805,12 @@ fun DesktopSearchScreen(q: String?, today: Today) {
         }
     }
 
-    DesktopPage(Modifier.testTag("desktop-search")) {
+    // 1.6 A1 多台一起搜：本台的片出来了、不到 5 条（或者翻到了底）→ 并发问其它已保存的服务器，结果另起一组「其它服务器」
+    val pageScroll = rememberScrollState(preset.scroll)
+    val reachedEnd = com.gugaart.ui.screens.search.rememberReachedEnd(pageScroll)
+    val homeSettled = query.isNotBlank() && index.value != null && !search.isSearching(query, index.value != null || peopleIndex.value != null || effectiveRemote != null)
+    val other = com.gugaart.ui.screens.search.rememberOtherServerSearch(query, homeSettled && com.gugaart.ui.screens.search.OtherSearchRules.shouldAsk(hits.size, reachedEnd), hits.map { it.title })
+    DesktopPage(Modifier.testTag("desktop-search"), scroll = pageScroll) {
         // 输入行
         Row(
             Modifier
@@ -885,7 +890,8 @@ fun DesktopSearchScreen(q: String?, today: Today) {
             index.value == null && index.error != null -> ErrorView(index.error!!, index::retry)
             index.value == null -> if (index.showSkeleton) LoadingView(seed = today.day)
             titles.isEmpty() && episodes.isEmpty() && people.isEmpty() ->
-                if (searching || waitingRemote) Unit
+                if (other.hits.isNotEmpty()) DesktopOtherServers(other, Modifier.padding(horizontal = dimens.margin)) { openHit(it) }
+                else if (searching || waitingRemote || other.searching) Unit
                 else SearchNoneView(query, {
                     query = ""
                     search.clear()
@@ -958,8 +964,48 @@ fun DesktopSearchScreen(q: String?, today: Today) {
                         }
                         // 缩写 / 片名：演员排在片子和单集后面
                         if (star == null && people.isNotEmpty()) PeopleBlock(Guga.rem(4f))
+                        if (other.hits.isNotEmpty()) DesktopOtherServers(other, Modifier.padding(top = Guga.rem(3.2f))) { openHit(it) }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 「其它服务器」一组（1.6 A1）：一行一部——小海报 + 片名（命中的字专色）+ 类型 · 年份 + 右边服务器名（几台都有写「2 台」）。
+ * 点开 = 那台上这部片的详情（不切换当前服务器）。没有右键菜单（收藏 / 已看要写那一台，进了详情再做）。
+ */
+@Composable
+private fun DesktopOtherServers(other: com.gugaart.ui.screens.search.OtherSearchView, modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
+    val colors = Guga.colors
+    Column(modifier.fillMaxWidth().testTag("search-other")) {
+        DeskSection(null, "其它服务器", "OTHER SERVERS") { SectionNote("${other.hits.size} 部") }
+        for (h in other.hits) {
+            val t = h.title
+            val press = rememberPressState()
+            val hover = rememberHover()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .hover(hover)
+                    .drawBehind { drawLine(colors.line, Offset(0f, size.height - 0.5.dp.toPx()), Offset(size.width, size.height - 0.5.dp.toPx()), 1.dp.toPx()) }
+                    .deskFocusRing(press)
+                    .pressGraphics(press)
+                    .pressable(press, label = t.name) { onOpen(h.routeId) }
+                    .padding(vertical = Guga.rem(1.2f))
+                    .testTag("search-other-row"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Guga.rem(1.6f)),
+            ) {
+                Box(Modifier.width(Guga.rem(4.6f)).aspectRatio(2f / 3f).border(1.dp, colors.line)) {
+                    CoverImage(t.art.poster, Modifier.fillMaxSize(), Framing(0.5f, 0.5f)) { HatchPlate(Rules.monogram(t.name, person = false), Modifier.fillMaxSize(), textSize = rsp(1.2f)) }
+                }
+                Column(Modifier.weight(1f)) {
+                    BasicText(highlighted(t.name, h.range, colors.spot), style = Guga.song(rsp(1.65f), FontWeight.Bold, if (hover.over) colors.spot else colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    BasicText(listOfNotNull(com.gugaart.ui.screens.search.searchKindLabel(t.kind), t.year?.toString(), t.rating?.let { "$it 分" }).joinToString(" · "), Modifier.padding(top = Guga.rem(0.3f)), style = Guga.note(rsp(1.25f), colors.faint), maxLines = 1)
+                }
+                BasicText(h.label, Modifier.testTag("search-other-server"), style = Guga.song(rsp(1.4f), FontWeight.Bold, colors.ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -1057,9 +1103,9 @@ fun DesktopDiscoverScreen(today: Today) {
     var dip by remember { mutableIntStateOf(0) }
     val lucky = rememberLoad("lucky", dip) { if (dip == 0) null else loadLucky(it) }
     val data = load.value
-    val feature = lucky.value?.takeIf { dip > 0 } ?: data?.fresh?.firstOrNull() ?: data?.top?.firstOrNull()
-    val featureLabel = if (lucky.value != null && dip > 0) "随手挑 · LUCKY DIP" else if (feature != null && feature.id == data?.fresh?.firstOrNull()?.id) "新到 · NEW ARRIVAL" else "高分 · TOP RATED"
+    val feature = lucky.value?.takeIf { dip > 0 } ?: data?.top?.firstOrNull()
     val poster = rememberImage(feature?.art?.poster, keepPrevious = true)
+    val featureLabel = if (lucky.value != null && dip > 0) "随手挑 · LUCKY DIP" else "高分 · TOP RATED"
     LaunchedEffect(poster, feature?.id) { chrome.spot = poster?.spot() }
     val scroll = rememberScrollState()
     val anchors = remember { mutableStateMapOf<String, Float>() }
@@ -1086,14 +1132,6 @@ fun DesktopDiscoverScreen(today: Today) {
         if (feature != null) DiscoverFeature(feature, featureLabel, win.height * DeskBrowseSpec.DISCOVER_BLEED, { scroll.value.toFloat() }, onLucky = { dip++ })
         else Spacer(Modifier.height(Guga.rem(DesktopSpec.CONTENT_TOP)))
         var no = 0
-        // 新到
-        if (data.fresh.isNotEmpty()) {
-            Column(Modifier.padding(top = Guga.rem(4f)).anchor("fresh")) {
-                DeskSection(Rules.episodeNo(++no), "新到", "NEW ARRIVALS", Modifier.padding(horizontal = dimens.margin)) { SectionNote("按入库时间") }
-                // 头条是最新的那一部时，这一排从第二部起（不重复）
-                PosterRow(data.fresh.filter { it.id != feature?.id }.ifEmpty { data.fresh }, key = "fresh")
-            }
-        }
         // 高分榜：两列（很宽的窗口三列）的编号行
         if (data.top.isNotEmpty()) {
             Column(Modifier.padding(top = dimens.sectionGap).padding(horizontal = dimens.margin).anchor("chart")) {

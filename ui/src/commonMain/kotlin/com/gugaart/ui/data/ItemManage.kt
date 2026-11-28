@@ -57,13 +57,13 @@ object ItemManage {
 
     /** 从服务器删除（连媒体文件）。成功返回 null；失败返回原因。 */
     suspend fun delete(g: AppGraph, t: Title): String? {
-        val client = g.session.session.value?.client ?: return "没有登录"
+        val client = com.gugaart.ui.data.RemoteBrowse.contentClient(g) ?: return "没有登录"
         return try {
             client.deleteItem(t.id)
             deleted[t.id] = true
             g.queries.clear()
             LoadCache.clear()
-            if ((g.nav.route as? Route.Item)?.id == t.id) g.nav.pop()
+            if ((g.nav.route as? Route.Item)?.id?.let { RemoteRef.plain(it) } == t.id) g.nav.pop()
             null
         } catch (e: CancellationException) {
             throw e
@@ -73,7 +73,7 @@ object ItemManage {
     }
 
     private suspend fun run(g: AppGraph, ok: String, call: suspend com.gugugaga.core.EmbyClient.() -> Unit): String {
-        val client = g.session.session.value?.client ?: return "没有登录"
+        val client = com.gugaart.ui.data.RemoteBrowse.contentClient(g) ?: return "没有登录"
         return try {
             client.call()
             ok

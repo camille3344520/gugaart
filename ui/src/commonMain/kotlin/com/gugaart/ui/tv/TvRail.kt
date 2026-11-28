@@ -63,7 +63,6 @@ enum class TvRailItem(val key: String, val label: String, val icon: GuguIcon) {
     Home("home", "首页", GuguIcon.House),
     Discover("discover", "发现", GuguIcon.Compass),
     Libs("libs", "片库", GuguIcon.LayoutGrid),
-    Colls("colls", "合集", GuguIcon.Layers),
     History("history", "记录", GuguIcon.History),
     Favs("favs", "收藏", GuguIcon.Heart),
 
@@ -102,7 +101,6 @@ fun tvRailActive(route: Route, tab: WideTab): TvRailItem? = when (route) {
         WideTab.Home -> TvRailItem.Home
         WideTab.Discover -> TvRailItem.Discover
         WideTab.Libs -> TvRailItem.Libs
-        WideTab.Colls -> TvRailItem.Colls
         WideTab.Me -> TvRailItem.History
     }
     Route.Discover -> TvRailItem.Discover
@@ -281,7 +279,6 @@ fun tvRailGo(item: TvRailItem, nav: NavController, wide: WideNav) {
         TvRailItem.Home -> tab(WideTab.Home)
         TvRailItem.Discover -> tab(WideTab.Discover)
         TvRailItem.Libs -> tab(WideTab.Libs)
-        TvRailItem.Colls -> tab(WideTab.Colls)
         TvRailItem.History -> tab(WideTab.Me)
         TvRailItem.Favs -> if ((nav.route as? Route.History)?.tab != "favorites") nav.navigate(Route.History("favorites"))
         // 不换页：页边出服务器列表，收起时焦点还给展开侧栏之前的那一项

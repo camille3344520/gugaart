@@ -162,14 +162,29 @@ object SubtitleAutoBest {
         } catch (e: Exception) {
             return publish(AutoBestState.Failed(null, "搜索失败：" + (e.message ?: e::class.simpleName.orEmpty())), mine)
         }
-        val best = s.best ?: return publish(AutoBestState.Skipped("没有匹配的字幕"), mine)
-        return when (autoBestAction(enabled, hasChinese, best, offerWhenOff)) {
-            AutoBestAction.Offer -> publish(AutoBestState.Found(best.hit, best.score, foundNote(best)), mine)
-            AutoBestAction.Load -> if (mine == round) load(s, best, select, mine) else state
-            else -> publish(AutoBestState.Skipped("没有精确匹配的字幕"), mine)
+        // 下载下来是弹幕（§4.5）：它已经从单子里去掉了，换下一条「最合适」重新判（最多 [DANMAKU_RETRIES] 次）
+        repeat(DANMAKU_RETRIES + 1) {
+            val best = s.best ?: return publish(AutoBestState.Skipped("没有匹配的字幕"), mine)
+            when (autoBestAction(enabled, hasChinese, best, offerWhenOff)) {
+                AutoBestAction.Offer -> return publish(AutoBestState.Found(best.hit, best.score, foundNote(best)), mine)
+                AutoBestAction.Load -> {
+                    if (mine != round) return state
+                    try {
+                        return load(s, best, select, mine)
+                    } catch (_: DanmakuFileException) {
+                        // 下一轮
+                    }
+                }
+                else -> return publish(AutoBestState.Skipped("没有精确匹配的字幕"), mine)
+            }
         }
+        return publish(AutoBestState.Skipped("没有匹配的字幕"), mine)
     }
 
+    /** 自动加载时「最合适」那条下载下来是弹幕，最多再换几条。 */
+    private const val DANMAKU_RETRIES = 2
+
+    /** 加载 [best]；下载下来是弹幕 → 抛 [DanmakuFileException]（[consider] 换下一条）。 */
     private suspend fun load(s: SubtitleSearchSession, best: ScoredHit, select: (suspend (Int) -> Unit)?, mine: Int): AutoBestState {
         val hit = best.hit
         // 自动加载不写服务器：服务器源的只提示（autoBestAction 已经挡了；这里再挡一道，免得以后改了门槛漏过去）
@@ -183,6 +198,8 @@ object SubtitleAutoBest {
             if (mine == round) select?.invoke(sub.index)
             publish(AutoBestState.Loaded(hit, best.score, sub.index, false, "已自动加载：${hit.name} · 仅本次"), mine)
         } catch (e: CancellationException) {
+            throw e
+        } catch (e: DanmakuFileException) {
             throw e
         } catch (e: SubtitleFetchException) {
             publish(AutoBestState.Failed(hit, e.message ?: "下载失败"), mine)

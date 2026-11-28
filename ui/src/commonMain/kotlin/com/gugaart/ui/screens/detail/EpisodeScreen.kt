@@ -230,6 +230,8 @@ fun EpisodeScreen(episode: Title, day: Int) {
                     played,
                     { graph.togglePlayed(chrome, episode.id, played) },
                     Modifier.padding(top = 14.dp),
+                    // 1.6 批次 E：下载这一集的原画（选中的版本）
+                    extra = { com.gugaart.ui.download.DownloadLink(episode, source?.id) },
                 )
                 // 版本 / 音轨 / 字幕：一组收起来的行，点开是贴底的纸片；紧跟在收藏 / 已看下面（P2-11），简介往后放
                 TrackPickerGroup(sources, picks, { sheet = it }, Modifier.padding(top = 18.dp))
@@ -256,8 +258,8 @@ fun EpisodeScreen(episode: Title, day: Int) {
                 val n = near.value
                 if (n != null && (n.previous != null || n.next != null)) {
                     SectionHeader("前后", "NEXT TO IT", Modifier.padding(top = 30.dp))
-                    n.previous?.let { NeighbourRow(it, "上一集") { graph.nav.replace(com.gugugaga.app.nav.Route.Item(it.id)) } }
-                    n.next?.let { NeighbourRow(it, "下一集") { graph.nav.replace(com.gugugaga.app.nav.Route.Item(it.id)) } }
+                    n.previous?.let { NeighbourRow(it, "上一集") { graph.nav.replace(com.gugugaga.app.nav.Route.Item(com.gugaart.ui.data.RemoteBrowse.wrap(graph.nav, it.id))) } }
+                    n.next?.let { NeighbourRow(it, "下一集") { graph.nav.replace(com.gugugaga.app.nav.Route.Item(com.gugaart.ui.data.RemoteBrowse.wrap(graph.nav, it.id))) } }
                 }
                 episode.seriesId?.let { sid ->
                     val press = rememberPressState()

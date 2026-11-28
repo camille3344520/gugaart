@@ -1,5 +1,6 @@
 package com.gugaart.ui.screens.login
 
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -10,19 +11,35 @@ import com.gugugaga.app.session.SignInInput
 import com.gugugaga.app.session.TestExtras
 import com.gugugaga.app.session.describeLoginError
 import com.gugugaga.app.session.isUnreachable
+import com.gugugaga.core.EmbyClient
 import com.gugugaga.core.EmbyException
+import com.gugugaga.core.EmbyJson
+import com.gugugaga.core.ImageUrlOptions
+import com.gugugaga.core.KtorTransport
+import com.gugugaga.core.NO_RETRY
 import com.gugugaga.core.ServerAddress
 import com.gugugaga.core.StoredAccount
 import com.gugugaga.core.StoredServer
+import com.gugugaga.core.Transport
+import com.gugugaga.core.UserDto
 import com.gugugaga.core.apiBaseOf
 import com.gugugaga.core.describeEmbyError
+import com.gugugaga.core.identityForServer
 import com.gugugaga.core.isSameAddress
+import com.gugugaga.core.platformHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
 
+@Immutable
+data class PublicUser(
+    val id: String,
+    val name: String,
+    val avatarUrl: String?,
+)
 /** 边打边找：地址停下这么久没再改就探测（P2-19）。 */
 const val PROBE_PAUSE_MS = 600L
 
@@ -69,7 +86,12 @@ data class LoginTarget(
  * 这里只管这一页显示到哪一步、字段里填了什么。密码只活在 [password] 这一个内存字段里：不写日志、不存盘、登录成功即清空。
  */
 @Stable
-class LoginModel(private val session: SessionManager, private val scope: CoroutineScope) {
+class LoginModel(
+    private val session: SessionManager,
+    private val scope: CoroutineScope,
+    private val transport: Transport? = null,
+    private val lanDiscovery: LanDiscovery? = null,
+) {
     var step: LoginStep by mutableStateOf(LoginStep.List)
         private set
 
@@ -95,9 +117,12 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
         private set
     var addError: String? by mutableStateOf(null)
         private set
-
-    // ---- 登录
+    /** 局域网发现的服务器（只在「添加服务器」显示；iPhone 或没找到时为空）。 */
+    var discovered: List<DiscoveredServer> by mutableStateOf(emptyList())
+        private set
     var target: LoginTarget? by mutableStateOf(null)
+        private set
+    var publicUsers: List<PublicUser> by mutableStateOf(emptyList())
         private set
     var username: String by mutableStateOf("")
     var password: String by mutableStateOf("")
@@ -118,6 +143,9 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
         private set
 
     private var job: Job? = null
+    private var discoveryJob: Job? = null
+    private var publicUsersJob: Job? = null
+    private val fallbackTransport: Transport by lazy { transport ?: KtorTransport(platformHttpClient()) }
 
     /** 读已保存的服务器，并在后台量一下每台的延迟（只读的公开探测，和「添加」用的是同一个）。 */
     fun load() {
@@ -141,12 +169,15 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
 
     fun openList() {
         cancel()
+        stopDiscovery()
+        stopPublicUsers()
         step = LoginStep.List
         error = null
     }
 
     fun openAdd() {
         cancel()
+        stopPublicUsers()
         step = LoginStep.Add
         addError = null
         // 新服务器从空表单开始（电视的一屏表单里用户名 / 密码和地址在一起；密码本来就只该活在这一次输入里）
@@ -154,6 +185,51 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
         password = ""
         error = null
         badPassword = false
+        startDiscovery()
+    }
+
+    private fun stopDiscovery() {
+        discoveryJob?.cancel()
+        discoveryJob = null
+    }
+
+    /** 进「添加服务器」时广播一次 UDP 7359；安卓 / 电视 / Windows / Mac 做，iPhone 返回 null 不跑。 */
+    private fun startDiscovery() {
+        stopDiscovery()
+        discovered = emptyList()
+        val d = resolveLanDiscovery(lanDiscovery) ?: return
+        discoveryJob = scope.launch {
+            try {
+                d.discover().collect { srv ->
+                    if (discovered.none { it.address == srv.address || (it.id == srv.id && srv.id != srv.address) }) {
+                        discovered = discovered + srv
+                        if (srv.version.isBlank()) {
+                            launch {
+                                try {
+                                    val r = session.testServer(srv.address)
+                                    val v = r.info.version.takeIf { it.isNotBlank() }?.let(::shortVersion).orEmpty()
+                                    val n = r.info.serverName.ifBlank { srv.name }
+                                    discovered = discovered.map { if (it.address == srv.address) it.copy(name = n, version = v) else it }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 点一下「这个网络里的服务器」：填好地址，探测后直接到登录。 */
+    fun pickDiscovered(s: DiscoveredServer) {
+        scheme = 0
+        editAddress(s.address)
+        connectThenNext()
     }
 
     fun editAddress(v: String) {
@@ -224,15 +300,61 @@ class LoginModel(private val session: SessionManager, private val scope: Corouti
         openLogin(t)
     }
 
+    private fun stopPublicUsers() {
+        publicUsersJob?.cancel()
+        publicUsersJob = null
+        publicUsers = emptyList()
+    }
+
+    private fun loadPublicUsers(t: LoginTarget) {
+        stopPublicUsers()
+        val addr = t.resolved ?: t.server.trim().trimEnd('/').takeIf { it.isNotEmpty() }?.let { ServerAddress(it) } ?: return
+        val id = identityForServer(session.identity, t.stored?.userAgent, t.stored?.headers)
+        val client = EmbyClient(
+            transport = transport ?: fallbackTransport,
+            address = addr,
+            identity = id,
+            session = null,
+            timeoutMs = 4000,
+            retry = NO_RETRY,
+        )
+        publicUsersJob = scope.launch {
+            try {
+                val el = client.getJson("/Users/Public")
+                val list = EmbyJson.decodeFromJsonElement(ListSerializer(UserDto.serializer()), el)
+                publicUsers = list
+                    .filter { it.name.isNotBlank() }
+                    .map { u ->
+                        val tag = u.primaryImageTag?.takeIf { it.isNotBlank() }
+                        val url = if (tag != null) client.userImage(u.id, tag, ImageUrlOptions(maxWidth = 160)) else null
+                        PublicUser(id = u.id, name = u.name, avatarUrl = url)
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 点一下公开用户：填好用户名、清掉密码，焦点交给密码框。 */
+    fun pickPublicUser(u: PublicUser) {
+        username = u.name
+        password = ""
+        error = null
+        badPassword = false
+    }
+
     /** 进登录这一步。已保存的账号排成方块；只有一个时把用户名填好。 */
     fun openLogin(t: LoginTarget, user: String? = null, note: String? = null) {
         cancel()
+        stopDiscovery()
         target = t
         username = user ?: t.accounts.maxByOrNull { it.lastLoginAt }?.userName.orEmpty()
         password = ""
         error = note
         badPassword = false
         step = LoginStep.Login
+        loadPublicUsers(t)
     }
 
     fun targetOf(s: StoredServer) = LoginTarget(s.remark?.takeIf { it.isNotBlank() } ?: s.name, apiBaseOf(s.address), s.address, s)

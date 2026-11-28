@@ -8,9 +8,19 @@
     <!-- 应用内更新：下载完调起系统安装器（PackageInstaller），用户确认后覆盖安装 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 电视：不要求触摸屏；leanback 可选，同一个包也能装在手机 / 模拟器上 -->
+    <!-- 1.6 B4（电视）：往系统首页的「继续观看」（TvProvider 的 watch_next_program）写自己的那几条；androidx.tvprovider 也是这一条 -->
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+
+    <!-- 1.6（电视）：看得见系统的语音识别界面（搜索页的「语音」）和 TvProvider（系统首页的「继续观看」）；Android 11 起要声明才查得到 -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <provider android:authorities="android.media.tv" />
+    </queries>
 
     <application
         android:label="咕咕嘎嘎"

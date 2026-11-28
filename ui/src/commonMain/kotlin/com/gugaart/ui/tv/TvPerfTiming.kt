@@ -126,6 +126,23 @@ object TvPerfTiming {
         }
     }
 
+    private var reactedKeyMs: Long = 0L
+
+    /**
+     * 播放器对遥控器按键的反应（批次 mpvanr）：暂停 / 字幕 / 音轨在界面上变了，记「这次按键 → 下一帧」，每次按键只记一条。
+     * 内核那边确认（mpv 真的停了 / 换了轨）的时间由上游 `GuguMpv` 的 `[tvperf] mpv-ack` 另记。
+     */
+    fun onPlayerReaction(kind: String) {
+        if (!enabled) return
+        val km = lastKeyMs
+        if (km <= 0L || km == reactedKeyMs) return
+        reactedKeyMs = km
+        postNextFrame { frameMs ->
+            val delta = (frameMs - km).coerceAtLeast(0L)
+            if (delta < 5_000L) log("[tvperf] player-key kind=$kind ms=$delta")
+        }
+    }
+
     fun onPanelToggle(opened: Boolean, kind: String) {
         if (!enabled) return
         val km = lastKeyMs

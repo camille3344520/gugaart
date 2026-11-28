@@ -153,11 +153,8 @@ internal fun AppearanceSection(pick: String?) {
     )
 
     SettingGroup("放映员", "THE PROJECTIONIST")
-    SettingRow("咕咕嘎嘎出现在界面上", tag = "set-mascot") {
-        OnOff(prefs.showMascot, { on -> store.update { withMascot(it, on) } })
-    }
-    SettingRow("放映手记", tag = "set-notes") {
-        Segmented(NotesChoice.entries.map { it to it.label }, notesChoiceOf(prefs), { c -> store.update { withNotes(it, c) } }, enabled = prefs.showMascot)
+    SettingRow("咕咕嘎嘎", tag = "set-mascot") {
+        Segmented(com.gugaart.ui.data.MascotPref.entries.map { it to it.label }, prefs.mascot, { m -> store.update { it.copy(mascot = m) } })
     }
 
     SettingGroup("首页", "HOME")
@@ -235,6 +232,10 @@ internal fun PlaybackSection(pick: String?) {
         tag = "set-defaultShader",
         startOpen = pick == "shader",
     )
+    // 1.6 C2：杜比 / DTS 直通（只有安卓、安卓电视、Windows 的内核做直通）；下一次开播生效
+    if (com.gugaart.ui.data.audioPassthroughVisible(android, mac, ios)) {
+        SettingRow("音频直通", tag = "set-audioPassthrough") { OnOff(gp.audioPassthroughFor(g.deps.platformLabel), { on -> gugaStore.update { it.copy(audioPassthrough = on) } }) }
+    }
 
     SettingGroup("播放行为", "BEHAVIOUR")
     SettingRow("自动播放下一集", tag = "set-autoPlayNext") { OnOff(p.autoPlayNext, { put("autoPlayNext", JsonPrimitive(it)) }) }
@@ -690,6 +691,19 @@ internal fun CacheSection() {
     }
     SettingRow("搜索历史", note = if (historyCount > 0) "$historyCount 个关键词" else "没有记录", tag = "cache-search") {
         ActionWord("清除", { history.clear(); historyCount = 0 }, enabled = historyCount > 0)
+    }
+
+    // 离线下载（1.6 批次 E，只在手机上）：默认只在 Wi-Fi 上下
+    if (com.gugaart.ui.download.rememberDownloads() != null) {
+        val store = rememberGugaStore()
+        val prefs by store.prefs.collectAsState()
+        SettingGroup("下载", "DOWNLOADS")
+        SettingRow("只用 Wi-Fi 下载", tag = "set-download-wifi") {
+            OnOff(prefs.downloadWifiOnly, { on ->
+                store.update { it.copy(downloadWifiOnly = on) }
+                com.gugaart.ui.download.Downloads.setWifiOnly(on)
+            })
+        }
     }
 
     SettingGroup("维护", "MAINTENANCE")

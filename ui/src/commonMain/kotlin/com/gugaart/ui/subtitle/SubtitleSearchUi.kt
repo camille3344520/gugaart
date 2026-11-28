@@ -227,6 +227,9 @@ object SubtitleSearchBoard {
                 throw e
             } catch (e: EmbyException) {
                 s.apply = ApplyState.Failed(hit.key, if (e.status == 401 || e.status == 403) "账号没有下载字幕的权限" else "保存失败：" + describeEmbyError(e))
+            } catch (e: DanmakuFileException) {
+                // 下载下来是弹幕（§4.5）：没加载、没上传；那一行就地写短标签，换别的事以后从单子里拿掉
+                s.apply = ApplyState.Failed(hit.key, DANMAKU_LABEL, danmaku = true)
             } catch (e: SubtitleFetchException) {
                 s.apply = ApplyState.Failed(hit.key, e.message ?: "下载失败")
             } catch (e: Exception) {
@@ -501,7 +504,7 @@ private fun HitRow(h: SubtitleHit, index: Int, apply: ApplyState?, actions: List
             } else h.meta()
             val tint = if (mine && apply is ApplyState.Failed) colors.seal else if (mine) colors.spot else colors.dim
             BasicText(line, Modifier.padding(top = 2.dp), style = Guga.song(12.sp, color = tint), maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (single == null) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (single == null && actions.isNotEmpty()) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (a in actions) ActionStamp(a, enabled = apply !is ApplyState.Working, Modifier.testTag("sub-hit-$index-${a.name.lowercase()}")) { onAction(a) }
             }
         }

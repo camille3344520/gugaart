@@ -331,8 +331,7 @@ object DesktopKeys {
                     Key.One -> DesktopCommand.GoHome
                     Key.Two -> DesktopCommand.GoDiscover
                     Key.Three -> DesktopCommand.GoLibs
-                    Key.Four -> DesktopCommand.GoColls
-                    Key.Five -> DesktopCommand.GoMe
+                    Key.Four -> DesktopCommand.GoMe
                     else -> null
                 }
                 if (c2 != null) {

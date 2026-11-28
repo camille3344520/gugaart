@@ -135,16 +135,16 @@ fun PrimaryButton(
     }
 }
 
-/** 文字链接：宋体 700 + 下划细线。可带一个小图标（「♡ 收藏」「✓ 整季已看」）。 */
+/** 文字链接：宋体 700 + 下划细线。可带一个小图标（「♡ 收藏」「✓ 整季已看」）。[onLongClick]：长按（「已下载」长按 = 删除下载）。 */
 @Composable
-fun TextLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: GuguIcon? = null, color: Color = Guga.colors.ink) {
+fun TextLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: GuguIcon? = null, color: Color = Guga.colors.ink, onLongClick: (() -> Unit)? = null) {
     val colors = Guga.colors
     val press = rememberPressState()
     Row(
         modifier
             .pressGraphics(press)
             .heightIn(min = 40.dp)
-            .pressable(press, label = text, onClick = onClick)
+            .pressable(press, label = text, onLongClick = onLongClick, onClick = onClick)
             .drawBehind { drawLine(colors.line, Offset(0f, size.height - 6.dp.toPx()), Offset(size.width, size.height - 6.dp.toPx()), 1.dp.toPx()) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

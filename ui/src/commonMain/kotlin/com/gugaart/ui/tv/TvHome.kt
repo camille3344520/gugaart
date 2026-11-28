@@ -188,6 +188,12 @@ fun TvHomeScreen(today: Today) {
                 TvTitlePeekCache.putAll(acct, data.resume)
                 for (b in data.shelves) TvTitlePeekCache.putAll(acct, b.titles)
             }
+            // 1.6 B4：系统首页的「继续观看」（Watch Next）跟着这台服务器的继续观看走（只用刚取到的，不用离线缓存）
+            val fresh = load.error == null
+            LaunchedEffect(sess?.serverId, sess?.userId, data, fresh) {
+                val s = sess ?: return@LaunchedEffect
+                if (fresh) TvWatchNext.sync("${s.serverId}|${s.userId}", data.resume, com.gugugaga.core.currentTimeMillis())
+            }
             TvHome(data, today, offline = load.error != null, onRefresh = { com.gugaart.ui.screens.home.CoverDeck.requestNew(); load.retry() })
         }
         load.error != null -> Column(Modifier.fillMaxSize()) {

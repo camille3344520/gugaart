@@ -22,13 +22,12 @@ import kotlin.random.Random
  * 上游的发现页（`app/discover/`）是 TMDB 的推荐流，读取入口是 internal；这里只用 :core `EmbyClient` 的公开方法。
  */
 
-/** 两张榜（按这个顺序排：新到在前）。 */
+/** 高分榜。 */
 enum class Chart(val id: String, val label: String, val title: String, val note: String) {
-    Fresh("fresh", "新到", "新到榜", "按入库时间"),
     Top("top", "高分", "高分榜", "评分前 $TOP_POOL · 随机");
 
     companion object {
-        fun of(id: String?): Chart = entries.firstOrNull { it.id == id } ?: Fresh
+        fun of(id: String?): Chart = entries.firstOrNull { it.id == id } ?: Top
     }
 }
 
@@ -39,10 +38,9 @@ data class Decade(val start: Int, val count: Int) {
 }
 
 @Immutable
-data class DiscoverData(val top: List<Title>, val fresh: List<Title>, val decades: List<Decade>, val total: Int) {
-    fun chart(c: Chart): List<Title> = if (c == Chart.Top) top else fresh
+data class DiscoverData(val top: List<Title>, val decades: List<Decade>, val total: Int) {
+    fun chart(c: Chart): List<Title> = top
 }
-
 /** 榜单取几名。 */
 const val CHART_SIZE = 10
 
@@ -87,7 +85,6 @@ fun heroLine(t: Title): String =
 
 suspend fun loadDiscover(client: EmbyClient): DiscoverData {
     val top = client.getItems(LibraryQuery(includeItemTypes = TYPES, recursive = true, sortBy = listOf("CommunityRating", "SortName"), sortOrder = "Descending", minCommunityRating = 0.1, limit = TOP_POOL), CARD)
-    val fresh = client.getItems(LibraryQuery(includeItemTypes = TYPES, recursive = true, sortBy = listOf("DateCreated"), sortOrder = "Descending", limit = CHART_SIZE), CARD)
     // 年代：只要年份，不要图
     val years = try {
         client.getItems(
@@ -100,9 +97,8 @@ suspend fun loadDiscover(client: EmbyClient): DiscoverData {
         emptyList()
     }
     val pool = top.items.map { client.titleOf(it) }
-    return DiscoverData(pickTop(pool, CHART_SIZE, DiscoverDice.random.takeIf { DiscoverDice.live }), fresh.items.map { client.titleOf(it) }, decadesOf(years), top.totalRecordCount)
+    return DiscoverData(pickTop(pool, CHART_SIZE, DiscoverDice.random.takeIf { DiscoverDice.live }), decadesOf(years), top.totalRecordCount)
 }
-
 /** 随手翻：服务器随机取一部（`SortBy=Random`）。库是空的 → null。 */
 suspend fun loadLucky(client: EmbyClient): Title? =
     client.getItems(LibraryQuery(includeItemTypes = TYPES, recursive = true, sortBy = listOf("Random"), limit = 1), CARD).items.firstOrNull()?.let { client.titleOf(it) }

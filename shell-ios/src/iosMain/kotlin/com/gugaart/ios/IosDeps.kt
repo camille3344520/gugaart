@@ -36,7 +36,7 @@ import platform.posix.utsname
 
 /*
  * 上游的共享逻辑要从 iOS 拿的东西（M4-6，ADR 0005 §2.5）：存储、身份、缓存目录、复制、减弱动效、更新宿主。和桌面壳的 `desktopDeps`
- * 同一个接法；没有接的：播放器（M5）、DLNA 投屏和多台弹幕服务器的中转（B9）、TMDB 默认密钥、预置测试服务器。
+ * 同一个接法；没有接的：播放器（M5）、DLNA 投屏和多台弹幕服务器的中转（B9）、TMDB 默认密钥、预置测试服务器。Offline downloads: the host is set here (1.6 batch F3).
  */
 
 /** 机型标识（`iPhone17,1`；模拟器上是它模拟的那台）。 */
@@ -59,6 +59,10 @@ internal fun iosDeps(player: com.gugugaga.app.player.PlayerPlatform?): PlatformD
     val danmakuSecure = com.gugaart.ui.danmaku.withDanmakuRelay(secure, local, null)
     // DLNA 投屏（D-lead-30）：SSDP + SOAP 的 iOS 版；播放器顶栏出「投屏」钮
     com.gugaart.ui.cast.Cast.host = com.gugaart.ui.cast.IosDlnaCastHost()
+    // AirPlay video (1.6 F2): when the system routes to an AirPlay device the player hands the item to an AVPlayer
+    com.gugaart.ui.cast.AirPlayVideo.host = IosAirPlay.also { it.start() }
+    // Offline downloads (1.6 batch F3): the download entries appear only with a host (as on Android phones); files in Application Support/GugaArt/downloads, network from NWPathMonitor
+    if (com.gugaart.ui.download.Downloads.host == null) com.gugaart.ui.download.Downloads.host = com.gugaart.ui.download.IosDownloadHost(downloadsDir())
     // Trakt：编进包里的应用（.env；没配 = 设置里写「这一版不能连 Trakt」）
     com.gugaart.ui.trakt.TraktService.install(BuildInfo.TRAKT_CLIENT_ID, BuildInfo.TRAKT_CLIENT_SECRET)
     // 每次安装一个稳定的 id（不从机器信息推导：它会显示在 Emby 的「设备」里）

@@ -2,7 +2,8 @@
  * 复制自上游壳（docs/adr/0002-player-wiring-in-repo.md §6，登记在 docs/upstream-sync.md §5.1）：
  *   来源  gugugagaemby/native/desktopApp/src/main/kotlin/com/gugugaga/desktop/StageApp.kt
  *   提交  1e19741a（upstream.lock）
- *   改动  package；界面根 GuguApp → GugaartApp（外面可包一层 wrap）；去掉基准测试用的 BenchFrameClock()；StageOptions 加 uiMode / wrap；desktopDeps 用本壳的（com.gugaart.desktop.desktopDeps）
+ *   改动  package；界面根 GuguApp → GugaartApp（外面可包一层 wrap）；去掉基准测试用的 BenchFrameClock()；StageOptions 加 uiMode / wrap；desktopDeps 用本壳的（com.gugaart.desktop.desktopDeps）；
+ *        1.6 C2：DesktopPlayerPlatform 带上画报的「音频直通」（passthrough = 设置里的开关）
  * 不要在这里改行为：上游改了来源文件就把同样的改动搬过来（git -C <上游> diff <lock>..HEAD -- <来源文件>）。
  */
 package com.gugaart.desktop.upstream
@@ -273,7 +274,7 @@ class StageSession private constructor(val options: StageOptions) {
         host = { stage?.takeIf { it.canvasHwnd != 0L } },
     )
     val graph: AppGraph = AppGraph(
-        desktopDeps(options.dataDir, options.uiMode, options.backend, controls, DesktopPlayerPlatform(mpv, vlc, keyWindow = { stage?.ui }, hasWindow = { stage != null }), options.debug, onQuit = ::quit),
+        desktopDeps(options.dataDir, options.uiMode, options.backend, controls, DesktopPlayerPlatform(mpv, vlc, keyWindow = { stage?.ui }, hasWindow = { stage != null }, passthrough = { com.gugaart.ui.data.audioPassthroughOf(graph.deps.local, graph.deps.platformLabel) }), options.debug, onQuit = ::quit),
         scope,
         options.route,
     )

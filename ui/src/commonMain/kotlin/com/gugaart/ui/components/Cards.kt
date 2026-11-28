@@ -211,6 +211,8 @@ fun EpisodeRow(
     onTick: () -> Unit,
     modifier: Modifier = Modifier,
     unaired: Boolean = false,
+    /** 校对格左边的一格（手机的「下载」，1.6 批次 E）；null = 没有。 */
+    download: (@Composable () -> Unit)? = null,
 ) {
     val colors = Guga.colors
     val type = Guga.type
@@ -238,6 +240,7 @@ fun EpisodeRow(
         if (unaired) {
             OutlineTag("未播出", type.fine, 1.dp, colors.dim, Modifier.padding(start = 6.dp))
         } else {
+            download?.invoke()
             val tick = rememberPressState()
             Box(Modifier.width(38.dp).height(48.dp).pressable(tick, label = if (played) "改成未看" else "标记已看", onClick = onTick), contentAlignment = Alignment.CenterEnd) {
                 ProofTick(played)

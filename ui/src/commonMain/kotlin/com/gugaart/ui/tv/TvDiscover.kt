@@ -73,19 +73,11 @@ import kotlinx.coroutines.launch
 
 /** 电视发现页的版式数（设计稿 `tv/shots/discover*.png`，1920 × 1080）。 */
 object TvDiscoverSpec {
-    /** 右栏（新到）排几部（一屏排得下的）。 */
-    const val CHART = 6
-    /** 上半屏（头一篇 + 新到）到哪儿为止；整幅图铺到这里。 */
+    /** 上半屏（头一篇）到哪儿为止；整幅图铺到这里。 */
     val TOP_H = 706.dp
-    /** 右栏：x 1270–1824，行高 86（六行 + 下面高分一栏要一起排进 1080 的安全边里）。 */
-    val CHART_X = 1270.dp
-    val CHART_W = 554.dp
-    val CHART_ROW = 86.dp
     /** 下面高分一栏的卡：280 × 158（16 : 9）。 */
     val CARD_W = 280.dp
     val CARD_H = 158.dp
-    /** 焦点行上的名次：深朱红。 */
-    val NUMBER_ON_INK = com.gugaart.ui.theme.GugaColors.SEAL_ON_INK
 }
 
 /**
@@ -94,14 +86,8 @@ object TvDiscoverSpec {
  */
 fun tvDiscoverEdge(from: String, dir: TvDir, has: (String) -> Boolean): String? = when (from) {
     "disc-cta" -> when (dir) {
-        TvDir.Right -> if (has("disc-new")) "disc-new" else TvGroups.STAY
         TvDir.Down -> if (has("disc-top")) "disc-top" else TvGroups.STAY
         TvDir.Left -> null
-        TvDir.Up -> TvGroups.STAY
-    }
-    "disc-new" -> when (dir) {
-        TvDir.Left -> "disc-cta"
-        TvDir.Down -> if (has("disc-top")) "disc-top" else TvGroups.STAY
         else -> TvGroups.STAY
     }
     "disc-top" -> when (dir) {
@@ -111,7 +97,6 @@ fun tvDiscoverEdge(from: String, dir: TvDir, has: (String) -> Boolean): String? 
     }
     else -> null
 }
-
 /** 年代的范围：「1989 — 2026」（真实的年份聚合；只有一个年代就只写它）。 */
 fun tvDecadeRange(decades: List<Decade>): String? = when {
     decades.isEmpty() -> null
@@ -145,7 +130,7 @@ fun TvDiscoverScreen(today: Today) {
     var swapped by remember { mutableStateOf<Title?>(null) }
     var swapping by remember { mutableStateOf(false) }
 
-    if (data == null || (data.top.isEmpty() && data.fresh.isEmpty())) {
+    if (data == null || data.top.isEmpty()) {
         LaunchedEffect(Unit) { chrome.spot = null }
         Column(Modifier.fillMaxSize().testTag("tv-discover-state")) {
             TvPageHeader("发现", "DISCOVER", today)
@@ -158,10 +143,7 @@ fun TvDiscoverScreen(today: Today) {
         return
     }
 
-    val chart = data.fresh.take(TvDiscoverSpec.CHART)
-    val pick = swapped ?: data.fresh.firstOrNull() ?: data.top.first()
-    val focusedRank = groups.current?.takeIf { it.startsWith("new-") }?.removePrefix("new-")?.toIntOrNull()
-    val shown = focusedRank?.let { chart.getOrNull(it) } ?: pick
+    val shown = swapped ?: data.top.first()
     val poster = rememberImage(shown.art.poster, keepPrevious = true)
     val tvSpot = rememberSpotColor(poster, tv = true)
     LaunchedEffect(tvSpot) { chrome.spot = tvSpot }
@@ -172,14 +154,9 @@ fun TvDiscoverScreen(today: Today) {
         Column(Modifier.fillMaxSize()) {
             TvMasthead(today, Modifier.padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = TvSpec.TOP))
             Box(Modifier.fillMaxWidth().height(TvDiscoverSpec.TOP_H - TvSpec.TOP - Guga.dimens.mastheadHeight)) {
-                // ---- 左：头一篇（最新入库）/ 焦点预览 ----
+                // ---- 头一篇（高分第一部 / 随手挑）
                 Column(Modifier.padding(start = TvSpec.LEFT, top = 30.dp).width(1040.dp).testTag("tv-discover-pick")) {
-                    val head = when {
-                        focusedRank != null -> "新到 · 第 ${focusedRank + 1} 部" + (shown.rating?.let { " · ★ $it" } ?: "")
-                        swapped != null -> "随手挑一部 · LUCKY DIP"
-                        shown.id == data.fresh.firstOrNull()?.id -> "新到 · 刚入库 · NEW ARRIVAL"
-                        else -> "高分 · TOP RATED"
-                    }
+                    val head = if (swapped != null) "随手挑一部 · LUCKY DIP" else "高分 · TOP RATED"
                     BasicText(head, style = Guga.song(24.sp, FontWeight.Bold, letterSpacing = 0.16.em), maxLines = 1)
                     Spacer(Modifier.weight(1f))
                     TvTitle(shown)
@@ -228,23 +205,10 @@ fun TvDiscoverScreen(today: Today) {
                         TvActionButton("disc-info", "详情", { g.open(shown.id) }, icon = GuguIcon.Info)
                     }
                 }
-                // ---- 右：新到榜 ----
-                if (chart.isNotEmpty()) {
-                    Column(Modifier.padding(start = TvDiscoverSpec.CHART_X, top = 20.dp).width(TvDiscoverSpec.CHART_W).testTag("tv-discover-chart")) {
-                        Row(Modifier.fillMaxWidth().height(62.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            BasicText("壹", Modifier.alignByBaseline(), style = Guga.numeral(36.sp, colors.spot), maxLines = 1)
-                            BasicText("新到", Modifier.alignByBaseline(), style = Guga.song(Guga.type.section, FontWeight.Black, letterSpacing = 0.08.em), maxLines = 1)
-                            BasicText("NEW ARRIVALS", Modifier.alignByBaseline(), style = Guga.numeral(20.sp, colors.spot, letterSpacing = 0.24.em), maxLines = 1)
-                            Box(Modifier.weight(1f).height(1.dp).background(colors.line))
-                        }
-                        TvGroup("disc-new", chart.indices.map { "new-$it" }, horizontal = false)
-                        for ((i, t) in chart.withIndex()) TvChartRow(i, t) { g.open(t.id) }
-                    }
-                }
             }
             // ---- 下：高分榜（评分前 40 部里每次随机抽 10 部）----
             if (data.top.isNotEmpty()) {
-                TvSectionHeader("高分", "TOP RATED", number = "贰", trailing = listOfNotNull("评分前 $TOP_POOL · 随机", tvDecadeRange(data.decades), data.total.takeIf { it > 0 }?.let { "片库共 $it 部" }).joinToString(" · "))
+                TvSectionHeader("高分", "TOP RATED", trailing = listOfNotNull("评分前 $TOP_POOL · 随机", tvDecadeRange(data.decades), data.total.takeIf { it > 0 }?.let { "片库共 $it 部" }).joinToString(" · "))
                 TvLeadRow("disc-top", data.top, { "top-${it.id}" }, TvDiscoverSpec.CARD_W, 250.dp, Modifier.padding(top = 14.dp), gap = 28.dp) { t, key, _ ->
                     TvLandscapeCard(
                         image = t.art.thumb ?: t.art.backdrop ?: t.art.poster,
@@ -261,39 +225,6 @@ fun TvDiscoverScreen(today: Today) {
                     )
                 }
             } else groups.remove("disc-top")
-        }
-    }
-}
-
-/** 右栏新到的一行：斜体序号（专色）+ 小海报 + 片名 +「电影 · 2026」+ 右端大号评分（没有评分 = 一道短横）。焦点 = 整行米白实底、墨字 + 校对角。 */
-@Composable
-private fun TvChartRow(index: Int, t: Title, onClick: () -> Unit) {
-    val colors = Guga.colors
-    TvBlockFocus(
-        "new-$index",
-        onClick,
-        Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) },
-        label = "新到第 ${index + 1} 部 ${t.name}",
-        kind = TvFocusKind.Row,
-        onLongClick = { TvLongPressMenu.open(t) },
-    ) { focused ->
-        val ink = if (focused) colors.onInk else colors.ink
-        Row(Modifier.fillMaxWidth().height(TvDiscoverSpec.CHART_ROW).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-            BasicText("${index + 1}", Modifier.width(62.dp), style = Guga.numeral(40.sp, if (focused) TvDiscoverSpec.NUMBER_ON_INK else colors.spot), maxLines = 1)
-            Box(Modifier.size(50.dp, 74.dp).background(Color(0xFF1C1914)).border(1.dp, colors.ink.copy(alpha = 0.16f))) {
-                CoverImage(t.art.poster, Modifier.fillMaxSize(), Framing(0.5f, 0.5f)) { HatchPlate(Rules.monogram(t.name, person = false), Modifier.fillMaxSize(), textSize = 18.sp) }
-            }
-            // 片名 +「电影 · 2026」占中间那一段：片名先要自己的宽度，太长才省略；评分贴右端
-            Row(Modifier.weight(1f).padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                BasicText(t.name, Modifier.weight(1f, fill = false), style = Guga.song(30.sp, FontWeight.Black, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                BasicText(
-                    listOfNotNull(tvKindName(t.kind), t.year?.toString()).joinToString(" · "),
-                    Modifier.padding(start = 18.dp),
-                    style = Guga.song(22.sp, color = if (focused) colors.onInk.copy(alpha = 0.7f) else colors.dim),
-                    maxLines = 1,
-                )
-            }
-            BasicText(t.rating ?: "—", Modifier.padding(start = 14.dp), style = Guga.numeral(40.sp, ink), maxLines = 1)
         }
     }
 }

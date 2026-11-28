@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -60,8 +63,11 @@ import com.gugaart.ui.screens.login.LoginModel
 import com.gugaart.ui.screens.login.LoginStep
 import com.gugaart.ui.screens.login.addressPlan
 import com.gugaart.ui.screens.login.addressPreview
-import com.gugaart.ui.theme.Guga
+import com.gugaart.ui.screens.login.discoverySubtitle
+import com.gugaart.ui.components.CoverImage
+import com.gugaart.ui.screens.login.userGlyph
 import com.gugaart.ui.components.typingTarget
+import com.gugaart.ui.theme.Guga
 import com.gugaart.ui.tv.TvFocusKind
 import com.gugaart.ui.tv.detail.LocalTvGroups
 import com.gugaart.ui.tv.detail.TvActionButton
@@ -122,19 +128,31 @@ object TvLoginProbe {
  * 返回去哪个组；[TvGroups.STAY] = 不动。纯函数，有单测。
  */
 fun tvFormEdge(from: String, dir: TvDir, has: (String) -> Boolean, kbd: Boolean): String = when (from) {
+    "discovered" -> when (dir) {
+        TvDir.Down -> "form"
+        TvDir.Right -> if (kbd) "kb-1" else TvGroups.STAY
+        else -> TvGroups.STAY
+    }
     "form" -> when (dir) {
+        TvDir.Up -> if (has("discovered")) "discovered" else TvGroups.STAY
         TvDir.Down -> "form-act"
         TvDir.Right -> if (kbd) "kb-1" else TvGroups.STAY
         else -> TvGroups.STAY
     }
     "form-act" -> when (dir) {
         TvDir.Up -> "form"
-        TvDir.Down -> if (has("accounts")) "accounts" else TvGroups.STAY
+        TvDir.Down -> if (has("accounts")) "accounts" else if (has("public-users")) "public-users" else TvGroups.STAY
         TvDir.Right -> if (kbd) "kb-1" else TvGroups.STAY
         else -> TvGroups.STAY
     }
     "accounts" -> when (dir) {
         TvDir.Up -> "form-act"
+        TvDir.Down -> if (has("public-users")) "public-users" else TvGroups.STAY
+        TvDir.Right -> if (kbd) "kb-1" else TvGroups.STAY
+        else -> TvGroups.STAY
+    }
+    "public-users" -> when (dir) {
+        TvDir.Up -> if (has("accounts")) "accounts" else "form-act"
         TvDir.Right -> if (kbd) "kb-1" else TvGroups.STAY
         else -> TvGroups.STAY
     }
@@ -230,11 +248,38 @@ fun TvLoginForm(model: LoginModel, form: TvFormState) {
     TvGroup("form", fields, horizontal = false, default = tvFormDefault(model.step, model.username))
     // 能滚：壳是 adjustResize，输入法弹出来窗口变矮，正在编辑的框（文本框拿到焦点会自己 bringIntoView）滚进还看得见的那一截
     Column(Modifier.width(if (form.kbd) TvFormSpec.LEFT_W_KBD else TvFormSpec.LEFT_W).verticalScroll(rememberScrollState()).testTag("tv-login-form")) {
+        if (adding && model.discovered.isNotEmpty()) {
+            TvSecHead("这个网络里的服务器", "ON THIS NETWORK", Modifier.padding(bottom = 8.dp), small = true)
+            TvGroup("discovered", model.discovered.indices.map { "disc-$it" }, horizontal = false)
+            for ((i, s) in model.discovered.withIndex()) {
+                TvBlockFocus(
+                    "disc-$i",
+                    {
+                        form.editing = null
+                        model.pickDiscovered(s)
+                    },
+                    Modifier.fillMaxWidth().drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }.testTag("tv-discovered-server"),
+                    label = s.name,
+                    kind = TvFocusKind.Row,
+                ) { focused ->
+                    val ink = if (focused) colors.onInk else colors.ink
+                    Row(Modifier.fillMaxWidth().height(84.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            BasicText(s.name, style = Guga.song(28.sp, FontWeight.Black, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            BasicText(discoverySubtitle(s), Modifier.padding(top = 4.dp), style = Guga.song(20.sp, color = if (focused) colors.onInk.copy(alpha = 0.72f) else colors.dim), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+        } else {
+            groups.remove("discovered")
+        }
         if (adding) {
             TvInputField(
                 TvFormKeys.ADDR, "服务器地址", model.address, { model.editAddress(it) }, form,
-                placeholder = "域名或 IP，可带端口",
                 keyboardType = KeyboardType.Uri, ime = ImeAction.Next,
+                placeholder = "域名或 IP，可带端口",
                 error = model.addError != null || plan?.error != null,
                 onIme = { imeNext(TvFormKeys.ADDR) }, onLeave = { leave(TvFormKeys.ADDR, it) },
             )
@@ -322,6 +367,46 @@ fun TvLoginForm(model: LoginModel, form: TvFormState) {
                 for (a in accounts) TvChip("account-${a.userId}", a.userName, a.userName == model.username, { model.target?.stored?.let { s -> model.switchTo(s, a) } })
             }
         } else groups.remove("accounts")
+        val pub = if (!adding) model.publicUsers.filter { u -> accounts.none { it.userId == u.id || it.userName == u.name } } else emptyList()
+        if (pub.isNotEmpty()) {
+            TvSecHead("公开用户", "PUBLIC USERS", Modifier.padding(top = 28.dp), small = true)
+            TvGroup("public-users", pub.map { "pub-${it.id}" })
+            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                for (u in pub) {
+                    TvBlockFocus(
+                        "pub-${u.id}",
+                        {
+                            model.pickPublicUser(u)
+                            form.active = TvFormKeys.PASS
+                            g.focus.request(TvFormKeys.PASS)
+                        },
+                        Modifier.testTag("tv-public-user"),
+                        label = u.name,
+                        kind = TvFocusKind.Row,
+                    ) { focused ->
+                        val selected = u.name == model.username
+                        val ink = if (focused) colors.onInk else if (selected) colors.ink else colors.dim
+                        Row(
+                            Modifier
+                                .height(58.dp)
+                                .border(1.dp, if (focused) colors.ink else if (selected) colors.ink else colors.line)
+                                .padding(start = 10.dp, end = 20.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Box(Modifier.size(38.dp).clip(CircleShape).border(1.dp, ink.copy(alpha = 0.4f), CircleShape), contentAlignment = Alignment.Center) {
+                                CoverImage(u.avatarUrl, Modifier.fillMaxSize().clip(CircleShape)) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        BasicText(userGlyph(u.name), style = Guga.song(20.sp, FontWeight.Black, ink), maxLines = 1)
+                                    }
+                                }
+                            }
+                            BasicText(u.name, style = Guga.song(24.sp, FontWeight.Bold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        } else groups.remove("public-users")
     }
     // 打开遥控器键盘：焦点进键盘
     LaunchedEffect(form.kbd) { if (form.kbd) groups.enterWhenReady("kb-1", g.focus) }

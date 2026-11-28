@@ -37,9 +37,12 @@ object ItemFetch {
     private class Entry(val job: CompletableDeferred<BaseItemDto>, var doneAt: Long = Long.MIN_VALUE)
     private val map = HashMap<String, Entry>()
 
-    /** 账号键：服务器 id（没有就地址）+ 用户 id + 条目 id。换了账号不会拿到别的服务器的条目。 */
+    /**
+     * 账号键：服务器 id（没有就地址）+ 地址 + 用户 id + 条目 id。换了账号不会拿到别的服务器的条目。
+     * 1.6 A1：别台的详情页和本台的同时在取时，服务器 id 一样的两台（同一份 Emby 的两个地址、几台 Mock）也不串。
+     */
     fun keyOf(client: EmbyClient, id: String): String =
-        "${client.session?.serverId ?: client.address.baseUrl}/${client.userId.orEmpty()}|$id"
+        "${client.session?.serverId ?: client.address.baseUrl}@${client.address.baseUrl}/${client.userId.orEmpty()}|$id"
 
     /** 取一个条目：同键正在取 / 刚取完（TTL 内）→ 共享；否则真取一次。 */
     suspend fun get(key: String, loader: suspend () -> BaseItemDto): BaseItemDto {

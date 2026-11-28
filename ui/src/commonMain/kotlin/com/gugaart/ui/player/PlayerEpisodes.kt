@@ -89,7 +89,7 @@ fun seriesIdOf(item: BaseItemDto?): String? =
 /** 播放器里选中一集：交给队列，换路由（返回栈里只留一个播放器）。 */
 fun AppGraph.playEpisode(id: String) {
     queue.nowPlaying(id)
-    nav.replace(Route.Play(id))
+    nav.replace(Route.Play(com.gugaart.ui.data.RemoteBrowse.wrap(nav, id)))
 }
 
 @Composable

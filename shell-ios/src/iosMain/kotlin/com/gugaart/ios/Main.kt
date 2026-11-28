@@ -42,8 +42,13 @@ fun onStatusBarTap() {
     statusBarTaps.tryEmit(Unit)
 }
 
-/** 播放内核（M5-1）：画面放在 [videoHost] 的最底下。 */
-private val engines by lazy { com.gugugaga.player.apple.AppleMpvEngines(hostView = { videoHost }, background = "#000000", subFontsDir = subFontsDir()) }
+/** Called once by the Swift AppDelegate before launch finishes: registers the background-download system task (iOS 26+, 1.6 batch F3). */
+fun registerBackgroundWork() {
+    com.gugaart.ui.download.IosDownloadHost.registerBackgroundTask()
+}
+
+/** 播放内核（M5-1）：画面放在 [videoHost] 的最底下。Local files: only those in the download folder (offline playback, 1.6 batch F3). */
+private val engines by lazy { com.gugugaga.player.apple.AppleMpvEngines(hostView = { videoHost }, background = "#000000", subFontsDir = subFontsDir(), localFiles = listOf(downloadsDir())) }
 
 /** 整个进程一个应用图（会话、设置、导航、缓存）。 */
 private val graph: AppGraph by lazy {

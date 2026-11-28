@@ -22,7 +22,6 @@ enum class WideTab(val id: String, val label: String) {
     Home("home", "首页"),
     Discover("discover", "发现"),
     Libs("libs", "片库"),
-    Colls("colls", "合集"),
     Me("me", "我的"),
     ;
 

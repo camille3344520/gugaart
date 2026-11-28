@@ -83,6 +83,11 @@ object PhoneItemMenu {
                 if (t.kind != Kind.BoxSet) MenuRow(if (seen) "标成没看" else "标记已看", { g.togglePlayed(chrome, t.id, seen); close() }, icon = GuguIcon.Check)
                 // 字幕搜索（1.4.0）：电影 / 单集；左边出搜索栏（docs/subtitle-search.md §5.1）
                 if (playable) MenuRow("搜索字幕…", { close(); com.gugaart.ui.subtitle.SubtitleSearchBoard.openForItem(t.id, t.displayName, g) }, Modifier.testTag("phone-menu-subs"), icon = GuguIcon.Captions)
+                // 离线下载（1.6 批次 E）：下过的这里能删（先问一句）
+                if (playable) com.gugaart.ui.download.rememberDownloads()?.rowOf(t.id)?.let { r ->
+                    val done = r.entry.status == com.gugaart.ui.download.DlStatus.Done
+                    MenuRow(if (done) "删除下载…" else "取消下载…", { close(); com.gugaart.ui.download.DownloadSheet.remove(r) }, Modifier.testTag("phone-menu-download"), icon = GuguIcon.Trash, danger = true)
+                }
                 if (manage) {
                     MenuRow("刷新元数据", {
                         status = "正在请求…"

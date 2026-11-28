@@ -253,9 +253,11 @@ class SourcesState(
         val s = selected ?: return Route.Play(itemId, startMs = resumeMs, audio = audio, subtitle = subtitle)
         if (s.kind == SourceKind.OtherServer) {
             // 1.5.0 B3：别台的源。路由仍是本台这一条（返回 / 详情认它）；播放器开控制器时取走这张交接单，用那台的客户端开播。
-            // 续看位置、音轨 / 字幕的编号都是本台的，对那台不作数：交给那台自己的进度和设置
+            // 续看位置、音轨 / 字幕的编号都是本台的，对那台不作数：交给那台自己的进度和设置。
+            // 1.6 A1：这一页本身就是那台的条目（别台的详情页，路由带着服务器）：续看位置 / 「从头」是那台的，照带
+            val ownPage = s.serverId == currentServerId && s.itemId == com.gugaart.ui.data.RemoteRef.plain(itemId)
             com.gugaart.ui.player.RemotePlay.handOff(
-                com.gugaart.ui.player.RemoteHandoff(itemId, s.serverId, s.serverName, s.itemId, s.mediaSource.id.takeIf { it.isNotEmpty() }),
+                com.gugaart.ui.player.RemoteHandoff(itemId, s.serverId, s.serverName, s.itemId, s.mediaSource.id.takeIf { it.isNotEmpty() }, startMs = if (ownPage) resumeMs else null),
             )
             return Route.Play(itemId)
         }
@@ -272,8 +274,8 @@ class SourcesState(
 }
 
 /** 条目自带的片源 → 本台的 SameItem 源（第一帧就列出来的那几行）。 */
-fun ownSources(itemId: String, own: List<MediaSourceInfo>, serverId: String, serverName: String): List<PlaySource> =
-    own.map { PlaySource(serverId, serverName, itemId, it, SourceKind.SameItem) }
+fun ownSources(itemId: String, own: List<MediaSourceInfo>, serverId: String, serverName: String, kind: SourceKind = SourceKind.SameItem): List<PlaySource> =
+    own.map { PlaySource(serverId, serverName, itemId, it, kind) }
 
 private fun typeOf(kind: Kind): String? = when (kind) {
     Kind.Movie -> "Movie"
@@ -295,6 +297,14 @@ private fun AppGraph.sourcePrefs(itemId: String, mediaSourceId: String): Playbac
 fun rememberSourceRepository(): SourceRepository? {
     LocalSourceRepository.current?.let { return it }
     val g = LocalGraph.current
+    // 1.6 A1：别台的详情页 / 播放器（路由里带着服务器）：只问那一台，它的源一律当「别台的源」（开播走交接单，data/RemoteBrowse.kt）
+    val browse = com.gugaart.ui.data.LocalBrowseServer.current
+    if (browse != null) {
+        val c = browse.client ?: return null
+        return remember(browse.serverId, c) {
+            com.gugaart.ui.data.RemoteOwnSources(EmbySourceRepository(c, browse.serverId, browse.name, prefs = { id: String, ms: String -> g.sourcePrefs(id, ms) }))
+        }
+    }
     val session = g.session.session.collectAsState().value ?: return null
     return remember(session) {
         val prefs = { id: String, ms: String -> g.sourcePrefs(id, ms) }
@@ -317,23 +327,28 @@ fun rememberSourcesState(movie: Title): SourcesState =
  * [providerIds] 变了（播放器里条目详情到了）再问一次仓库。
  */
 @Composable
-fun rememberSourcesState(itemId: String, type: String?, providerIds: Map<String, String?>, own: List<MediaSourceInfo>, name: String = ""): SourcesState {
+fun rememberSourcesState(routeItemId: String, type: String?, providerIds: Map<String, String?>, own: List<MediaSourceInfo>, name: String = ""): SourcesState {
     val g = LocalGraph.current
     val session = g.session.session.collectAsState().value
-    val serverId = session?.serverId.orEmpty()
-    val serverName = session?.serverName.orEmpty()
+    // 1.6 A1：别台的详情页 / 播放器：条目是那台的（[itemId] 是那台上的 id），开播的路由带着服务器（[stateId]）；源都是「别台的源」
+    val browse = com.gugaart.ui.data.LocalBrowseServer.current
+    val itemId = com.gugaart.ui.data.RemoteRef.plain(routeItemId)
+    val stateId = if (browse != null) com.gugaart.ui.data.RemoteRef.encode(browse.serverId, itemId) else routeItemId
+    val serverId = browse?.serverId ?: session?.serverId.orEmpty()
+    val serverName = browse?.name ?: session?.serverName.orEmpty()
+    val ownKind = if (browse != null) SourceKind.OtherServer else SourceKind.SameItem
     val repo = rememberSourceRepository()
     // provider id 是记住选择的键：播放器里条目详情晚到，到了换一份状态（自带的行照样第一帧就在）
     // 服务器上这一条变了（字幕「保存到服务器」）：换一份状态，重新取（字幕选单里出现新存的那条）
     val rev = com.gugaart.ui.data.ItemRevisions.of(itemId)
     val state = remember(itemId, serverId, com.gugaart.ui.data.providerKeyOf(providerIds), rev) {
         SourcesState(
-            itemId, providerIds, VersionPickStore(g.deps.local), serverId,
-            initial = ownSources(itemId, own, serverId, serverName),
+            stateId, providerIds, VersionPickStore(g.deps.local), serverId,
+            initial = ownSources(itemId, own, serverId, serverName, ownKind),
             maxBitrateBps = { PlaybackSettings.of(g.settings.value).maxBitrateMbps.takeIf { it > 0 }?.let { (it * 1_000_000).toLong() } },
         )
     }
-    LaunchedEffect(state, own) { state.merge(ownSources(itemId, own, serverId, serverName), replace = false) }
+    LaunchedEffect(state, own) { state.merge(ownSources(itemId, own, serverId, serverName, ownKind), replace = false) }
     // 各台此刻连不连得上（池的健康表）：行前的小圆点跟着变灰
     LaunchedEffect(state) { com.gugaart.ui.data.OtherServers.poolFor(g).health.collect { state.health = it } }
     LaunchedEffect(state, repo, providerIds) {

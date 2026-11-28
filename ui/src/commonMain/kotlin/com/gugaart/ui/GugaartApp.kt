@@ -190,6 +190,8 @@ private fun GugaartRoot(graph: AppGraph, windowSize: DpSize?) {
             restore = { graph.session.restore() },
         )
     }
+    // 离线下载（1.6 批次 E）：壳设了下载能力（安卓手机）才有；读记录、接着下没下完的、把离线时的进度报给服务器
+    LaunchedEffect(graph) { com.gugaart.ui.download.Downloads.bind(graph) }
     // 更新不自动下载（用户 2026-11-15：「更不更新让用户点，不要自动更新」）：上游的「自动下载更新」默认开，这里每次启动关掉
     LaunchedEffect(graph) {
         com.gugaart.ui.screens.update.UpdateConsent.disableAutoDownload(graph)
@@ -462,7 +464,11 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                                         is Route.Library -> LibraryScreen(pageRoute.id)
                                         is Route.Search -> SearchScreen(pageRoute.q)
                                         is Route.Item -> ItemScreen(pageRoute.id, today.day)
-                                        is Route.History -> if (pageRoute.tab == "favorites") FavsScreen() else HistoryScreen()
+                                        is Route.History -> when (pageRoute.tab) {
+                                            "favorites" -> FavsScreen()
+                                            com.gugaart.ui.download.DOWNLOADS_TAB -> com.gugaart.ui.download.DownloadsScreen()
+                                            else -> HistoryScreen()
+                                        }
                                         // 上游有的地方用 Browse(Favorites) 进收藏：同一页
                                         is Route.Browse -> if (pageRoute.kind == com.gugugaga.app.nav.BrowseKind.Favorites) FavsScreen() else ComingPage(today, "这一页")
                                         is Route.Settings -> SettingsScreen(pageRoute.section)
@@ -510,6 +516,8 @@ fun GugaartFrame(backend: GlassBackend, today: Today, prefs: GugaPrefs = GugaPre
                 if (mode == UiMode.Desktop) DesktopContextMenu.Host()
                 if (mode == UiMode.Tv) TvLongPressMenu.Host()
                 if (mode == UiMode.Phone) com.gugaart.ui.screens.PhoneItemMenu.Host()
+                // 离线下载的确认框（删除下载 / 整季下载，1.6 批次 E）
+                if (mode == UiMode.Phone) com.gugaart.ui.download.DownloadSheet.Host()
                 // 换服务器（1.5.0）：手机 = 贴底的纸片；电视 = 右边页边（电脑的下拉跟着顶栏胶囊，画在 DesktopChrome 里）
                 if (!playing && session != null && mode == UiMode.Phone) com.gugaart.ui.servers.ServerSheet.Host()
                 if (!playing && session != null && mode == UiMode.Tv) com.gugaart.ui.tv.TvServerPanel.Host()

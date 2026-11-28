@@ -54,7 +54,6 @@ import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -312,8 +311,9 @@ fun TvPosterCard(
     }
     val fav = chrome.isFavorite(title)
     val played = chrome.isPlayed(title.id, title.played)
-    TvFocusable(onClick, modifier.width(width).testTag("tv-poster"), TvFocusKind.Card, key, default, title.name, onLongClick = onLongClick, press = press, origin = origin, onFocus = focusCb, frame = false) { _ ->
-        Column(Modifier.clearAndSetSemantics { }) {
+    TvFocusable(onClick, modifier.width(width).testTag("tv-poster"), TvFocusKind.Card, key, default, title.name, onLongClick = onLongClick, press = press, origin = origin, onFocus = focusCb, frame = false, leaf = true) { _ ->
+        // 无障碍：整张卡是一片叶子（leaf），里面不单独报
+        Column {
             TvPosterPicture(title, boxSize, width * 1.5f, fav, played, progress, isFocused, picCoords, tv)
             TvCardCaption(shownName, subText, isFocused)
         }
@@ -393,8 +393,8 @@ fun TvLandscapeCard(
             Unit
         }
     }
-    TvFocusable(onClick, modifier.width(width).testTag("tv-wide"), TvFocusKind.Card, key, default, title, onLongClick = onLongClick, press = press, origin = origin, onFocus = focusCb, frame = false) { _ ->
-        Column(Modifier.clearAndSetSemantics { }) {
+    TvFocusable(onClick, modifier.width(width).testTag("tv-wide"), TvFocusKind.Card, key, default, title, onLongClick = onLongClick, press = press, origin = origin, onFocus = focusCb, frame = false, leaf = true) { _ ->
+        Column {
             TvWidePicture(image, title, number, boxSize, height, framing, seen, progress, isFocused, picCoords, tv)
             // 首页封面状态下目录只露图不露字：字还占着位置（版面不跳），只是不画
             TvCardCaption(shownName, sub, isFocused, Modifier.graphicsLayer { alpha = if (caption) 1f else 0f }, pre = pre, titleLines = 1)

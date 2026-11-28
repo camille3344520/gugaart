@@ -12,12 +12,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -29,6 +32,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.withStyle
@@ -128,12 +133,43 @@ fun TvSearchScreen(q: String?, today: Today) {
         recents.add(query.trim())
         g.open(id)
     }
+    // 1.6 B5：语音输入（TvVoice.host；没有语音服务 = null，不显示入口）
+    val voice = TvVoice.host
+    val voiceScope = rememberCoroutineScope()
+    var listening by remember { mutableStateOf(false) }
+    fun listen() {
+        val h = voice ?: return
+        if (listening) return
+        listening = true
+        voiceScope.launch {
+            val heard = try { h() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null } finally { listening = false }
+            tvVoiceQuery(heard)?.let { query = it }
+        }
+    }
     // 结果里按左：回字母盘原来的键
     val backToKeys = Modifier.onKeyEvent { e ->
         if (e.type == KeyEventType.KeyDown && remoteKeyOf(e.key) == RemoteKey.Left) g.focus.request(lastKey) else false
     }
+    // 1.6 A1 多台一起搜：本台的片出来了、不到 5 条（或者焦点走到了本台最后一行）→ 并发问其它已保存的服务器，结果接在下面「其它服务器」
+    var reachedEnd by remember(shownQuery) { mutableStateOf(false) }
+    val homeSettled = query.isNotBlank() && index.value != null && !search.isSearching(query, index.value != null || peopleIndex.value != null)
+    val other = com.gugaart.ui.screens.search.rememberOtherServerSearch(query, homeSettled && com.gugaart.ui.screens.search.OtherSearchRules.shouldAsk(hits.size, reachedEnd), hits.map { it.title })
+    @Composable
+    fun OtherGroup(room: Int) {
+        val shown = other.hits.take(room.coerceAtLeast(1))
+        if (shown.isEmpty()) return
+        TvSearchHeader("其它服务器", "OTHER SERVERS", "${other.hits.size} 部")
+        for (h in shown) TvSearchRow(TitleHit(h.title, h.range), backToKeys, trailing = h.label, key = "other-${h.routeId}") { openHit(h.routeId) }
+    }
 
-    Column(Modifier.fillMaxSize().testTag("tv-search")) {
+    Column(
+        Modifier.fillMaxSize().testTag("tv-search").onPreviewKeyEvent { e ->
+            // 遥控器的麦克风键（系统没先拿走的话）= 语音
+            if (voice == null || (e.key != Key.Search && e.key != Key.VoiceAssist)) return@onPreviewKeyEvent false
+            if (e.type == KeyEventType.KeyUp) listen()
+            true
+        },
+    ) {
         TvPageHeader("搜索", "SEARCH", today, trailing = index.value?.let { "共 ${it.total} 部" })
         Box(Modifier.fillMaxSize()) {
             // ---- 左页：输入行 + 字母盘 ----
@@ -143,9 +179,27 @@ fun TvSearchScreen(q: String?, today: Today) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    BasicText(query, style = Guga.numeral(76.sp, colors.ink, letterSpacing = 0.08.em), maxLines = 1)
-                    Box(Modifier.size(5.dp, 70.dp).background(colors.seal))
-                    if (query.isEmpty()) BasicText("拼音首字母 · 片名里的字", Modifier.padding(start = 14.dp), style = Guga.song(25.sp, color = colors.faint), maxLines = 1)
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BasicText(query, Modifier.weight(1f, fill = false), style = Guga.numeral(76.sp, colors.ink, letterSpacing = 0.08.em), maxLines = 1, overflow = TextOverflow.Clip)
+                        Box(Modifier.size(5.dp, 70.dp).background(colors.seal))
+                        if (query.isEmpty()) BasicText("拼音首字母 · 片名里的字", Modifier.padding(start = 14.dp), style = Guga.song(25.sp, color = colors.faint), maxLines = 1)
+                    }
+                    // 1.6 B5：语音（系统有语音识别才有这一格）；识别出来的字填进来直接搜
+                    if (voice != null) {
+                        TvFocusable(
+                            onClick = ::listen,
+                            modifier = Modifier.size(TvSearchSpec.KEY_W, TvSearchSpec.KEY_H).testTag("tv-search-voice"),
+                            kind = TvFocusKind.Chip,
+                            key = "voice",
+                            label = "语音",
+                            contentAlignment = Alignment.Center,
+                        ) { focused ->
+                            val ink = if (focused) colors.onInk else colors.ink
+                            Box(Modifier.fillMaxSize().then(if (focused) Modifier else Modifier.border(1.5.dp, colors.line)), contentAlignment = Alignment.Center) {
+                                BasicText(if (listening) "在听" else "语音", style = Guga.song(23.sp, FontWeight.Bold, ink), maxLines = 1)
+                            }
+                        }
+                    }
                 }
                 Column(Modifier.padding(top = 34.dp).testTag("tv-search-keys"), verticalArrangement = Arrangement.spacedBy(TvSearchSpec.KEY_GAP)) {
                     for (row in tvSearchKeys(digits).chunked(TvSearchSpec.COLUMNS)) {
@@ -189,7 +243,8 @@ fun TvSearchScreen(q: String?, today: Today) {
                     }
                     titles == null -> Unit
                     hits.isEmpty() && people.isEmpty() ->
-                        if (search.isSearching(query, index.value != null || peopleIndex.value != null)) Unit
+                        if (other.hits.isNotEmpty()) Column(Modifier.testTag("tv-search-other")) { OtherGroup(TvSearchSpec.MAX_ROWS - 1) }
+                        else if (search.isSearching(query, index.value != null || peopleIndex.value != null) || other.searching) Unit
                         else TvStateView("tv-search-none", "摊手", "片库里没有「${query.trim()}」", MascotLines.pick("search.none", hour = hour, seed = today.day), Modifier.padding(top = 60.dp), inset = false)
                     best != null -> {
                         TvSearchHeader("最佳匹配", "BEST MATCH", "共 ${hits.size} 条")
@@ -224,12 +279,13 @@ fun TvSearchScreen(q: String?, today: Today) {
                         val rest = hits.drop(1).take(if (people.isEmpty()) 2 else 1)
                         if (rest.isNotEmpty()) {
                             TvSearchHeader("也含「$shownQuery」", "MATCHES", null)
-                            for (h in rest) TvSearchRow(h, backToKeys) { openHit(h.direct?.id ?: h.title.id) }
+                            for ((i, h) in rest.withIndex()) TvSearchRow(h, backToKeys, onFocus = { if (i == rest.size - 1) reachedEnd = true }) { openHit(h.direct?.id ?: h.title.id) }
                         }
-                        if (people.isNotEmpty()) {
+                        if (people.isNotEmpty() && (other.hits.isEmpty() || rest.isEmpty())) {
                             TvSearchHeader("演员", "PEOPLE", "${people.size} 位")
                             TvPersonRow(people.first(), backToKeys) { openHit(people.first().person.id) }
                         }
+                        OtherGroup(2 - rest.size.coerceAtMost(1))
                     }
                     else -> {
                         val shownPeople = people.take(if (hits.isEmpty()) 5 else 2)
@@ -238,15 +294,18 @@ fun TvSearchScreen(q: String?, today: Today) {
                             TvSearchHeader("演员", "PEOPLE", "${people.size} 位")
                             for (p in shownPeople) TvPersonRow(p, backToKeys) { openHit(p.person.id) }
                         }
-                        if (shownTitles.isNotEmpty()) {
+                        // 有别台的结果时本台的片少排一行，给「其它服务器」留地方（一屏放得下，不滚）
+                        val titleRows = if (other.hits.isNotEmpty()) shownTitles.take((TvSearchSpec.MAX_ROWS - 3).coerceAtLeast(1)) else shownTitles
+                        if (titleRows.isNotEmpty()) {
                             TvSearchHeader("含「$shownQuery」", "MATCHES", "${hits.size} 条")
                             // 打了集号（「仙逆 12」「XIANNIS01E12」）= 要的是那一集：电视一行只有一个「确定」，有直达的行确定就开那一集
-                            for (h in shownTitles) TvSearchRow(h, backToKeys) { openHit(h.direct?.id ?: h.title.id) }
+                            for ((i, h) in titleRows.withIndex()) TvSearchRow(h, backToKeys, onFocus = { if (i == titleRows.size - 1) reachedEnd = true }) { openHit(h.direct?.id ?: h.title.id) }
                         }
-                        if (!peopleFirst && hits.isNotEmpty() && shownPeople.isNotEmpty()) {
+                        if (!peopleFirst && hits.isNotEmpty() && shownPeople.isNotEmpty() && other.hits.isEmpty()) {
                             TvSearchHeader("演员", "PEOPLE", "${people.size} 位")
                             for (p in shownPeople) TvPersonRow(p, backToKeys) { openHit(p.person.id) }
                         }
+                        OtherGroup(TvSearchSpec.MAX_ROWS - 2 - titleRows.size - (if (peopleFirst || hits.isEmpty()) shownPeople.size else 0))
                     }
                 }
             }
@@ -268,10 +327,11 @@ private fun TvSearchHeader(title: String, english: String, trailing: String?) {
 
 /** 结果的一行：小海报 + 片名（命中的字专色）+「剧集 · 2024 · ★ 9.2」+ 右端的拼音首字母。 */
 @Composable
-private fun TvSearchRow(hit: TitleHit, modifier: Modifier, onOpen: () -> Unit) {
+private fun TvSearchRow(hit: TitleHit, modifier: Modifier, trailing: String? = null, key: String? = null, onFocus: (() -> Unit)? = null, onOpen: () -> Unit) {
     val colors = Guga.colors
     val t = hit.title
-    TvFocusable(onOpen, modifier.fillMaxWidth().height(TvSearchSpec.ROW_H), TvFocusKind.Row, key = "hit-${t.id}", label = t.name, onLongClick = { TvLongPressMenu.open(t) }) { focused ->
+    // 别台的行（[trailing] = 服务器名）没有长按菜单：收藏 / 已看要写那一台，进了详情再做
+    TvFocusable(onOpen, modifier.fillMaxWidth().height(TvSearchSpec.ROW_H), TvFocusKind.Row, key = key ?: "hit-${t.id}", label = t.name, onLongClick = if (trailing == null) ({ TvLongPressMenu.open(t) }) else null, onFocus = onFocus) { focused ->
         val ink = if (focused) colors.onInk else colors.ink
         Row(
             Modifier.fillMaxSize().drawBehind { if (!focused) drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }.padding(horizontal = 26.dp),
@@ -294,7 +354,8 @@ private fun TvSearchRow(hit: TitleHit, modifier: Modifier, onOpen: () -> Unit) {
                     Modifier.padding(top = 4.dp), style = Guga.song(22.sp, color = sub), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            BasicText(Pinyin.initials(t.name).uppercase().take(10), style = Guga.numeral(26.sp, ink.copy(alpha = 0.7f), letterSpacing = 0.14.em), maxLines = 1)
+            if (trailing != null) BasicText(trailing, Modifier.widthIn(max = 260.dp).testTag("search-other-server"), style = Guga.song(26.sp, FontWeight.Bold, ink), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            else BasicText(Pinyin.initials(t.name).uppercase().take(10), style = Guga.numeral(26.sp, ink.copy(alpha = 0.7f), letterSpacing = 0.14.em), maxLines = 1)
         }
     }
 }

@@ -113,6 +113,9 @@ tasks.withType<Test>().configureEach {
     providers.gradleProperty("gugaart.envFile").orNull?.let { systemProperty("gugaart.envFile", it) }
     // 换一个数据包（README 截图用 scripts/art/mock-pack.py 生成的全虚构数据包）：-Pgugaart.fixture=<目录>
     providers.gradleProperty("gugaart.fixture").orNull?.let { systemProperty("gugaart.fixture", it) }
+    // 弹幕判定的在线核验（DanmakuOnlineProbeTest，只读迅雷公开接口）：-Pgugaart.dmProbe=<.tmp 下的目录>，查询词 -Pgugaart.dmQueries=词1|词2
+    providers.gradleProperty("gugaart.dmProbe").orNull?.let { systemProperty("gugaart.dmProbe", it) }
+    providers.gradleProperty("gugaart.dmQueries").orNull?.let { systemProperty("gugaart.dmQueries", it) }
     maxHeapSize = "2g"
     // 每 6 个测试类换一个新的测试 JVM（用户 2026-11-15：一个测试 JVM 涨到 16 GB，把机器 OOM 了）。
     // 堆只有 2 GB，涨的是本机内存：每一帧离屏渲染的整屏快照 / 位图是 Skia 的本机内存，Java 堆几乎不长、垃圾回收很少跑，

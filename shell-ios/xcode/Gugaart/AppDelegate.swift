@@ -4,7 +4,13 @@ import GugaartShell
 import UIKit
 
 @main
-final class AppDelegate: UIResponder, UIApplicationDelegate {}
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    // Offline downloads keep going in the background (iOS 26 BGContinuedProcessingTask): the handler must be registered before launch finishes (Kotlin checks the OS version and Info.plist)
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        MainKt.registerBackgroundWork()
+        return true
+    }
+}
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?

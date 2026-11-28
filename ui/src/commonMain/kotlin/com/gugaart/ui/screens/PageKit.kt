@@ -121,7 +121,8 @@ fun ScrollsToTop(toTop: suspend () -> Unit) {
 fun AppGraph.toggleFavorite(chrome: PageChrome, id: String, now: Boolean, onDone: (Boolean) -> Unit = {}) {
     val next = !now
     chrome.favorites[id] = next
-    val client = session.session.value?.client ?: return
+    // 1.6 A1：在别台的详情页 / 播放器里 = 写给那一台（条目 id 是那台的）
+    val client = com.gugaart.ui.data.RemoteBrowse.contentClient(this) ?: return
     scope.launch {
         try {
             client.setFavorite(id, next)
@@ -137,7 +138,7 @@ fun AppGraph.toggleFavorite(chrome: PageChrome, id: String, now: Boolean, onDone
 fun AppGraph.togglePlayed(chrome: PageChrome, id: String, now: Boolean, onDone: (Boolean) -> Unit = {}) {
     val next = !now
     chrome.played[id] = next
-    val client = session.session.value?.client ?: return
+    val client = com.gugaart.ui.data.RemoteBrowse.contentClient(this) ?: return
     scope.launch {
         try {
             client.setPlayed(id, next)
@@ -153,10 +154,10 @@ fun AppGraph.togglePlayed(chrome: PageChrome, id: String, now: Boolean, onDone: 
 }
 
 /** 打开一个条目：单集 / 电影 / 剧集 / 人物都是 `Item(id)`（路由模型是上游的）。 */
-fun AppGraph.open(id: String) = nav.navigate(Route.Item(id))
+fun AppGraph.open(id: String) = nav.navigate(Route.Item(com.gugaart.ui.data.RemoteBrowse.wrap(nav, id)))
 
-/** 播放：交给上游的 `PlaybackLauncher`（默认 = 进播放路由）。 */
-fun AppGraph.play(id: String, startMs: Long? = null) = playback.play(Route.Play(id, startMs = startMs))
+/** 播放：交给上游的 `PlaybackLauncher`（默认 = 进播放路由）。在别台的详情页里 = 那台的条目（1.6 A1，data/RemoteBrowse.kt）。 */
+fun AppGraph.play(id: String, startMs: Long? = null) = playback.play(Route.Play(com.gugaart.ui.data.RemoteBrowse.wrap(nav, id), startMs = startMs))
 
 /**
  * 这一页滚过 [px] 了没有（顶栏 / 状态栏变实心用）。派生状态（1.5.1 性能）：调用的那一页只在「过了 / 没过」翻转时重组；

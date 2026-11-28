@@ -1,0 +1,35 @@
+# 1.6 B3：手写的 baseline profile（docs/decisions.md D-tv16b）。AGP 把它编成 APK 里的 assets/dexopt/baseline.prof，
+# androidx.profileinstaller 在第一次启动时交给系统；系统后台编译（dexopt）时按它把这些代码提前编成机器码，
+# 装完不用等 JIT 慢慢热起来。Compose / AndroidX 各库自带的规则照旧由 AGP 合进来，这里只写我们自己和上游的。
+#
+# 格式：H = 热点、S = 启动时、P = 启动后；`**` 匹配任意层包 / 任意方法名和参数；`L…;` 单独一行 = 启动时预加载这些类。
+
+# ---- 画报（本仓库）：全部界面代码——首页 / 片库 / 详情 / 播放器 / 电视外壳 / 组件 / 数据兜底
+HSPLcom/gugaart/ui/**;->**(**)**
+Lcom/gugaart/ui/**;
+HSPLcom/gugaart/android/**;->**(**)**
+Lcom/gugaart/android/**;
+
+# ---- 上游的界面热路径：设计系统（玻璃、按压物理、焦点系统、图标、主题）
+HSPLcom/gugugaga/ds/**;->**(**)**
+Lcom/gugugaga/ds/**;
+
+# ---- 上游的应用层：AppGraph、导航、会话、设置、图片加载、取数、播放控制（PlayController / 引擎选择）、弹幕挂接
+HSPLcom/gugugaga/app/*;->**(**)**
+Lcom/gugugaga/app/*;
+HSPLcom/gugugaga/app/nav/**;->**(**)**
+HSPLcom/gugugaga/app/session/**;->**(**)**
+HSPLcom/gugugaga/app/settings/**;->**(**)**
+HSPLcom/gugugaga/app/data/**;->**(**)**
+HSPLcom/gugugaga/app/media/**;->**(**)**
+HSPLcom/gugugaga/app/net/**;->**(**)**
+HSPLcom/gugugaga/app/platform/**;->**(**)**
+HSPLcom/gugugaga/app/player/**;->**(**)**
+HSPLcom/gugugaga/app/danmaku/**;->**(**)**
+HSPLcom/gugugaga/app/servers/**;->**(**)**
+HSPLcom/gugugaga/app/model/**;->**(**)**
+
+# ---- 上游的 Emby 客户端（请求、JSON 解析）、弹幕、安卓播放内核宿主
+HSPLcom/gugugaga/core/**;->**(**)**
+HSPLcom/gugugaga/danmaku/**;->**(**)**
+HSPLcom/gugugaga/nativeapp/**;->**(**)**

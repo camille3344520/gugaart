@@ -3,6 +3,7 @@
  *   来源  gugugagaemby/native/desktopApp/src/main/kotlin/com/gugugaga/desktop/DesktopPlayer.kt
  *   提交  1e19741a（upstream.lock）
  *   改动  package；macOS（ADR 0004 §2.7）：shortcutKeys / keepAwake 的 Win32 调用包 Platform.isWindows() 守卫（M1-3 加的 MpvHost.sessionDeps 参数已在 MP-5 还原）
+ *        1.6 批次 C：已搬上游分支 feat/playback-16c 的同名改动（音频直通 passthrough、第二字幕 SecondarySubtitle）
  * 不要在这里改行为：上游改了来源文件就把同样的改动搬过来（git -C <上游> diff <lock>..HEAD -- <来源文件>）。
  */
 package com.gugaart.desktop.upstream
@@ -34,6 +35,7 @@ import com.gugugaga.core.EngineId
 import com.gugugaga.desktop.mpv.DefaultMpvLocateEnv
 import com.gugugaga.desktop.mpv.ExternalSubtitle
 import com.gugugaga.desktop.mpv.MPV_DEFAULT_SUB_FONT
+import com.gugugaga.desktop.mpv.MPV_SPDIF_CODECS
 import com.gugugaga.desktop.mpv.MpvEngineConfig
 import com.gugugaga.desktop.mpv.MpvEvent
 import com.gugugaga.desktop.mpv.MpvException
@@ -44,6 +46,7 @@ import com.gugugaga.desktop.mpv.MpvWindowsEngine
 import com.gugugaga.desktop.mpv.VideoHostLike
 import com.gugugaga.desktop.mpv.Viewport
 import com.gugugaga.desktop.mpv.locateMpv
+import com.gugugaga.desktop.vlc.VLC_NO_PASSTHROUGH
 import com.gugugaga.desktop.vlc.VlcEngineConfig
 import com.gugugaga.desktop.vlc.VlcLocation
 import com.gugugaga.desktop.vlc.VlcWindowsEngine
@@ -144,7 +147,11 @@ class VlcHost(
 }
 
 /** NativePlayerBackend for embedded VLC. */
-class VlcBackend(private val host: VlcHost) : NativePlayerBackend {
+class VlcBackend(
+    private val host: VlcHost,
+    /** 音频直通 (gugaart 1.6 C2): read per load; false = PCM ([VLC_NO_PASSTHROUGH]). null = libVLC's own defaults. */
+    private val passthrough: (() -> Boolean)? = null,
+) : NativePlayerBackend {
     override val engineId: EngineId get() = EngineId.Vlc
     override val sampleIntervalMs: Long get() = 500L
 
@@ -158,6 +165,7 @@ class VlcBackend(private val host: VlcHost) : NativePlayerBackend {
         when (cmd) {
             is NativeCommand.Load -> {
                 val o = cmd.opts
+                passthrough?.let { on -> e.audioOptions = if (on()) emptyList() else VLC_NO_PASSTHROUGH }
                 e.load(
                     MpvLoadOptions(
                         url = o.url,
@@ -177,6 +185,7 @@ class VlcBackend(private val host: VlcHost) : NativePlayerBackend {
             is NativeCommand.Subtitle -> e.selectSubtitle(cmd.id)
             is NativeCommand.SubDelay -> e.setSubtitleDelay(cmd.ms.toLong())
             is NativeCommand.Shaders -> Unit // VLC has no GLSL shader chain (NativeEngine never offers one for it)
+            is NativeCommand.SecondarySubtitle -> Unit // no second subtitle in libVLC (NativeEngine never offers one for it)
             // freetype options: libVLC reads them when an instance is created = from the next load on
             is NativeCommand.SubStyle -> e.subtitleOptions = vlcSubtitleOptions(cmd.style)
             is NativeCommand.Aspect -> e.setAspect(cmd.mode.id)
@@ -191,13 +200,20 @@ class VlcBackend(private val host: VlcHost) : NativePlayerBackend {
 
 
 /** `NativePlayerBackend` of one player engine over the app-wide [MpvHost] (`players.mpv` of the Electron bridge). */
-class MpvBackend(private val host: MpvHost) : NativePlayerBackend {
+class MpvBackend(
+    private val host: MpvHost,
+    /** 音频直通 (gugaart 1.6 C2): read per load; true = per-file `audio-spdif` [MPV_SPDIF_CODECS], false = "" (PCM). null = untouched. */
+    private val passthrough: (() -> Boolean)? = null,
+) : NativePlayerBackend {
     override val engineId: EngineId get() = EngineId.Mpv
 
     /** mpv writes a JPEG and it has to be read back and decoded (~100 ms): the glass over the video samples twice a second. */
     override val sampleIntervalMs: Long get() = 500L
 
     override fun onEvent(listener: (PlayerEvent) -> Unit): () -> Unit = host.subscribe { e -> toPlayerEvent(e)?.let(listener) }
+
+    /** 双语字幕 (gugaart 1.6 C1): mpv's `secondary-sid`. */
+    override val secondarySubtitles: Boolean get() = true
 
     /** 网速 (T06): mpv's own `cache-speed`, polled once a second by the engine; null while mpv cannot answer. */
     override suspend fun sampleThroughput(): Double? = host.engine.cacheSpeed()
@@ -228,6 +244,7 @@ class MpvBackend(private val host: MpvHost) : NativePlayerBackend {
                         title = o.title,
                         externalSubtitles = o.externalSubtitles.orEmpty().map { ExternalSubtitle(it.url, it.label, it.lang) },
                         httpProxy = o.httpProxy,
+                        audioSpdif = passthrough?.let { on -> if (on()) MPV_SPDIF_CODECS else "" },
                     ),
                 )
             }
@@ -241,6 +258,7 @@ class MpvBackend(private val host: MpvHost) : NativePlayerBackend {
             is NativeCommand.Subtitle -> e.command(MpvTransportCommand.Subtitle(cmd.id))
             is NativeCommand.SubDelay -> e.command(MpvTransportCommand.SubDelay(cmd.ms))
             is NativeCommand.Shaders -> e.command(MpvTransportCommand.Shaders(cmd.paths))
+            is NativeCommand.SecondarySubtitle -> e.command(MpvTransportCommand.SecondarySubtitle(cmd.id))
             is NativeCommand.SubStyle -> {
                 e.command(MpvTransportCommand.SubStyle(mpvSubtitleProperties(cmd.style, subBase(e), lastSubStyle)))
                 lastSubStyle = cmd.style
@@ -315,6 +333,8 @@ class DesktopPlayerPlatform(
     private val hasWindow: () -> Boolean,
     /** 外部播放器 (T06): the probe of this machine - a test hands in its own instead of reading the registry. */
     private val externalPlayersImpl: DesktopExternalPlayers = DesktopExternalPlayers(),
+    /** 音频直通 (gugaart 1.6 C2), read by every new engine at its loads; null = the engines' own defaults (mpv: PCM). */
+    private val passthrough: (() -> Boolean)? = null,
 ) : PlayerPlatform {
     private val mpvFound: Boolean by lazy { mpv.available() }
     private val vlcFound: Boolean by lazy { vlc?.available() == true }
@@ -345,8 +365,8 @@ class DesktopPlayerPlatform(
     override val externalPlayers: ExternalPlayers = externalPlayersImpl
 
     override fun createEngine(id: EngineId): PlayerEngine? = when (id) {
-        EngineId.Mpv -> NativeEngine(MpvBackend(mpv))
-        EngineId.Vlc -> vlc?.let { NativeEngine(VlcBackend(it)) }
+        EngineId.Mpv -> NativeEngine(MpvBackend(mpv, passthrough))
+        EngineId.Vlc -> vlc?.let { NativeEngine(VlcBackend(it, passthrough)) }
         else -> null
     }
 

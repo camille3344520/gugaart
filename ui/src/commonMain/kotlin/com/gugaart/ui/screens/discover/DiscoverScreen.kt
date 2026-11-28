@@ -86,12 +86,10 @@ fun DiscoverScreen(today: Today) {
     val scroll = rememberPresetScroll()
     ReportScroll(scroll)
     val load = rememberLoad("discover") { loadDiscover(it) }
-    val startChart = pageStateOf(LocalPageState.current, "chart")
-    var chart by remember { mutableStateOf(Chart.of(startChart)) }
     var dip by remember { mutableIntStateOf(0) }
     val lucky = rememberLoad("lucky", dip) { loadLucky(it) }
     val data = load.value
-    val list = data?.chart(chart).orEmpty()
+    val list = data?.top.orEmpty()
     val first = list.firstOrNull()
     // 专色跟第 1 名的海报走
     val poster = rememberImage(first?.art?.poster, keepPrevious = true)
@@ -112,7 +110,7 @@ fun DiscoverScreen(today: Today) {
                         Column(Modifier.padding(horizontal = dimens.margin)) { repeat(3) { Skeleton(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(62.dp)) } }
                     }
                 }
-                data.top.isEmpty() && data.fresh.isEmpty() -> {
+                data.top.isEmpty() -> {
                     Column(Modifier.padding(horizontal = dimens.margin)) {
                         Spacer(Modifier.height(dimens.statusBar + 8.dp))
                         Masthead(volume = "", date = "第 $week 周", title = "发现", leading = "DISCOVER")
@@ -132,7 +130,7 @@ fun DiscoverScreen(today: Today) {
                                 Row(verticalAlignment = Alignment.Bottom) {
                                     BasicText("1", Modifier.padding(end = 14.dp), style = Guga.numeral(type.issue * 1.5f), maxLines = 1)
                                     Column(Modifier.padding(bottom = 14.dp)) {
-                                        Kicker(listOf(chart.title, "第 1 名", if (first.kind == Kind.Series) "剧集" else "电影"))
+                                        Kicker(listOf(Chart.Top.title, "第 1 名", if (first.kind == Kind.Series) "剧集" else "电影"))
                                         TitleLogo(first.name, first.art.logo, 270.dp, 84.dp, Modifier.padding(top = 6.dp), textOnly = preset.textTitles)
                                     }
                                 }
@@ -141,23 +139,8 @@ fun DiscoverScreen(today: Today) {
                         }
                     }
                     Column(Modifier.padding(horizontal = dimens.margin)) {
-                        // ---- 两张榜：选中的大一号 + 专色下划线
-                        Row(Modifier.fillMaxWidth().padding(top = 26.dp).drawBehind { drawLine(colors.line, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }.testTag("discover-charts"), verticalAlignment = Alignment.Bottom) {
-                            for (c in Chart.entries) {
-                                val on = c == chart
-                                val press = rememberPressState()
-                                BasicText(
-                                    c.label,
-                                    Modifier.padding(end = 22.dp).pressGraphics(press).heightIn(min = 44.dp).pressable(press, label = c.title, onClick = { chart = c })
-                                        .drawBehind { if (on) drawLine(colors.spot, Offset(0f, size.height - 1.dp.toPx()), Offset(size.width, size.height - 1.dp.toPx()), 2.dp.toPx()) }
-                                        .padding(bottom = 10.dp).testTag(if (on) "chart-on" else "chart-off"),
-                                    style = Guga.song(if (on) type.section * 1.18f else type.row * 1.1f, if (on) FontWeight.Black else FontWeight.Normal, if (on) colors.ink else colors.dim),
-                                    maxLines = 1,
-                                )
-                            }
-                            Spacer(Modifier.weight(1f))
-                            BasicText(chart.note, Modifier.padding(bottom = 12.dp), style = Guga.note(type.caption, colors.faint), maxLines = 1)
-                        }
+                        // ---- 高分榜
+                        SectionHeader(Chart.Top.title, "TOP RATED", Modifier.padding(top = 26.dp), trailing = Chart.Top.note)
                         list.drop(1).forEachIndexed { i, t ->
                             ChartRow(i + 2, t) { graph.open(t.id) }
                             Rule()

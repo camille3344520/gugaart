@@ -504,7 +504,6 @@ fun TvPages(route: Route, today: Today) {
                     WideTab.Home -> Unit
                     WideTab.Discover -> TvDiscoverScreen(today)
                     WideTab.Libs -> TvLibsScreen(today)
-                    WideTab.Colls -> TvCollsScreen(today)
                     WideTab.Me -> TvMeScreen(today, null)
                 }
                 Route.Discover -> TvDiscoverScreen(today)

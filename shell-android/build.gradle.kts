@@ -155,6 +155,8 @@ dependencies {
     // 上游的 Android 播放：ExoPlayer / VLC / mpv 引擎、视频层、预加载
     implementation(project(":player-android"))
     implementation(libs.androidx.activity.compose)
+    // 1.6 B3：baseline profile 的安装器（src/main/baseline-prof.txt；协调人批准加这个依赖，版本在上游的版本目录）
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 }

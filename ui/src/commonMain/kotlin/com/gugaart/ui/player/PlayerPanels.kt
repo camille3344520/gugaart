@@ -67,6 +67,16 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 val n = trackLabel(snap, t, "Subtitle")
                 PanelOption(n.text, t.index == snap.subtitleIndex, { play.chooseSubtitle(t.index) }, note = n.tags.joinToString(" · ").ifEmpty { null })
             }
+            // 双语字幕（1.6 C1）：「第二字幕」关 / 选一条，排在画面上方；只有 mpv 内核才有这一行；按片记住
+            rememberSecondSubtitleRow(play, snap)?.let { r ->
+                val n = r.labels.size
+                Column(Modifier.testTag("panel-sub-second")) {
+                    PanelStepper(
+                        "第二字幕", r.labels[r.at], { r.pick((r.at - 1 + n) % n) }, { r.pick((r.at + 1) % n) }, cycle = true,
+                        labelAbove = Guga.dimens.uiMode == com.gugugaga.ds.theme.UiMode.Phone,
+                    )
+                }
+            }
             // 字幕时间（审计批次 P）：带正负号；按「这一集 + 这条字幕」记住（SubtitleTiming.kt）
             if (snap.subtitleIndex != null) SubtitleTimingRow(snap.subtitleDelayMs, play::stepSubtitleTiming) { play.setSubtitleTiming(0) }
             // 字幕样式的两行快调（1.4.1）：字号、字体；和 设置 › 字幕与音轨 › 字幕样式 同一个键，引擎即时生效（RememberSubtitleStyleApply）
@@ -93,11 +103,7 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
             // 同一条目的另一个版本：上游 setSource（原来的做法）；重复片（另一个条目）：在当前位置重开那一个条目。点了都记住（下次默认它）
             // 1.5.0 B3：别台的源（OtherServer）也列在这里；放着别台的源时，这一栏认的仍是本台的条目（路由里那一个），
             // 「正在放」按服务器 + 条目 + 片源认（几台服务器上的条目 id 可能一样）
-            val onRemote = play.remote
-            val sources = com.gugaart.ui.screens.detail.rememberSourcesState(
-                onRemote?.homeItemId ?: snap.itemId, snap.item?.type, snap.item?.providerIds.orEmpty(),
-                if (onRemote != null) emptyList() else snap.versions, snap.item?.name.orEmpty(),
-            )
+            val sources = rememberPlayerSources(play, snap)
             if (sources.sources.size > 1) {
                 // 有别的服务器参与时这一栏叫「源」，每行前面是服务器名和小圆点；最后是别台的进展（B2-UI）
                 PanelSection(sources.sectionTitle)
@@ -106,17 +112,10 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
                 val narrow = Guga.dimens.uiMode == com.gugugaga.ds.theme.UiMode.Phone
                 for (s in sources.sources) {
                     val r = sources.rowText(s)
-                    val playing = s.mediaSource.id == snap.sourceId && if (s.kind == com.gugaart.ui.data.SourceKind.OtherServer) {
-                        onRemote?.serverId == s.serverId && onRemote.itemId == s.itemId
-                    } else {
-                        onRemote == null && s.itemId == snap.itemId
-                    }
+                    val playing = isPlayingSource(play, snap, s)
                     PanelOption(r.title, playing, {
                         sources.pick(s)
-                        // 别台的源 / 从别台切回本台：上游 switchServer（同一个内核、当前位置接着放、进度只报正在播的那台）
-                        if (RemotePlay.choose(play, g, s)) Unit
-                        else if (s.itemId == snap.itemId) controller.setSource(s.mediaSource.id)
-                        else PlayerRestart.switchItem(play, g, s.itemId, s.mediaSource.id)
+                        choosePlayerSource(play, g, snap, s)
                     }, sub = r.spec, tags = { com.gugaart.ui.screens.detail.SourceTags(r, t.note * 0.92f, 1.dp, gap = 6.dp * t.k, leadingGap = !narrow) },
                         lead = if (r.server == null) null else ({ com.gugaart.ui.screens.detail.SourceDot(r, 5.dp * t.k, gap = 6.dp * t.k) }),
                         tagsBelow = narrow)
@@ -144,7 +143,7 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
             val running = engineShort(snap.engineId)
             val options = remember(play) { coreOptionsFor(play, g) }
             for (o in options) {
-                PanelOption(o.label, o.pref == pref, { PlayerRestart.switchEngine(play, g, o.pref) }, note = if (o.pref == com.gugugaga.app.player.EnginePref.Auto) "现在 $running" else o.note)
+                PanelOption(o.label, o.pref == shownEnginePref(pref, snap.engineId), { PlayerRestart.switchEngine(play, g, o.pref) }, note = if (o.pref == com.gugugaga.app.player.EnginePref.Auto) "现在 $running" else o.note)
             }
             // 这一部和默认不一样时，底下一行「设为默认」：点了才改全局首选
             if (pref != global) PanelLink("设为默认") { setEngineDefault(play, g, pref) }
@@ -219,6 +218,40 @@ fun PanelBody(panel: PlayerPanel, play: PlaySession, snap: PlayerSnapshot, danma
 }
 
 /** 字幕面板里的两行快调：字号（50 % – 200 %）、字体（‹ › 轮着换；要下载的那款换到它就开始下）。 */
+/**
+ * 播放器「画质」里的「源」（手机 / 电脑的面板、电视的页边同一份）：本台的版本 + 没被合并的重复片 + 别台的源（1.5.0）。
+ * 放着别台的源时这一栏认的仍是本台的条目（路由里那一个）；路由本身就是别台的条目时（1.6 A1，[LocalBrowseServer]）认正在放的这一集。
+ */
+@Composable
+fun rememberPlayerSources(play: PlaySession, snap: PlayerSnapshot): com.gugaart.ui.screens.detail.SourcesState {
+    val onRemote = play.remote
+    val browse = com.gugaart.ui.data.LocalBrowseServer.current
+    return com.gugaart.ui.screens.detail.rememberSourcesState(
+        if (browse != null) snap.itemId else onRemote?.homeItemId ?: snap.itemId, snap.item?.type, snap.item?.providerIds.orEmpty(),
+        if (onRemote != null && browse == null) emptyList() else snap.versions, snap.item?.name.orEmpty(),
+    )
+}
+
+/** 这一行是不是正在放的那一个：别台的按服务器 + 条目 + 片源认（几台服务器上的条目 id 可能一样）。 */
+fun isPlayingSource(play: PlaySession, snap: PlayerSnapshot, s: com.gugaart.ui.data.PlaySource): Boolean {
+    val onRemote = play.remote
+    return s.mediaSource.id == snap.sourceId && if (s.kind == com.gugaart.ui.data.SourceKind.OtherServer) {
+        onRemote?.serverId == s.serverId && s.itemId == snap.itemId
+    } else {
+        onRemote == null && s.itemId == snap.itemId
+    }
+}
+
+/**
+ * 选了一行源：别台的 / 从别台切回本台 = 上游 switchServer（同一个内核、当前位置接着放、进度只报正在播的那台）；
+ * 同一条目的另一个版本 = setSource；重复片 = 在当前位置重开那一个条目。
+ */
+fun choosePlayerSource(play: PlaySession, g: com.gugugaga.app.AppGraph, snap: PlayerSnapshot, s: com.gugaart.ui.data.PlaySource) {
+    if (RemotePlay.choose(play, g, s)) return
+    if (s.itemId == snap.itemId) play.controller.setSource(s.mediaSource.id)
+    else PlayerRestart.switchItem(play, g, s.itemId, s.mediaSource.id)
+}
+
 @Composable
 fun SubtitleQuickRows() {
     val store = com.gugaart.ui.screens.settings.rememberGugaStore()

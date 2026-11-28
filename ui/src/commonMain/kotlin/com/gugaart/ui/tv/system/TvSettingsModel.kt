@@ -13,15 +13,12 @@ import com.gugaart.ui.data.SubtitleDefault
 import com.gugaart.ui.data.currentLabel
 import com.gugaart.ui.data.effectiveSubtitleLangs
 import com.gugaart.ui.data.subScaleText
+import com.gugaart.ui.data.MascotPref
 import com.gugaart.ui.screens.settings.AREA_CHOICES
 import com.gugaart.ui.screens.settings.GugaSection
-import com.gugaart.ui.screens.settings.NotesChoice
 import com.gugaart.ui.screens.settings.areaChoice
-import com.gugaart.ui.screens.settings.notesChoiceOf
 import com.gugaart.ui.screens.settings.percentText
 import com.gugaart.ui.screens.settings.scaleText
-import com.gugaart.ui.screens.settings.withMascot
-import com.gugaart.ui.screens.settings.withNotes
 import com.gugugaga.app.AppGraph
 import com.gugugaga.app.nav.Route
 import com.gugugaga.app.player.STRM_PROXY_MODE_KEY
@@ -276,8 +273,7 @@ fun tvSettingRows(
             steps("glass", "玻璃强度", null, stepValues(GLASS_STRENGTH_MIN, GLASS_STRENGTH_MAX, 0.1), ui.glassStrength, ::percentText, "GLASS") { g.settings.patch("ui", "glass" to num(it)) },
             one("perf", "材质", null, perf, ui.perf, "MATERIAL") { g.settings.patch("ui", "perf" to JsonPrimitive(it.id)) },
             TvHead("放映员", "THE PROJECTIONIST"),
-            TvToggle("mascot", "咕咕嘎嘎出现在界面上", null, prefs.showMascot) { on -> store.update { withMascot(it, on) } },
-            one("notes", "放映手记", null, NotesChoice.entries.map { it to it.label }, notesChoiceOf(prefs), "NOTES") { c -> store.update { withNotes(it, c) } },
+            one("mascot", "咕咕嘎嘎", null, MascotPref.entries.map { it to it.label }, prefs.mascot, "MASCOT") { m -> store.update { it.copy(mascot = m) } },
             TvHead("首页", "HOME"),
             TvToggle("coverAutoFlip", "封面自动轮播", null, prefs.coverAutoFlip) { on -> store.update { it.copy(coverAutoFlip = on) } },
         )
@@ -305,12 +301,16 @@ fun tvSettingRows(
                 setOf(com.gugaart.ui.player.ShaderPreset.entries.indexOf(prefs.defaultShader).coerceAtLeast(0)),
                 "SHADER",
             ) { i -> store.update { it.copy(defaultShader = com.gugaart.ui.player.ShaderPreset.entries[i]) } },
+            // 1.6 C2：电视一定是安卓（接功放 / 回音壁时用得最多）
+            TvToggle("audioPassthrough", "音频直通", null, prefs.audioPassthroughFor(g.deps.platformLabel)) { on -> store.update { it.copy(audioPassthrough = on) } },
             TvHead("播放行为", "BEHAVIOUR"),
             TvToggle("autoPlayNext", "自动播放下一集", null, p.autoPlayNext) { put("autoPlayNext", JsonPrimitive(it)) },
             TvToggle("creditsAutoNext", "片尾自动播下一集", null, prefs.creditsAutoNext) { on -> store.update { it.copy(creditsAutoNext = on) } },
             one("skipMarkers", "跳过片头 / 片尾", null, listOf("off" to "关闭", "button" to "显示按钮", "auto" to "自动跳过"), p.skipMarkers, "SKIP") { put("skipMarkers", JsonPrimitive(it)) },
             one("seekStep", "快进 / 快退步长", null, SEEK_STEP_CHOICES_SEC.map { it to "$it 秒" }, p.seekStepSec, "STEP") { put("seekStepSec", JsonPrimitive(it)) },
             steps("defaultRate", "默认倍速", null, RATE_CHOICES, p.defaultRate, ::scaleText, "SPEED") { put("defaultRate", num(it)) },
+            // 1.6 B1：播放时电视的刷新率跟片源帧率（只有电视有这一行；画报自己的键 matchFrameRate，默认开）
+            TvToggle("matchFrameRate", "匹配片源帧率", null, prefs.matchFrameRate) { on -> store.update { it.copy(matchFrameRate = on) } },
         ) + (otherServers?.let(::tvOtherServerRows) ?: emptyList())
     }
     GugaSection.Strm -> {
