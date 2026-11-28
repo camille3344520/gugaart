@@ -386,7 +386,7 @@ fun rememberGugaDanmaku(play: PlaySession): PlayerDanmaku {
             matchInput = { id ->
                 // 放着别台的源：弹幕匹配要问那一台（条目 id 是那台的）
                 val client = play.remote?.client ?: g.session.session.value?.client ?: error("没有会话")
-                val input = client.getDanmakuMatchInput(id)
+                val input = client.getDanmakuMatchInputWithSeasons(id)
                 // 这一季在 Emby 的首播年 / 集数 / 最大季号（只读，一部剧取一次）：季守卫认定「第 N 季」用
                 DanmakuSeasonGuard.record(id, input, runCatching { DanmakuSeasonFacts.of(client, input) }.getOrNull())
                 input

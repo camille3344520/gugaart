@@ -22,8 +22,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,9 +43,9 @@ import androidx.compose.ui.unit.sp
 import com.gugaart.ui.components.PrimaryButton
 import com.gugaart.ui.components.SheetSpec
 import com.gugaart.ui.components.TapOutside
+import com.gugaart.ui.components.TextLink
 import com.gugaart.ui.components.closeOnTap
 import com.gugaart.ui.components.holdTouches
-import com.gugaart.ui.components.TextLink
 import com.gugaart.ui.components.typingTarget
 import com.gugaart.ui.data.GugaPrefs
 import com.gugaart.ui.player.PlaySession
@@ -54,6 +54,7 @@ import com.gugaart.ui.theme.Guga
 import com.gugugaga.app.AppGraph
 import com.gugugaga.app.player.PlayController
 import com.gugugaga.app.player.PlayPhase
+import com.gugugaga.app.settings.playbackPrefs
 import com.gugugaga.app.ui.LocalGraph
 import com.gugugaga.core.EmbyException
 import com.gugugaga.core.describeEmbyError
@@ -63,6 +64,7 @@ import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+
 
 /*
  * 字幕搜索的那一栏（docs/subtitle-search.md §5）：和「弹幕来源」同一种做法——从左边滑出来的一张纸，画面在右边照常放；
@@ -123,6 +125,18 @@ object SubtitleSearchBoard {
 
     internal fun online(g: AppGraph): Boolean = GugaPrefs.parse(g.deps.local.get(com.gugaart.ui.data.GugaSettingsStore.KEY)).subtitleOnline
 
+    /** 设置里的首选字幕语言（自动加载、播放器里、播放器外的搜索都按这一份打分）。 */
+    internal fun langs(g: AppGraph): List<String> = com.gugaart.ui.data.effectiveSubtitleLangs(
+        g.settings.state.value.playbackPrefs.subtitleLangs,
+        GugaPrefs.parse(g.deps.local.get(com.gugaart.ui.data.GugaSettingsStore.KEY)).subLangsSeeded,
+    ).ifEmpty { SmartMatch.DEFAULT_LANGS }
+
+    /** 单集：剧的别名从弹幕服务器问（[SubtitleAliases]）；电影 = 不问。 */
+    internal fun aliasesFor(g: AppGraph, item: com.gugugaga.core.BaseItemDto): (suspend () -> List<String>)? {
+        val series = item.seriesName?.takeIf { item.type == "Episode" && it.isNotBlank() } ?: return null
+        return { SubtitleAliases.of(g, series) }
+    }
+
     /** 播放器里打开：这一集的信息控制器都有了（播放信息、strm 目标），马上开搜。 */
     fun openInPlayer(play: PlaySession, g: AppGraph) {
         val snap = play.controller.value
@@ -130,7 +144,7 @@ object SubtitleSearchBoard {
         val client = g.session.session.value?.client
         val r = snap.resolved
         val target = SubtitleTarget.of(item, r?.mediaSource ?: item.mediaSources.firstOrNull(), client, r?.strmTarget, r?.remoteHeaders)
-        val s = SubtitleSearchSession(target, client, net(), online(g))
+        val s = SubtitleSearchSession(target, client, net(), online(g), langs(g), aliasesFor(g, item))
         show(s, play)
         g.scope.launch { s.run() }
     }
@@ -147,7 +161,7 @@ object SubtitleSearchBoard {
             }
             try {
                 val item = client.getItem(itemId)
-                val s = SubtitleSearchSession(SubtitleTarget.of(item, item.mediaSources.firstOrNull(), client), client, net(), online(g))
+                val s = SubtitleSearchSession(SubtitleTarget.of(item, item.mediaSources.firstOrNull(), client), client, net(), online(g), langs(g), aliasesFor(g, item))
                 if (preparing != name) return@launch
                 show(s, null)
                 s.run()

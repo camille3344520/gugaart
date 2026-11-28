@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.gugaart.ui.player.DanmakuSeasonFacts
 import com.gugugaga.app.model.isStrmSource
 import com.gugugaga.core.BaseItemDto
 import com.gugugaga.core.EmbyClient
@@ -61,6 +62,8 @@ data class SubtitleTarget(
     val name: String? = null,
     /** 备选查询（中文剧集「剧名 第N集」/ 电影纯片名）：主查询没搜到时再试一次。 */
     val altQuery: String? = null,
+    /** 单集所属的剧（取季列表：最大的季号、这一季的集数，智能匹配用）。 */
+    val seriesId: String? = null,
 ) {
     override fun toString(): String = "SubtitleTarget(item=$itemId, source=$mediaSourceId, read=$read)"
 
@@ -204,6 +207,7 @@ data class SubtitleTarget(
                 year = item.productionYear?.takeIf { it > 0 },
                 name = (if (item.type == "Episode") item.seriesName ?: item.name else item.name).takeIf { it.isNotBlank() },
                 altQuery = altNameQueryOf(item),
+                seriesId = item.seriesId?.takeIf { item.type == "Episode" && it.isNotEmpty() },
             )
         }
 
@@ -375,6 +379,8 @@ class SubtitleSearchSession(
     val online: Boolean,
     /** 设置里的首选字幕语言（上游 `subtitleLangs` 的代码数组，顺序 = 优先级）。 */
     val subtitleLangs: List<String> = SmartMatch.DEFAULT_LANGS,
+    /** 剧的别名（[SubtitleAliases]，弹幕服务器给的「Initial D」这种）；null = 不问。 */
+    private val aliasSource: (suspend () -> List<String>)? = null,
 ) {
     var lang by mutableStateOf(SearchLang.Chinese)
     var query by mutableStateOf(target.nameQuery)
@@ -435,25 +441,75 @@ class SubtitleSearchSession(
     /** 判成弹幕了（§4.5）。 */
     private fun isDanmaku(h: SubtitleHit): Boolean = h.url != null && h.url in danmakuUrls
 
-    /** 名字像弹幕、还没查出是干净的：先压到后面、不当「最合适」（§4.5；服务器源查不了内容，名字像就一直压后）。 */
-    private fun suspected(h: SubtitleHit): Boolean = DanmakuSniff.nameLooksLikeDanmaku(h.name) && (h.url == null || h.url !in cleanUrls)
+    /**
+     * 名字就写着是 B 站弹幕导出的（「(Av14121610,P13)」「BV1…」「弹幕」）、还没查出是干净的：**不出现在单子里**
+     * （主理人 2026-11-28：「而且还是会搜索到bilbili的那种弹幕的」——1.6 只是压到最后，照样看得见）。
+     * 迅雷 / 射手的这种一律先下载查内容（[screenTargets]），查出是正经字幕的才放出来；服务器源查不了内容（Emby 自己下载），
+     * 跟着同名的迅雷那一条的结论走（MeiamSub 的结果就是迅雷的同一份），没有同名的就不出现。
+     */
+    private fun suspected(h: SubtitleHit): Boolean {
+        if (!DanmakuSniff.nameLooksLikeDanmaku(h.name)) return false
+        if (h.url != null && h.url in cleanUrls) return false
+        if (h.source == SubSource.Server) {
+            val key = nameKey(h.name)
+            if ((thunderHits + shooterHits).any { it.url != null && it.url in cleanUrls && nameKey(it.name) == key }) return false
+        }
+        return true
+    }
+
+    /** 服务器源和迅雷的同一份字幕：名字去掉空白、大小写以后一样。 */
+    private fun nameKey(name: String): String = name.filterNot { it.isWhitespace() }.lowercase()
 
     private fun publish() {
         val all = serverHits + shooterHits + thunderHits
-        val kept = all.filterNot(::isDanmaku)
+        val kept = all.filterNot { isDanmaku(it) || suspected(it) }
         // 刚点出来是弹幕的那一行留着写标签（不计数、不打分、不当最合适）
-        val shown = all.filter { !isDanmaku(it) || it.key == labelled }
-        hits = rankHits(shown, target.runtimeMs).sortedBy { if (suspected(it)) 1 else 0 }
+        val shown = all.filter { (!isDanmaku(it) && !suspected(it)) || it.key == labelled }
+        hits = rankHits(shown, target.runtimeMs)
         // 智能匹配（1.4.1 P2）：同一批结果再按「和这一集对不对得上」打一次分，界面拿 smartHits / best 显示「最合适」
-        smartHits = SmartMatch.rank(kept, smartFile()).sortedBy { if (suspected(it.hit)) 1 else 0 }
-        best = smartHits.firstOrNull { it.score.passes && !suspected(it.hit) && it.hit.url !in screening }
-        // 状态行的条数 = 去掉弹幕以后的（不加说明文字）
-        if (thunder is SourceState.Done) thunder = SourceState.Done(thunderHits.count { !isDanmaku(it) })
-        if (shooter is SourceState.Done) shooter = SourceState.Done(shooterHits.count { !isDanmaku(it) })
+        smartHits = SmartMatch.rank(kept, smartFile())
+        best = smartHits.firstOrNull { it.score.passes && it.hit.url !in screening }
+        // 状态行的条数 = 单子里看得见的（去掉弹幕和名字像弹幕、没查出干净的；不加说明文字）
+        if (thunder is SourceState.Done) thunder = SourceState.Done(thunderHits.count { !isDanmaku(it) && !suspected(it) })
+        if (shooter is SourceState.Done) shooter = SourceState.Done(shooterHits.count { !isDanmaku(it) && !suspected(it) })
+        if (server is SourceState.Done) server = SourceState.Done(serverHits.count { !isDanmaku(it) && !suspected(it) })
     }
 
+    /** 这部剧最大的季号、这一季的集数（[loadSeasons]；取不到 = null）。 */
+    private var lastSeason: Int? = null
+    private var seasonEpisodes: Int? = null
+
+    /** 剧的别名（[loadAliases]）。 */
+    private var aliases: List<String> = emptyList()
+
     /** 打分用的「这一集」：手动改过查询词就拿查询词当片名 token（同一套打分）。 */
-    fun smartFile(): SmartFile = SmartFile.of(target, subtitleLangs, query)
+    fun smartFile(): SmartFile = SmartFile.of(target, subtitleLangs, query, lastSeason, seasonEpisodes, aliases)
+
+    /** 问一次别名（和字幕搜索同时进行；拿到了重新排一次）。 */
+    private suspend fun loadAliases() {
+        val src = aliasSource ?: return
+        if (aliases.isNotEmpty()) return
+        val got = try {
+            src()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (got.isEmpty()) return
+        aliases = got
+        publish()
+    }
+
+    /** 单集：取一次这部剧的季列表（和弹幕的季守卫同一份缓存，只读）。 */
+    private suspend fun loadSeasons() {
+        val c = client ?: return
+        val sid = target.seriesId ?: return
+        if (target.season == null || lastSeason != null) return
+        val list = DanmakuSeasonFacts.seasons(c, sid) ?: return
+        lastSeason = list.mapNotNull { it.indexNumber }.filter { it > 0 }.maxOrNull()
+        seasonEpisodes = list.firstOrNull { it.indexNumber == target.season }?.childCount
+    }
 
     /** 这一条的分数（界面每一行要写理由时用）。 */
     fun scoreOf(hit: SubtitleHit): SmartScore =
@@ -465,12 +521,14 @@ class SubtitleSearchSession(
         thunderHits = emptyList()
         shooterHits = emptyList()
         screening = emptySet()
+        loadSeasons()
         publish()
         server = SourceState.Busy
         if (online) {
             thunder = SourceState.Busy
             shooter = SourceState.Busy
         }
+        val al = async { loadAliases() }
         val s = async { searchServer() }
         val up = async { checkUpload() }
         if (online) {
@@ -485,6 +543,7 @@ class SubtitleSearchSession(
         }
         s.await()
         up.await()
+        al.await()
     }
 
     /** 问一次服务器：装没装 Subtitle Manager 插件、这个账号是不是管理员（只读 GET）。问不到 = 不出「保存到服务器」。 */
@@ -621,7 +680,7 @@ class SubtitleSearchSession(
             )
             serverHits = SubtitleProviders.parseEmbyRemote(res.text, lang)
             publish()
-            SourceState.Done(serverHits.size)
+            SourceState.Done(serverHits.count { !isDanmaku(it) && !suspected(it) })
         } catch (e: CancellationException) {
             throw e
         } catch (e: EmbyException) {
@@ -667,12 +726,19 @@ class SubtitleSearchSession(
         screening = screenTargets(hits).mapNotNull { it.url }.toSet()
         publish()
         screen(hits)
-        thunder = SourceState.Done(thunderHits.count { !isDanmaku(it) })
+        thunder = SourceState.Done(thunderHits.count { !isDanmaku(it) && !suspected(it) })
     }
 
-    /** 后台预查哪几条：按智能匹配的顺序取前 [SCREEN_TAKE] 条（最可能当「最合适」的先查）。 */
-    private fun screenTargets(hits: List<SubtitleHit>): List<SubtitleHit> =
-        SmartMatch.rank(hits, smartFile()).map { it.hit }.filter { it.url != null && it.subFormat != null }.take(SCREEN_TAKE)
+    /**
+     * 后台预查哪几条：按智能匹配的顺序取前 [SCREEN_TAKE] 条（最可能当「最合适」的先查），再加上名字像弹幕的（最多 [SCREEN_SUSPECTS] 条：
+     * 它们不查就不出现在单子里，查出干净才放出来）。
+     */
+    private fun screenTargets(hits: List<SubtitleHit>): List<SubtitleHit> {
+        val ranked = SmartMatch.rank(hits, smartFile()).map { it.hit }.filter { it.url != null && it.subFormat != null }
+        val top = ranked.take(SCREEN_TAKE)
+        val named = ranked.filter { it !in top && DanmakuSniff.nameLooksLikeDanmaku(it.name) }.take(SCREEN_SUSPECTS)
+        return top + named
+    }
 
     /**
      * 迅雷的结果在后台先下载、判一次是不是弹幕（§4.5）：最多 [SCREEN_TAKE] 条、同时 [SCREEN_PARALLEL] 个、每个 [SCREEN_TIMEOUT_MS]、
@@ -714,13 +780,15 @@ class SubtitleSearchSession(
         return DanmakuSniff.judge(d.text, format)
     }
 
-    /** 这批结果里写明是这一集的（集号对上、季号不冲突）够不够 [EPISODE_HITS] 条；不是单集 = 够。 */
+    /**
+     * 这批结果里写明是这一集的（和智能匹配的 [SmartScore.pinned] 同一套：集号对上；第 2 季起季也要写明、对上）够不够 [EPISODE_HITS] 条；
+     * 不是单集 = 够。2026-11-28：以前没写季的「第 2 集」也算，《头文字D》第 6 季第 2 集的默认词搜回来一堆别的季的就算够了，
+     * 备选「头文字D 第2集」（里面才有 Final Stage - 02）没去搜。
+     */
     private fun namesThisEpisode(hits: List<SubtitleHit>): Boolean {
-        val ep = target.episode ?: return true
-        return hits.count { h ->
-            val p = parseName(h.name)
-            p.episode == ep && (p.season == null || target.season == null || p.season == target.season)
-        } >= EPISODE_HITS
+        if (target.episode == null) return true
+        val file = smartFile()
+        return hits.count { SmartMatch.score(it, file).pinned } >= EPISODE_HITS
     }
 
     /** 名字里写明的季 / 集和这一集对不上（两边都写了才算）。 */
@@ -737,7 +805,7 @@ class SubtitleSearchSession(
         shooter = if (r.ok) {
             shooterHits = SubtitleProviders.parseShooter(r.text, target.shooterName, lang, hashSent = !hash.isNullOrEmpty())
             publish()
-            SourceState.Done(shooterHits.size)
+            SourceState.Done(shooterHits.count { !isDanmaku(it) && !suspected(it) })
         } else SourceState.Failed(r.failed ?: "射手回了 ${r.status}")
     }
 
@@ -811,6 +879,9 @@ private const val EPISODE_HITS = 3
 
 /** 弹幕预查（§4.5）：最多查前几条迅雷结果。 */
 const val SCREEN_TAKE = 12
+
+/** 名字像弹幕、排在 [SCREEN_TAKE] 以外的，再多查这么多条（查出干净才出现在单子里）。 */
+const val SCREEN_SUSPECTS = 8
 
 /** 弹幕预查：同时下几个。 */
 const val SCREEN_PARALLEL = 3

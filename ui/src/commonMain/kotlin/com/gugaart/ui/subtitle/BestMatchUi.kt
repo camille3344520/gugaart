@@ -242,13 +242,11 @@ fun RememberAutoBest(play: PlaySession, explicit: Boolean) {
                         target, client, SubtitleSearchBoard.net(),
                         online = prefs.subtitleOnline,
                         enabled = prefs.subtitleAutoBest,
-                        langs = com.gugaart.ui.data.effectiveSubtitleLangs(
-                            g.settings.state.value.playbackPrefs.subtitleLangs,
-                            prefs.subLangsSeeded,
-                        ).ifEmpty { SmartMatch.DEFAULT_LANGS },
+                        langs = SubtitleSearchBoard.langs(g),
                         hasChinese = hasChineseSubtitle(resolved.mediaSource.mediaStreams, LocalSubtitles.of(item.id)),
                         select = { idx -> if (!play.hasUserChosenSubtitle(item.id, resolved.mediaSource.id)) AutoBestBoard.select(play, item.id, idx) },
                         offerWhenOff = AUTO_BEST_HINT_WHEN_OFF,
+                        aliases = SubtitleSearchBoard.aliasesFor(g, item),
                     )
                 }
             }

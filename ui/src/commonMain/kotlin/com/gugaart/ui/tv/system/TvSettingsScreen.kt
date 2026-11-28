@@ -202,11 +202,11 @@ fun TvSettings(section: String?, today: Today) {
         true
     } else null
 
-    // ---- 打字（[TvText]）：换成遥控器全键盘那一屏
+    // ---- 打字（[TvText]）：换成一屏文本框 + 电视自己的输入法（[TvSettingsEditPane]，和登录页同一个文本框）
     var editing by remember { mutableStateOf(preset.state?.takeIf { it.startsWith("edit:") }?.removePrefix("edit:")) }
     val edit = rows.firstOrNull { it.id == editing } as? TvText
     var draft by remember(editing) { mutableStateOf(edit?.value.orEmpty()) }
-    var upper by remember(editing) { mutableStateOf(false) }
+    var typing by remember(editing) { mutableStateOf(editing != null) }
     var reveal by remember(editing) { mutableStateOf(false) }
     var edited by remember { mutableStateOf(false) }
 
@@ -229,8 +229,10 @@ fun TvSettings(section: String?, today: Today) {
         when {
             from == "sections" -> if (dir == TvDir.Right && groups.has("rows")) "rows" else if (dir == TvDir.Left) null else TvGroups.STAY
             from == "rows" -> if (dir == TvDir.Left) "sections" else TvGroups.STAY
-            from.startsWith("kb-") -> {
-                TvKeyboard.moveVertical(groups, g.focus, from, dir, TvKeyboard.ROWS_WIDE.size)
+            from == TvSettingsEdit.FIELD -> if (dir == TvDir.Down) TvSettingsEdit.ACTIONS else TvGroups.STAY
+            from == TvSettingsEdit.ACTIONS -> {
+                // 那一排按上 = 回到文本框接着打字（输入法再弹出来）
+                if (dir == TvDir.Up) typing = true
                 TvGroups.STAY
             }
             else -> {
@@ -258,11 +260,10 @@ fun TvSettings(section: String?, today: Today) {
     LaunchedEffect(editing) {
         if (editing != null) {
             edited = true
-            // 每次打开键盘都从同一个键起（上一回停在哪个键不记）
-            for (r in 0..TvKeyboard.ROWS_WIDE.size) groups.forget("kb-$r")
-            groups.enterWhenReady("kb-1", g.focus)
+            groups.forget(TvSettingsEdit.ACTIONS)
         } else if (edited) {
-            // 从键盘那一屏回来：焦点回到刚才那一行
+            // 从打字那一屏回来：焦点回到刚才那一行
+            TvSettingsEdit.typing = false
             groups.enterWhenReady("rows", g.focus)
         }
     }
@@ -271,42 +272,25 @@ fun TvSettings(section: String?, today: Today) {
         Column(Modifier.fillMaxSize()) {
             TvPageHeader("设置", "SETTINGS", today)
             if (edit != null) {
-                // ---- 打字：左 这一项和输入框，右 遥控器全键盘（和登录页同一个；多一排括号 / 分号 / 引号）----
+                // ---- 打字：这一项的文本框（电视自己的输入法）+ 下面一排「保存 / 清空」----
                 groups.remove("sections")
                 groups.remove("rows")
-                Row(Modifier.fillMaxSize().padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = 44.dp).testTag("tv-settings-edit")) {
-                    Column(Modifier.width(620.dp)) {
-                        BasicText("${current.title} · ${edit.label}", Modifier.padding(bottom = 22.dp), style = Guga.song(38.sp, FontWeight.Black), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        TvField(edit.english.ifEmpty { edit.label }, if (edit.secret && !reveal) "•".repeat(draft.length) else draft, active = true, hint = edit.hint)
-                        for (line in listOfNotNull(edit.note, "${draft.length} 个字符" + if (draft.length > 22) " · 只显示末尾 22 个" else "")) {
-                            BasicText(line, style = Guga.song(24.sp, color = colors.dim, lineHeight = 38.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                    Spacer(Modifier.width(94.dp))
-                    TvKeyboardPad(
-                        upper,
-                        bottomLabel = { k ->
-                            when (k) {
-                                "shift" -> if (upper) "小写" else "大写"
-                                "show" -> if (!edit.secret) "清空" else if (reveal) "隐藏" else "显示"
-                                "next" -> "保存"
-                                else -> TvKeyboard.BOTTOM_LABEL[k].orEmpty()
-                            }
-                        },
-                        onKey = { k ->
-                            when (k) {
-                                "shift" -> upper = !upper
-                                "show" -> if (edit.secret) reveal = !reveal else draft = ""
-                                "next" -> {
-                                    edit.write(draft.trim())
-                                    editing = null
-                                }
-                                else -> draft = TvKeyboard.type(draft, k, upper)
-                            }
-                        },
-                        rows = TvKeyboard.ROWS_WIDE,
-                    )
-                }
+                TvSettingsEditPane(
+                    "${current.title} · ${edit.label}",
+                    edit,
+                    draft,
+                    onDraft = { draft = it },
+                    typing = typing,
+                    onTyping = { typing = it },
+                    reveal = reveal,
+                    onReveal = { reveal = !reveal },
+                    onSave = {
+                        edit.write(draft.trim())
+                        editing = null
+                    },
+                    groups = groups,
+                    focus = g.focus,
+                )
             } else Row(Modifier.fillMaxSize().padding(start = TvSpec.LEFT, end = TvSpec.RIGHT, top = 26.dp)) {
                 // ---- 左页：六个主要分区 + 折叠「高级」 ----
                 TvGroup("sections", navSections.map { "sec-${it.key}" }, horizontal = false, default = "sec-${current.key}")

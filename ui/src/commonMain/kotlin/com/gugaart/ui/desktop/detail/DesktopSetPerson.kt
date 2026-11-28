@@ -228,7 +228,7 @@ private fun PersonBody(d: PersonData, today: Today) {
     val one = works.size == 1
     val photo = rememberImage(p.art.poster, keepPrevious = true)
     LaunchedEffect(photo) { chrome.spot = photo?.spot() }
-    val cf = rememberCrossfade(photo)
+    val cf = rememberCrossfade(photo, clearOnNull = true)
     DesktopItemActions.clear()
     DesktopItemActions.play = works.firstOrNull()?.takeIf { one }?.let { w -> { graph.open(w.title.id) } }
 

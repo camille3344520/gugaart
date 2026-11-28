@@ -515,7 +515,7 @@ internal fun DanmakuSection(pick: String?) {
 
 /**
  * 弹幕服务器清单（用户 2026-11-15：「弹幕支持多源，先匹配出来的优先显示」→ 多个弹幕服务器；danmaku/DanmakuServers.kt）：
- * 每台一行（和原来那一行一样：打码、查看、测试连接、清除 = 去掉这一台）；下面「再加一个」。两台以上时播放时同时去匹配，谁先匹配上用谁。
+ * 每台一行（和原来那一行一样：明文（眼睛能藏）、测试连接、清除 = 去掉这一台）；下面「再加一个」。两台以上时播放时同时去匹配，谁先匹配上用谁。
  * 第一台的 tag 沿用 `set-dm-apiUrl`。
  */
 @Composable
@@ -535,7 +535,7 @@ private fun DanmakuServerRows() {
     }
     if (urls == null || urls.isEmpty()) {
         // 一台都没有：就是原来那一行
-        SecretRow("弹幕服务器 API 地址", "地址里含令牌", urls?.let { "" }, "set-dm-apiUrl", probe = { g.danmaku.probe(it) }) { v -> save(listOf(v)) }
+        SecretRow("弹幕服务器 API 地址", "地址里含令牌", urls?.let { "" }, "set-dm-apiUrl", probe = { g.danmaku.probe(it) }, plain = true) { v -> save(listOf(v)) }
         return
     }
     urls.forEachIndexed { i, url ->
@@ -545,10 +545,11 @@ private fun DanmakuServerRows() {
             url,
             if (i == 0) "set-dm-apiUrl" else "set-dm-apiUrl-${i + 1}",
             probe = { g.danmaku.probe(it) },
+            plain = true,
         ) { v -> save(urls.toMutableList().also { it[i] = v }) }
     }
     if (adding) {
-        SecretRow("弹幕服务器 ${urls.size + 1}", null, "", "set-dm-apiUrl-new", probe = { g.danmaku.probe(it) }) { v ->
+        SecretRow("弹幕服务器 ${urls.size + 1}", null, "", "set-dm-apiUrl-new", probe = { g.danmaku.probe(it) }, plain = true) { v ->
             adding = false
             if (v.isNotBlank()) save(urls + v)
         }
@@ -562,17 +563,18 @@ private fun DanmakuServerRows() {
 /**
  * 一条密钥（弹幕服务器地址 / TMDB 令牌）。用户要求（2026-11-14）：**不要藏起来**——
  * - 当前值就在这一行的输入框里，**默认打码**；旁边一枚眼睛「查看」，点一下显示明文，再点隐藏（和上游设置页的眼睛按钮同一个做法）；
+ *   [plain]：一开始就是明文（弹幕服务器地址，主理人 2026-11-28「又改成隐藏」——三端都不默认打码，眼睛照旧能藏起来）；
  * - 值可以直接改；改过才出现「保存」；有值时有「清除」；
  * - [probe] 不为空（弹幕服务器）：多一个「测试连接」，判词用上游的 `danmakuProbeVerdict`（可用 / 缓存未共享 / 不可用：原因——原因里不带地址和令牌）。
  * [stored]：null = 还没读出来。
  */
 @Composable
-private fun SecretRow(label: String, note: String?, stored: String?, tag: String, probe: (suspend (String) -> Result<DanmakuCacheProbe>)? = null, onSave: (String) -> Unit) {
+private fun SecretRow(label: String, note: String?, stored: String?, tag: String, probe: (suspend (String) -> Result<DanmakuCacheProbe>)? = null, plain: Boolean = false, onSave: (String) -> Unit) {
     val colors = Guga.colors
     val scope = rememberCoroutineScope()
     // 测试 / 截图的预置：`reveal` = 一开始就是明文（只用假值）
     val revealed = LocalPageState.current == "reveal"
-    var shown by remember { mutableStateOf(revealed) }
+    var shown by remember { mutableStateOf(revealed || plain) }
     var text by remember(stored) { mutableStateOf(stored.orEmpty()) }
     var probeState by remember { mutableStateOf(DanmakuProbeVisual.Idle) }
     var probeError by remember { mutableStateOf<Throwable?>(null) }

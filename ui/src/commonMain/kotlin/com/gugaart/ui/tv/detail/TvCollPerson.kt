@@ -177,7 +177,7 @@ fun TvPerson(data: PersonData, today: Today) {
     TvGroupsRoot(groups, Modifier.testTag(if (few) "tv-person-few" else "tv-person")) {
         // 肖像：右边 740 宽，左缘渐隐
         val photo = rememberImage(p.art.poster, keepPrevious = true)
-        val cf = rememberCrossfade(photo)
+        val cf = rememberCrossfade(photo, clearOnNull = true)
         Canvas(Modifier.align(Alignment.TopEnd).width(740.dp).fillMaxHeight().testTag("tv-person-photo")) {
             cf.current?.let { drawCover(it, Framing(0.5f, 0.12f), cf.alpha) }
             val pc = colors.paper

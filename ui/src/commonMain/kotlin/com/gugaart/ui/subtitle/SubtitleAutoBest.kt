@@ -146,6 +146,8 @@ object SubtitleAutoBest {
         select: (suspend (Int) -> Unit)? = null,
         /** 开关关着也搜一次，指纹精确的只提示（[autoBestAction] 的 offerWhenOff）。 */
         offerWhenOff: Boolean = false,
+        /** 剧的别名（[SubtitleAliases]）；null = 不问。 */
+        aliases: (suspend () -> List<String>)? = null,
     ): AutoBestState {
         val mine = ++round
         itemId = target.itemId
@@ -153,7 +155,7 @@ object SubtitleAutoBest {
         if (!enabled && !offerWhenOff) return publish(AutoBestState.Skipped("自动加载已关"), mine)
         if (hasChinese) return publish(AutoBestState.Skipped("已有中文字幕"), mine)
         publish(AutoBestState.Searching, mine)
-        val s = SubtitleSearchSession(target, client, net, online, langs)
+        val s = SubtitleSearchSession(target, client, net, online, langs, aliases)
         session = s
         try {
             s.run()

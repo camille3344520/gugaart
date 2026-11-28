@@ -45,7 +45,12 @@ fun seasonFactsOf(seasons: List<BaseItemDto>, season: Int, episodeYear: Int?): S
 object DanmakuSeasonFacts {
     private val cache = HashMap<String, List<BaseItemDto>?>()
 
-    suspend fun of(client: EmbyClient, input: DanmakuMatchInput): SeasonFacts? = of(client.address.baseUrl, input) {
+    suspend fun of(client: EmbyClient, input: DanmakuMatchInput): SeasonFacts? = of(client.address.baseUrl, input, fetcher(client))
+
+    /** 这部剧的季列表（同一份缓存；字幕的智能匹配要最大的季号和这一季的集数）。取不到 = null。 */
+    suspend fun seasons(client: EmbyClient, seriesId: String): List<BaseItemDto>? = list(client.address.baseUrl, seriesId, fetcher(client))
+
+    private fun fetcher(client: EmbyClient): suspend (String) -> List<BaseItemDto> = {
         client.getSeasons(
             it,
             o = ItemsRequestOptions(fields = listOf("PremiereDate", "ChildCount", "IndexNumber"), enableImages = false, enableUserData = false),
@@ -56,8 +61,12 @@ object DanmakuSeasonFacts {
     internal suspend fun of(server: String, input: DanmakuMatchInput, fetch: suspend (String) -> List<BaseItemDto>): SeasonFacts? {
         val seriesId = input.seriesId ?: return null
         val season = input.seasonNumber ?: return null
+        return list(server, seriesId, fetch)?.let { seasonFactsOf(it, season, input.year) }
+    }
+
+    private suspend fun list(server: String, seriesId: String, fetch: suspend (String) -> List<BaseItemDto>): List<BaseItemDto>? {
         val key = "$server|$seriesId"
-        val seasons = if (cache.containsKey(key)) {
+        return if (cache.containsKey(key)) {
             cache[key]
         } else {
             // 被取消（换集、退出）不记：下次再问。取不到才记 null，这一次运行里不再问
@@ -70,7 +79,6 @@ object DanmakuSeasonFacts {
             }
             got.also { cache[key] = it }
         }
-        return seasons?.let { seasonFactsOf(it, season, input.year) }
     }
 
     /** 测试用。 */

@@ -130,24 +130,48 @@ private fun statusOf(raw: String?): String? = when (raw) {
     else -> null
 }
 
+/**
+ * 剧照（整幅背景）：自己的；**只有单集 / 季**才退到上一级（剧集的剧照）。
+ * 电影、剧集自己没有剧照时，上游会退到 `ParentBackdropItemId`——那是**媒体库文件夹**的图，是别的片的剧照
+ * （2026-11-28 主理人：「电视主页影片跟海报背景墙都对不上」——strm 库里很多片没有剧照，全顶着库的那张）。这时返回 null，
+ * 界面按「没有剧照」画：背后虚化的海报、右边贴一张清晰的。纯函数，有单测。
+ */
+fun EmbyClient.backdropOf(item: BaseItemDto, maxWidth: Int = BACKDROP_W): String? =
+    item.backdropImageTags.firstOrNull()?.takeIf { it.isNotEmpty() }?.let {
+        imageUrl(item.id, ImageType.Backdrop, ImageUrlOptions(tag = it, index = 0, maxWidth = maxWidth))
+    } ?: item.parentBackdropItemId?.takeIf { isOwnSeries(item, it) }?.let { pid ->
+        item.parentBackdropImageTags.firstOrNull()?.takeIf { it.isNotEmpty() }?.let { imageUrl(pid, ImageType.Backdrop, ImageUrlOptions(tag = it, index = 0, maxWidth = maxWidth)) }
+    }
+
+/**
+ * 单集 / 季借图只借**自己那部剧**的（上一级的 id 就是剧集 / 季的 id）。剧集自己也没有图时 Emby 会一路往上找到媒体库文件夹，
+ * 那张是别的片的（2026-11-28 电视：《宝可梦》续看那一集背后是库里别的剧的剧照）。
+ */
+private fun isOwnSeries(item: BaseItemDto, parentId: String): Boolean =
+    (item.type == "Episode" || item.type == "Season") && parentId.isNotEmpty() && (parentId == item.seriesId || parentId == item.seasonId)
+
 /** 图的地址经上游的 `EmbyClient.itemImage`（它带着「单集没有图 → 退剧集的图」这些规则），尺寸档位写在这里。 */
 fun EmbyClient.artOf(item: BaseItemDto): Art {
     val episode = item.type == "Episode"
     val still = if (episode && !item.imageTags["Primary"].isNullOrEmpty()) imageUrl(item.id, ImageType.Primary, ImageUrlOptions(tag = item.imageTags["Primary"], maxWidth = THUMB_W)) else null
-    val backdrop = itemImage(item, ImageKind.Backdrop, ImageUrlOptions(maxWidth = BACKDROP_W))
+    val backdrop = backdropOf(item)
     // 单集的横图：自己的分集图 → 剧集的横图 → 剧集的剧照；**不**退到竖的海报（上游的 Thumb 规则最后会退到海报，16:9 的格子里不能用）
     val thumb = if (episode) {
         still
-            ?: item.parentThumbItemId?.let { id -> item.parentThumbImageTag?.takeIf { it.isNotEmpty() }?.let { imageUrl(id, ImageType.Thumb, ImageUrlOptions(tag = it, maxWidth = THUMB_W)) } }
+            ?: item.parentThumbItemId?.takeIf { isOwnSeries(item, it) }?.let { id -> item.parentThumbImageTag?.takeIf { it.isNotEmpty() }?.let { imageUrl(id, ImageType.Thumb, ImageUrlOptions(tag = it, maxWidth = THUMB_W)) } }
             ?: backdrop
     } else {
-        itemImage(item, ImageKind.Thumb, ImageUrlOptions(maxWidth = THUMB_W))?.takeIf { !item.imageTags["Thumb"].isNullOrEmpty() || item.backdropImageTags.isNotEmpty() }
+        // 电影 / 剧集：自己的横图 → 自己的剧照；不退到上一级（媒体库文件夹的图是别的片的）
+        item.imageTags["Thumb"]?.takeIf { it.isNotEmpty() }?.let { imageUrl(item.id, ImageType.Thumb, ImageUrlOptions(tag = it, maxWidth = THUMB_W)) }
+            ?: item.backdropImageTags.firstOrNull()?.takeIf { it.isNotEmpty() }?.let { imageUrl(item.id, ImageType.Backdrop, ImageUrlOptions(tag = it, index = 0, maxWidth = THUMB_W)) }
     }
+    val logo = item.imageTags["Logo"]?.takeIf { it.isNotEmpty() }?.let { imageUrl(item.id, ImageType.Logo, ImageUrlOptions(tag = it, maxWidth = LOGO_W)) }
+        ?: item.parentLogoItemId?.takeIf { isOwnSeries(item, it) }?.let { id -> item.parentLogoImageTag?.takeIf { it.isNotEmpty() }?.let { imageUrl(id, ImageType.Logo, ImageUrlOptions(tag = it, maxWidth = LOGO_W)) } }
     return Art(
         poster = itemImage(item, ImageKind.Poster, ImageUrlOptions(maxWidth = POSTER_W)),
         backdrop = backdrop,
         thumb = thumb,
-        logo = itemImage(item, ImageKind.Logo, ImageUrlOptions(maxWidth = LOGO_W)),
+        logo = logo,
         still = still,
     )
 }

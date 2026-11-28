@@ -251,6 +251,7 @@ class MainActivity : ComponentActivity() {
         graph.log.sink = { level, message -> Log.i(PLAYER_TAG, "[$level] $message") }
         Log.i(TAG, "flavor=${BuildConfig.DEVICE_FLAVOR} api=${Build.VERSION.SDK_INT} mode=${deps.uiMode} secure=${deps.secureMode()} mock=${deps.debug.mockAccount != null} route=${route::class.simpleName}")
         installAndroidCrashGuard(graph)
+        if (BuildConfig.AUDIT) startAudit(intent, graph)
         // 冷启动「打开到首页出内容」：系统日志 ActivityTaskManager「Fully drawn … +N ms」（Android 的 TTFD），自己再记一行从进程起来算的毫秒
         com.gugaart.ui.screens.home.HomeFirstContent.sink = {
             runCatching { reportFullyDrawn() }
@@ -442,7 +443,27 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         appGraph?.let {
             applyDebugExtras(intent, it, first = false)
+            if (BuildConfig.AUDIT) startAudit(intent, it)
             if (tv) openWatchNext(intent, it)
+        }
+    }
+
+    /**
+     * 调试构建（-Pgugaart.audit=true）：`am start ... --es gugaart.audit "头文字D|围棋少年"` = 用这台设备已经登录的会话，
+     * 把这几部剧每一集的字幕搜索和弹幕匹配跑一遍，结果进 logcat（标签 GugaAudit）。只读，见 MatchAudit。
+     */
+    private fun startAudit(intent: Intent?, graph: AppGraph) {
+        val names = intent?.getStringExtra("gugaart.audit")?.split('|')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: return
+        intent.removeExtra("gugaart.audit")
+        val s = scope ?: return
+        s.launch {
+            var waited = 0
+            while (graph.session.session.value == null && waited < 90_000) {
+                kotlinx.coroutines.delay(500)
+                waited += 500
+            }
+            runCatching { com.gugaart.ui.debug.MatchAudit.run(graph, names) { line -> Log.i("GugaAudit", line) } }
+                .onFailure { Log.w("GugaAudit", "AUDIT failed ${it::class.simpleName}: ${it.message}") }
         }
     }
 

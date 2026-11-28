@@ -68,6 +68,7 @@ import com.gugaart.ui.components.CoverImage
 import com.gugaart.ui.components.rememberCrossfade
 import com.gugaart.ui.components.rememberSoft
 import com.gugugaga.app.data.rememberImage
+import com.gugugaga.app.data.rememberImageWithSource
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
@@ -539,12 +540,25 @@ fun TvBleed(
     reportBackdrop: Boolean = true,
 ) {
     val colors = Guga.colors
-    val blurred = backdrop == null
-    val rawUrl = backdrop ?: poster
     // 压到 TV_BLEED_W（1280）宽；探针 bleed full 要原图（看压宽前后的差别）
-    val bleedUrl = remember(rawUrl) { rawUrl?.let(::tvBleedUrl) }
-    val bmp = rememberImage(bleedUrl, keepPrevious = true)
-    val cf = rememberCrossfade(bmp)
+    val backdropUrl = remember(backdrop) { backdrop?.let(::tvBleedUrl) }
+    val posterUrl = remember(poster) { poster?.let(::tvBleedUrl) }
+    // 先剧照，剧照取不到 / 解不了再用这一部的海报（虚化）
+    val chain = remember(backdropUrl, posterUrl) { listOfNotNull(backdropUrl, posterUrl).distinct() }
+    val got = rememberImageWithSource(chain, com.gugugaga.app.data.ImagePriority.FirstScreen)
+    // 换了一部：上一部的图最多再留 [TV_BLEED_HOLD_MS]（翻得快时不闪）；过了还没到就是纸色，绝不让别的片的图垫在这一部的字底下
+    // （2026-11-28 主理人：「电视主页影片跟海报背景墙都对不上」——剧照取不到时以前一直留着上一部的）
+    var hold by remember(chain) { mutableStateOf(true) }
+    LaunchedEffect(chain) {
+        kotlinx.coroutines.delay(TV_BLEED_HOLD_MS)
+        hold = false
+    }
+    val mine = got != null && got.first in chain
+    val heldBlur = remember { booleanArrayOf(backdrop == null) }
+    if (mine) heldBlur[0] = got!!.first != backdropUrl
+    val blurred = heldBlur[0]
+    val bmp = if (mine || hold) got?.second else null
+    val cf = rememberCrossfade(bmp, clearOnNull = true)
     val softNow = rememberSoft(cf.current.takeIf { blurred })
     val softPrev = rememberSoft(cf.previous.takeIf { blurred })
     val current = cf.current
@@ -585,6 +599,9 @@ fun TvBleed(
  * 解码 1280 × 720 × 4 B ≈ 3.7 MB，比原图（1920 宽）省一半多。首页预取、合成的「版」、详情首帧垫图都用这一档。
  */
 const val TV_BLEED_W = 1280
+
+/** 换了一部片，上一部的整幅图最多再留这么久（新图到了马上换；过了还没到就露纸色）。 */
+const val TV_BLEED_HOLD_MS = 800L
 
 /** [TvBleed] 实际要的图地址：压到 [TV_BLEED_W] 宽；探针 `bleed full` = 原地址。 */
 fun tvBleedUrl(url: String): String = if (TvFlipProbe.bleed == "full") url else com.gugaart.ui.data.ImageSizing.capWidth(url, TV_BLEED_W)

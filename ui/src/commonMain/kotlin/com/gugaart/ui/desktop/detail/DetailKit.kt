@@ -508,7 +508,7 @@ fun DHero(
     val height = maxOf(win.height * fraction, Guga.rem(DetailSpec.HERO_MIN))
     val source = bleedSourceOf(title.art)
     val bmp = rememberImage(title.art.backdrop ?: title.art.poster, keepPrevious = true)
-    val cf = rememberCrossfade(bmp)
+    val cf = rememberCrossfade(bmp, clearOnNull = true)
     val soft = rememberSoft(cf.current.takeIf { source == BleedSource.PosterBlur })
     val over = DetailSpec.FRAMING[title.id] ?: Framing.of(title.id)
     // 电脑的默认取景比手机靠上（18 %）；手动覆盖表里有的按表

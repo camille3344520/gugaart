@@ -138,23 +138,39 @@ class Crossfade internal constructor() {
     var previous: ImageBitmap? by mutableStateOf(null)
         internal set
     internal val fade = Animatable(1f)
-    val alpha: Float get() = fade.value
+
+    /** 新图的不透明度：淡入中跟着动画走；淡入完（上一张清掉了）恒为 1——动画中途被打断也不会让新图一直半透明。 */
+    val alpha: Float get() = if (previous == null) 1f else fade.value
 }
 
+/**
+ * [clearOnNull]：[image] 变成 null 时清掉（不再留着上一张）。给 `rememberImage(keepPrevious = true)` 的图用——那种图加载中照旧给旧图，
+ * 只有「这一张没有图 / 加载失败」才是 null；不清的话失败的那一张会一直顶着别的片的图（2026-11-28 主理人：「电视主页影片跟海报背景墙都对不上」）。
+ */
 @Composable
-fun rememberCrossfade(image: ImageBitmap?, durationMs: Int = GugaMotion.COVER_FADE_MS): Crossfade {
+fun rememberCrossfade(image: ImageBitmap?, durationMs: Int = GugaMotion.COVER_FADE_MS, clearOnNull: Boolean = false): Crossfade {
     val state = remember { Crossfade() }
+    if (image == null && clearOnNull && (state.current != null || state.previous != null)) {
+        state.current = null
+        state.previous = null
+    }
     val sysReduced = LocalMotionPrefs.current.reducedMotion
     val reduced = remember(image, sysReduced) { sysReduced || TvPerfGovernor.degraded || !com.gugaart.ui.tv.TvFlipProbe.xfade }
     if (image != null && (state.current == null || reduced || durationMs <= 0)) {
         state.current = image
         state.previous = null
     }
-    if (image != null && image !== state.current && !reduced && durationMs > 0) {
+    // 淡入的协程要在组合里一直待到淡完：条件里加「上一张还没清」。以前（1.5.1 ecc2954 起）条件只看「新图还不是 current」，
+    // 协程第一步就把 current 换成新图，下一帧条件变假、协程被取消——动画停在开头、上一张永远留着：电视首页背后的整幅图
+    // 一直慢一部（2026-11-28 主理人：「主页影片跟海报背景墙都对不上」），换一批片单后封面格也留着上一批的海报。
+    val animating = image != null && !reduced && durationMs > 0 && (image !== state.current || state.previous != null)
+    if (animating) {
         LaunchedEffect(image, durationMs) {
-            state.previous = state.current
-            state.current = image
-            state.fade.snapTo(0f)
+            if (image !== state.current) {
+                state.previous = state.current
+                state.current = image
+                state.fade.snapTo(0f)
+            }
             state.fade.animateTo(1f, tween(durationMs))
             state.previous = null
         }
@@ -186,7 +202,7 @@ fun CoverImage(
         url?.let { u -> if (effective.width > 0 && effective.height > 0) ImageSizing.sized(u, effective.width, effective.height) else ImageSizing.lastFor(u) }
     }
     val bmp = rememberImage(want, keepPrevious = true)
-    val cf = rememberCrossfade(bmp)
+    val cf = rememberCrossfade(bmp, clearOnNull = true)
     if (onImage != null && bmp != null) LaunchedEffect(bmp) { onImage(bmp) }
     val sizeMod = if (knownSize != null && knownSize.width > 0 && knownSize.height > 0) Modifier else Modifier.onSizeChanged { if (it != box) box = it }
     Box(

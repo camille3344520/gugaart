@@ -62,7 +62,7 @@ import kotlin.math.roundToInt
  *
  * 这一层是纯数据（不是 Composable）：给一份设置，排出这一分区的行——所以每一行写回哪个键、选了第几个写什么值，都能单测。
  *
- * 要打字的项（[TvText]：strm 的 User-Agent / Referer、弹幕服务器地址、TMDB 令牌）= 确定后换成遥控器全键盘那一屏（和登录页同一个键盘）；
+ * 要打字的项（[TvText]：strm 的 User-Agent / Referer、弹幕服务器地址、TMDB 令牌）= 确定后换成打字那一屏（文本框 + 电视自己的输入法，和登录页同一个文本框）；
  * 要排顺序的项（[TvOrder]：首页板块、弹幕来源）= 确定后页边出来一列，「确定拿起 → 上下移动 → 确定放下」。
  * 电视上还没排的：弹幕屏蔽词（要输中文，遥控器键盘打不了；只读显示个数）。
  */
@@ -152,8 +152,9 @@ class TvAction(override val id: String, override val label: String, override val
 class TvPanel(override val id: String, override val label: String, override val note: String?, val value: String) : TvSetting
 
 /**
- * 要打字的一项：确定 = 换成遥控器全键盘那一屏，「保存」写回、返回不改。[secret]：密钥（弹幕服务器地址里带令牌、TMDB 令牌）——
- * 行里只写「已配置 / 未设置」，键盘那一屏默认打码，按「显示」才是明文。[value] = 现在存着的字。
+ * 要打字的一项：确定 = 换成打字那一屏（文本框 + 电视自己的输入法，[TvSettingsEditPane]），「保存」/ 输入法的「完成」写回、返回不改。
+ * [secret]：密钥（TMDB 令牌）——行里只写「已配置 / 未设置」，打字那一屏默认打码，按「显示」才是明文。弹幕服务器地址不算密钥（明文）。
+ * [value] = 现在存着的字。
  */
 class TvText(
     override val id: String,
@@ -459,14 +460,14 @@ fun tvSettingRows(
 const val TV_LICENSES = "about-licenses"
 
 /**
- * 电视上的弹幕服务器清单（多个弹幕服务器：播放时同时去匹配，谁先匹配上用谁）：每台一行（键盘那一屏改；存成空 = 去掉这一台），
- * 下面「再加一个弹幕服务器」。第一台的 id 沿用 `dm-apiUrl`。
+ * 电视上的弹幕服务器清单（多个弹幕服务器：播放时同时去匹配，谁先匹配上用谁）：每台一行（打字那一屏改，电视自己的输入法；存成空 = 去掉这一台），
+ * 下面「再加一个弹幕服务器」。第一台的 id 沿用 `dm-apiUrl`。地址明文显示、明文编辑（主理人 2026-11-28：不要隐藏）。
  */
 private fun tvDanmakuServerRows(urls: List<String>?, save: (List<String>) -> Unit): List<TvSetting> {
     val list = urls.orEmpty()
     val rows = ArrayList<TvSetting>()
     if (list.isEmpty()) {
-        rows += TvText("dm-apiUrl", "弹幕服务器 API 地址", "地址里含令牌", "", "DANMAKU API", secret = true, hint = "https://…") { save(listOf(it)) }
+        rows += TvText("dm-apiUrl", "弹幕服务器 API 地址", "地址里含令牌", "", "DANMAKU API", hint = "https://…") { save(listOf(it)) }
         return rows
     }
     list.forEachIndexed { i, url ->
@@ -474,11 +475,11 @@ private fun tvDanmakuServerRows(urls: List<String>?, save: (List<String>) -> Uni
             if (i == 0) "dm-apiUrl" else "dm-apiUrl-${i + 1}",
             if (list.size > 1) "弹幕服务器 ${i + 1}" else "弹幕服务器 API 地址",
             if (i == 0) "地址里含令牌" else "留空 = 删除",
-            url, "DANMAKU API", secret = true, hint = "https://…",
+            url, "DANMAKU API", hint = "https://…",
         ) { v -> save(list.toMutableList().also { it[i] = v }) }
     }
     if (list.size < com.gugaart.ui.danmaku.MAX_DANMAKU_SERVERS) {
-        rows += TvText("dm-apiUrl-new", "添加弹幕服务器", null, "", "DANMAKU API", secret = true, hint = "https://…") { v ->
+        rows += TvText("dm-apiUrl-new", "添加弹幕服务器", null, "", "DANMAKU API", hint = "https://…") { v ->
             if (v.isNotBlank()) save(list + v)
         }
     }

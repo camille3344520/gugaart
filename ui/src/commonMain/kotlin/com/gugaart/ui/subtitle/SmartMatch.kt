@@ -1,6 +1,7 @@
 package com.gugaart.ui.subtitle
 
 import com.gugaart.ui.player.cnNumber
+import com.gugugaga.danmaku.match.t2s
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -40,8 +41,13 @@ data class SmartScore(
     val points: Int,
     val reasons: List<String>,
     val isExactHash: Boolean,
+    /**
+     * 这一条写明了是不是这一集（单集才看）：指纹 / 编号对上，或者集号对上、季也对得上（第 2 季起名字里要写季，没写季的多半是第一季的）。
+     * 没写明的照样打分、排序，但不当「最合适」（2026-11-28 主理人：头文字D、围棋少年「智能匹配要把每一次都对上」）。电影恒为 true。
+     */
+    val pinned: Boolean = true,
 ) {
-    val passes: Boolean get() = points >= SmartMatch.THRESHOLD
+    val passes: Boolean get() = points >= SmartMatch.THRESHOLD && pinned
 
     /** 一行小字（界面要用就用，不用就自己拼 [reasons]）。 */
     fun summary(): String = reasons.joinToString(" · ")
@@ -64,6 +70,14 @@ data class NameParts(
     val group: String?,
     /** 番号式的编号，规范成「大写字母-去掉前导零的数字」：`abp00811` → `ABP-811`、`FC2-PPV-1234567`（1.5.1 subfix，[codeOf]）。 */
     val code: String? = null,
+    /** 写的是「Final Stage / Final Season / 最终季」：这部剧的最后一季（是第几季要看 [SmartFile.lastSeason]）。 */
+    val finalSeason: Boolean = false,
+    /**
+     * 松一点的写法读出来的季集（「围棋少年01」「围棋少年2 05」「头文字D 5 11」「[03]」）：只在给单集打分时用
+     * （电影名里的「流浪地球2」是续集号，不是集号）。
+     */
+    val looseSeason: Int? = null,
+    val looseEpisode: Int? = null,
 )
 
 /**
@@ -82,6 +96,12 @@ data class SmartFile(
     val isStrm: Boolean = false,
     val subtitleLangs: List<String> = SmartMatch.DEFAULT_LANGS,
     val manualQuery: String? = null,
+    /** 这部剧在 Emby 里最大的季号（「Final Stage」的字幕算这一季）；不知道 = null（Final 的字幕就不算任何一季）。 */
+    val lastSeason: Int? = null,
+    /** 这一季在 Emby 里有几集（只有 1 集的季——头文字D 第 3 季是一部电影——字幕名不写集号也算这一集）。 */
+    val seasonEpisodes: Int? = null,
+    /** 剧的别名（[SubtitleAliases]：「Initial D」）各自的片名 token；片名分取中文名和各别名里对得最好的那个。手动搜索时不用。 */
+    val altTitles: List<Set<String>> = emptyList(),
 ) {
     /** 手动搜索时片名 token 只从查询词来；否则文件名 + 元数据片名两边都算。 */
     val parts: NameParts = parseName(manualQuery ?: fileName)
@@ -100,7 +120,14 @@ data class SmartFile(
 
     companion object {
         /** 从一次搜索的目标 + 条目信息拼出来（[langs] = 设置里的 `subtitleLangs`；[query] = 手动输入的词，null = 没改过）。 */
-        fun of(target: SubtitleTarget, langs: List<String> = SmartMatch.DEFAULT_LANGS, query: String? = null): SmartFile = SmartFile(
+        fun of(
+            target: SubtitleTarget,
+            langs: List<String> = SmartMatch.DEFAULT_LANGS,
+            query: String? = null,
+            lastSeason: Int? = null,
+            seasonEpisodes: Int? = null,
+            aliases: List<String> = emptyList(),
+        ): SmartFile = SmartFile(
             fileName = target.fileName,
             name = target.name,
             season = target.season,
@@ -110,6 +137,9 @@ data class SmartFile(
             isStrm = target.isStrm,
             subtitleLangs = langs,
             manualQuery = query?.takeIf { it.isNotBlank() && it.trim() != target.nameQuery.trim() },
+            lastSeason = lastSeason,
+            seasonEpisodes = seasonEpisodes,
+            altTitles = aliases.map { parseName(it).titleTokens }.filter { it.isNotEmpty() }.distinct(),
         )
     }
 }
@@ -159,18 +189,27 @@ object SmartMatch {
         val exact = hit.match == SubMatch.Fingerprint && !(hit.source == SubSource.Server && file.isStrm)
         if (hit.match == SubMatch.Fingerprint && !exact) reasons += "服务器标指纹一致，strm 不算"
 
-        // 2) 季集：两边都写了又对不上 = 扣到底
-        val seasonOff = file.effSeason != null && sub.season != null && file.effSeason != sub.season
-        val episodeOff = file.effEpisode != null && sub.episode != null && file.effEpisode != sub.episode
+        // 2) 季集：两边都写了又对不上 = 扣到底。单集才用松写法（「围棋少年01」）；Final Stage = 最后一季（不知道最后是第几季 = 哪一季都不算）
+        val isEpisode = file.episode != null
+        val subSeason: Int? = sub.season
+            ?: (if (sub.finalSeason) file.lastSeason ?: FINAL_UNKNOWN else null)
+            ?: (if (isEpisode) sub.looseSeason else null)
+        val subEpisode: Int? = sub.episode ?: (if (isEpisode) sub.looseEpisode else null)
+        val seasonOff = file.effSeason != null && subSeason != null && file.effSeason != subSeason
+        val episodeOff = file.effEpisode != null && subEpisode != null && file.effEpisode != subEpisode
         if (seasonOff || episodeOff) {
             val want = epLabel(file.effSeason, file.effEpisode)
-            val got = epLabel(sub.season, sub.episode)
-            return SmartScore(0, listOf("季集对不上（$want ≠ $got）"), exact)
+            val got = if (subSeason == FINAL_UNKNOWN) "Final" else epLabel(subSeason, subEpisode)
+            return SmartScore(0, listOf("季集对不上（$want ≠ $got）"), exact, pinned = false)
+        }
+        // 2¼) 正片的一集不要特别篇 / OVA / 外传的字幕（「Battle Stage 2」「Extra Stage」「Legend1」「赛车专辑」）；Emby 那一季本身是特别篇（季 0）时不管
+        if (isEpisode && (file.effSeason ?: 1) >= 1 && SIDE_STORY.containsMatchIn(foldName(hit.name)) && !SIDE_STORY.containsMatchIn(foldName(file.fileName))) {
+            return SmartScore(0, listOf("不是正片"), exact, pinned = false)
         }
         // 2½) 编号：两边都有又不一样 = 扣到底（abp-811 的文件不要 abp-652 的字幕）
         val fileCode = file.effCode
         if (fileCode != null && sub.code != null && fileCode != sub.code) {
-            return SmartScore(0, listOf("编号对不上（$fileCode ≠ ${sub.code}）"), exact)
+            return SmartScore(0, listOf("编号对不上（$fileCode ≠ ${sub.code}）"), exact, pinned = false)
         }
 
         var pts = 0
@@ -180,10 +219,13 @@ object SmartMatch {
         }
 
         // 3) 片名 token：交集 / 较短那边的大小（中文名和罗马字名混着写时也能对上）
-        val mine = file.titleTokens
         val theirs = sub.titleTokens
-        val shared = mine intersect theirs
-        val coverage = if (mine.isEmpty() || theirs.isEmpty() || shared.isEmpty()) 0.0 else shared.size.toDouble() / min(mine.size, theirs.size)
+        fun coverageOf(mine: Set<String>): Double {
+            val shared = mine intersect theirs
+            return if (mine.isEmpty() || theirs.isEmpty() || shared.isEmpty()) 0.0 else shared.size.toDouble() / min(mine.size, theirs.size)
+        }
+        // 中文名和各个别名（「Initial D」）里对得最好的那个
+        val coverage = (listOf(file.titleTokens) + (if (file.manualQuery == null) file.altTitles else emptyList())).maxOf { coverageOf(it) }
         val titlePts = (W_TITLE * coverage).roundToInt()
         pts += titlePts
 
@@ -197,8 +239,8 @@ object SmartMatch {
             if (fy == sub.year) { pts += W_YEAR; matched += "年份" } else { pts += W_YEAR_OFF; reasons += "年份对不上（$fy ≠ ${sub.year}）" }
         }
         // 5) 季集一致
-        if (file.effEpisode != null && sub.episode != null && file.effEpisode == sub.episode &&
-            (file.effSeason == null || sub.season == null || file.effSeason == sub.season)
+        if (file.effEpisode != null && subEpisode != null && file.effEpisode == subEpisode &&
+            (file.effSeason == null || subSeason == null || file.effSeason == subSeason)
         ) {
             pts += W_EPISODE; matched += "集数"
         }
@@ -250,8 +292,21 @@ object SmartMatch {
             }
             reasons += "下载 $dl 次"
         }
-        return SmartScore(pts, reasons, exact)
+        // 13) 单集：写明是这一集了吗（没写明的不当「最合适」）
+        val pinned = when {
+            exact -> true
+            fileCode != null && sub.code == fileCode -> true
+            file.effEpisode == null -> true
+            subEpisode == null -> subSeason != null && subSeason == file.effSeason && file.seasonEpisodes == 1 && file.effEpisode == 1
+            subSeason != null -> true
+            else -> (file.effSeason ?: 1) <= 1
+        }
+        if (!pinned) reasons += if (subEpisode == null) "没写第几集" else "没写第几季"
+        return SmartScore(pts, reasons, exact, pinned)
     }
+
+    /** 「Final Stage」又不知道这部剧最后是第几季：哪一季都对不上。 */
+    private const val FINAL_UNKNOWN = -1
 
     /**
      * 智能匹配模式的单子：按分数从高到低（同分再按 指纹 > 语言 > 进 Emby > 来源 > key，稳定可复现）。
@@ -355,8 +410,9 @@ private val BRACKETS = Regex("""\[[^\]]*\]|【[^】]*】|\{[^}]*\}|\([^)]*\)""")
 private val RE_SE = Regex("""s(\d{1,2})[ ._-]*e(\d{1,3})""", RegexOption.IGNORE_CASE)
 private val RE_X = Regex("""(^|[^0-9])(\d{1,2})x(\d{1,3})([^0-9]|$)""", RegexOption.IGNORE_CASE)
 private val RE_SEASON_WORD = Regex("""season[ ._-]*(\d{1,2})""", RegexOption.IGNORE_CASE)
-private val RE_EPISODE_WORD = Regex("""episode[ ._-]*(\d{1,3})""", RegexOption.IGNORE_CASE)
-private val RE_CN_EP = Regex("""第\s*(\d{1,4})\s*[集话話期回]""")
+/** 「Episode 05」「ACT.4」（头文字D Fifth / Final Stage 的字幕按 ACT 编集）。 */
+private val RE_EPISODE_WORD = Regex("""(?<![a-z])(?:episode|act)[ ._-]*(\d{1,3})(?![0-9])""", RegexOption.IGNORE_CASE)
+private val RE_CN_EP = Regex("""第\s*([0-9]{1,4}|[一二两三四五六七八九十]{1,3})\s*[集话話期回]""")
 /** 「第2季」「第二季」（中文数字也认：迅雷上「头文字D第二季03」这种名字不少）。 */
 private val RE_CN_SEASON = Regex("""第\s*([0-9一二两三四五六七八九十]{1,3})\s*季""")
 
@@ -370,11 +426,60 @@ private val RE_CN_PART = Regex("""第\s*([0-9一二两三四五六七八九十]{
 private val RE_STAGE_GLUED = Regex("""(?i)(?:^|[^a-z])stage(\d{1,2})(?![0-9])""")
 private val ORDINALS = listOf("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth")
 
+/** 特别篇 / OVA / 外传（正片的一集不要这些字幕）。 */
+private val SIDE_STORY = Regex("""(?i)battle[ ._-]*stage|extra[ ._-]*stage|legend[ ._-]*[0-9]|赛车专辑|(?:^|[^a-z])(?:ova|oad)(?:[^a-z]|$)|特别篇|番外|总集篇|新剧场版""")
+
+/** 「Final Stage」「Final Season」「最终季」：最后一季。 */
+private val RE_FINAL = Regex("""(?i)final[ ._-]*(?:stage|season)|最终[季部]""")
+
+/** 单独的「1st」「4th」（「頭文字D 1st 第01話」「[頭文字D_4th]」）：第几季。后面得是分隔符或结尾。 */
+private val RE_ORD_ALONE = Regex("""(?i)(?:^|[^a-z0-9])(\d{1,2})(?:st|nd|rd|th)(?=$|[ ._\-\]】」)])""")
+
+/** 季标记后面紧跟的数字 = 集号（「第二季02」「第4部 02」「Final Stage - 03」「Stage4][03]」「第一部 (26)」）；后面跟分辨率、年份、单位的不算。 */
+private val RE_EP_AFTER_SEASON = Regex("""^[ ._\-\])】」]*[(\[【「]?[ ]*(\d{1,3})(?![0-9])(?![ ]*(?:[pik](?![a-z])|x[0-9]|×|bit|fps|帧|年|季|部|期))""", RegexOption.IGNORE_CASE)
+
+/** 汉字后面紧跟的数字（「围棋少年01」「围棋少年2 05」）：剧名后面的集号；后面是「集 / 年 / 季」这些的不算。 */
+private val RE_GLUED_SE = Regex("""[\u4e00-\u9fff](\d)[ _.\-]+(\d{1,3})(?![0-9])(?![ ]*[集话季部期年回篇章岁])""")
+private val RE_GLUED_EP = Regex("""[\u4e00-\u9fff](\d{1,3})(?![0-9])(?![ ]*[集话季部期年回篇章岁])""")
+
+/** 名字最后是「季 集」两个数（「头文字D 5 11」）。 */
+private val RE_TRAIL_SE = Regex("""(?:^|[ _.])(\d{1,2})[ _.]+(\d{1,3})$""")
+
+/** 方括号里只有一个数（「[Initial D First_Stage][03][BDRIP]」）：集号；常见分辨率不算。 */
+private val RE_BRACKET_EP = Regex("""[\[【(](\d{1,3})[\]】)]""")
+private val NOT_EPISODE_NUMBERS = setOf(480, 576, 720)
+
+private val SEASON_MARKS = listOf(RE_CN_SEASON, RE_CN_PART, RE_ORDINAL_STAGE, RE_NUM_STAGE, RE_STAGE_GLUED, RE_FINAL, RE_SEASON_WORD, RE_ORD_ALONE)
+
+/** 季标记后面紧跟的集号（[RE_EP_AFTER_SEASON]）；每个季标记都试一次。 */
+private fun episodeAfterSeason(s: String): Int? {
+    for (re in SEASON_MARKS) for (m in re.findAll(s)) {
+        val rest = s.substring(m.range.last + 1)
+        RE_EP_AFTER_SEASON.find(rest)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 }?.let { return it }
+    }
+    return null
+}
+
+/**
+ * 繁体 → 简体、全角 → 半角、各种空格 → 普通空格（「頭文字D」→「头文字D」、「第０１話」→「第01话」；
+ * 2026-11-28 真机：迅雷有的名字用不换行空格 U+00A0 隔词「頭文字D Fifth Stage ACT.7」，季就没认出来）。
+ */
+internal fun foldName(raw: String): String = buildString(raw.length) {
+    for (ch in t2s(raw)) append(
+        when {
+            ch in '\uFF01'..'\uFF5E' -> ch - 0xFEE0
+            ch == '\u3000' || ch == '\u00A0' || ch in '\u2000'..'\u200B' || ch == '\u202F' || ch == '\u205F' || ch == '\uFEFF' -> ' '
+            else -> ch
+        },
+    )
+}
+
 private fun stageSeason(s: String): Int? =
     RE_ORDINAL_STAGE.find(s)?.groupValues?.get(1)?.let { ORDINALS.indexOf(it.lowercase()) + 1 }?.takeIf { it > 0 }
         ?: RE_NUM_STAGE.find(s)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..99 }
         ?: RE_CN_PART.find(s)?.groupValues?.get(1)?.let(::cnNumber)?.takeIf { it in 1..99 }
         ?: RE_STAGE_GLUED.find(s)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..99 }
+        ?: RE_ORD_ALONE.find(s)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..99 }
 private val RE_EP = Regex("""(^|[^a-z0-9])(?:ep[ ._-]*|e)(\d{1,3})([^0-9]|$)""", RegexOption.IGNORE_CASE)
 private val RE_S_ONLY = Regex("""(^|[^a-z0-9])s(\d{1,2})([^0-9]|$)""", RegexOption.IGNORE_CASE)
 private val RE_YEAR = Regex("""(^|[^0-9])((?:19|20)\d{2})([^0-9]|$)""")
@@ -410,7 +515,7 @@ private val NOISE_SINGLE_CJK = setOf("简", "繁", "中", "英", "日", "韩", "
  * 纯函数，有单测。
  */
 fun parseName(raw: String): NameParts {
-    var s = raw.trim()
+    var s = foldName(raw.trim())
     // 尾巴的扩展名 / 语言后缀一层层剥（`…chi.srt`、`…chs.ass`）
     while (true) {
         val next = EXT_TAIL.replace(s, "")
@@ -437,10 +542,32 @@ fun parseName(raw: String): NameParts {
                 ?: stageSeason(s)
                 ?: RE_SEASON_WORD.find(s)?.groupValues?.get(1)?.toIntOrNull()
                 ?: RE_S_ONLY.find(s)?.groupValues?.get(2)?.toIntOrNull()
-            episode = RE_CN_EP.find(s)?.groupValues?.get(1)?.toIntOrNull()
+            episode = RE_CN_EP.find(s)?.groupValues?.get(1)?.let(::cnNumber)
                 ?: RE_EPISODE_WORD.find(s)?.groupValues?.get(1)?.toIntOrNull()
                 ?: RE_EP.find(s)?.groupValues?.get(2)?.toIntOrNull()
+                ?: episodeAfterSeason(s)
         }
+    }
+    val finalSeason = season == null && RE_FINAL.containsMatchIn(s)
+    // 松写法（只给单集打分用）：季集都没读出来时才看
+    var looseSeason: Int? = null
+    var looseEpisode: Int? = null
+    if (episode == null) {
+        val glued = RE_GLUED_SE.find(noBrackets)
+        val trail = RE_TRAIL_SE.find(s)
+        // 名字里另有字母和数字粘在一起的词（「頭文字D4-04」的 D4 = 第四部）：单独的数是不是集号说不准，不认
+        val mixed = words(noBrackets).any { w -> w.any { it in '0'..'9' } && w.any { it in 'a'..'z' } && w !in NOISE && codeIn(w) == null }
+        when {
+            glued != null -> { looseSeason = glued.groupValues[1].toIntOrNull(); looseEpisode = glued.groupValues[2].toIntOrNull() }
+            trail != null && season == null -> { looseSeason = trail.groupValues[1].toIntOrNull(); looseEpisode = trail.groupValues[2].toIntOrNull() }
+            mixed -> {}
+            else -> looseEpisode = RE_GLUED_EP.find(noBrackets)?.groupValues?.get(1)?.toIntOrNull()
+                // 剧名后面单独一个数（「围棋少年 13.srt」「围棋少年.13.chs.srt」）：只有一个才算
+                ?: words(noBrackets).filter { w -> w.length <= 3 && w.all { it in '0'..'9' } && w.toInt() !in NOT_EPISODE_NUMBERS }.singleOrNull()?.toInt()
+                ?: RE_BRACKET_EP.findAll(s).mapNotNull { it.groupValues[1].toIntOrNull() }.firstOrNull { it > 0 && it !in NOT_EPISODE_NUMBERS }
+        }
+        if (looseSeason != null && season != null) looseSeason = null
+        if (looseEpisode == 0) looseEpisode = null
     }
     val year = RE_YEAR.find(s)?.groupValues?.get(2)?.toIntOrNull()
     val resolution = RE_RES.find(s)?.let { it.groupValues[2] + "p" }
@@ -449,7 +576,10 @@ fun parseName(raw: String): NameParts {
     val code = codeIn(noBrackets)
 
     // 片名 token：分词以后丢掉数字、技术标签、年份、季集写法、发布组、编号的字母部分（不然 ABP 开头的字幕都拿满片名分）
-    val tokens = words(noBrackets).filterTo(LinkedHashSet<String>()) { w ->
+    // 整个名字都在方括号里（「[AI-Raws][頭文字D_4th][Initial_D_Fourth_Stage][2004][03]…」）：片名 token 从括号里取（第一组是发布组，不算）
+    val tokenSource = if (words(noBrackets).any { it.any { c -> c.isLetter() } }) noBrackets
+    else BRACKETS.findAll(s).drop(1).joinToString(" ") { it.value.drop(1).dropLast(1) }
+    val tokens = words(tokenSource).filterTo(LinkedHashSet<String>()) { w ->
         when {
             w.isEmpty() -> false
             w.all { it in '0'..'9' } -> false
@@ -464,7 +594,7 @@ fun parseName(raw: String): NameParts {
             else -> true
         }
     }
-    return NameParts(tokens, year, season, episode, resolution, source, group, code?.code)
+    return NameParts(tokens, year, season, episode, resolution, source, group, code?.code, finalSeason, looseSeason, looseEpisode)
 }
 
 /**

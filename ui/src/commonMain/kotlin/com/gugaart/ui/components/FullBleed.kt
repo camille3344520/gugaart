@@ -117,7 +117,7 @@ fun FullBleed(
     // 竖版海报：横向居中、竖向贴顶（高被封顶时裁的是海报底部，片名区本来就压在那里）
     val frame = if (source == BleedSource.Poster) Framing(0.5f, 0f) else framing
     val bmp = rememberImage(url, keepPrevious = true)
-    val cf = rememberCrossfade(bmp)
+    val cf = rememberCrossfade(bmp, clearOnNull = true)
     val softNow = rememberSoft(cf.current.takeIf { soften || source == BleedSource.PosterBlur })
     val softPrev = rememberSoft(cf.previous.takeIf { soften || source == BleedSource.PosterBlur })
     val current = cf.current

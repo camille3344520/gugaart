@@ -152,7 +152,7 @@ fun TvBackdrop(art: Art, deep: Boolean, modifier: Modifier = Modifier, sided: Bo
         url?.let { com.gugaart.ui.tv.tvBleedUrl(it) }?.takeIf { it != url }?.let { graph.images.peek(it) }
     }
     val bmp = sharpBmp ?: cachedLow
-    val cf = rememberCrossfade(bmp)
+    val cf = rememberCrossfade(bmp, clearOnNull = true)
     val soft = rememberSoft(cf.current.takeIf { blur })
     val bright = rememberBrightImage(cf.current)
     val reduced = LocalMotionPrefs.current.reducedMotion

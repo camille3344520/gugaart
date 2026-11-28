@@ -23,6 +23,8 @@ val mockAccountUrl: String? = providers.gradleProperty("gugaart.mockAccount").or
 if (mockAccountUrl != null) require(Regex("""^https?://[^\s"\\]+$""").matches(mockAccountUrl)) { "-Pgugaart.mockAccount 必须是 http(s) 地址：$mockAccountUrl" }
 // 1.5.0 跨服务器验收：-Pgugaart.mockServers=<地址>,<地址> → 同一个 debug 字段里多一个 servers 数组（只和 mockAccount 一起用；上游解析时忽略它，
 // 画报的 DevMockServers 读它，把几台 Mock 存成几台服务器）。release 照旧是空串。
+// 调试用的「逐集核对」（ui/.../debug/MatchAudit.kt）：只有 -Pgugaart.audit=true 编出来的包才认启动参数 gugaart.audit；正式发版不带
+val auditOn: Boolean = providers.gradleProperty("gugaart.audit").orNull?.trim() == "true"
 val mockServerUrls: List<String> = providers.gradleProperty("gugaart.mockServers").orNull?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
 mockServerUrls.forEach { require(Regex("""^https?://[^\s"\\]+$""").matches(it)) { "-Pgugaart.mockServers 必须是 http(s) 地址：$it" } }
 val mockServersJson: String = if (mockServerUrls.isEmpty()) "" else mockServerUrls.joinToString(",", prefix = ""","servers":[""", postfix = "]") { "\"$it\"" }
@@ -74,6 +76,7 @@ android {
         versionCode = rootProject.extra["gugaartVersionCode"] as Int
         versionName = rootProject.extra["gugaartVersion"] as String
         // Trakt 应用（用户 2026-11-15：自己注册，Client ID / Secret 放 .env，正式包内嵌）；没有 = 空 = 这一版不能连 Trakt
+        buildConfigField("boolean", "AUDIT", auditOn.toString())
         buildConfigField("String", "TRAKT_CLIENT_ID", javaLiteral(providers.environmentVariable("TRAKT_CLIENT_ID").orNull?.trim()?.takeIf { it.isNotEmpty() } ?: envFileValue("TRAKT_CLIENT_ID").orEmpty()))
         buildConfigField("String", "TRAKT_CLIENT_SECRET", javaLiteral(providers.environmentVariable("TRAKT_CLIENT_SECRET").orNull?.trim()?.takeIf { it.isNotEmpty() } ?: envFileValue("TRAKT_CLIENT_SECRET").orEmpty()))
         // 和上游一致：libmpv 带的 ABI（去掉 x86 省 15 MB）

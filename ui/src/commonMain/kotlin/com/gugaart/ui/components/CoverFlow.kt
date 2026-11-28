@@ -271,7 +271,8 @@ fun CoverFlow(
         val lo = (centerSlot - 2).coerceAtLeast(0)
         val hi = (centerSlot + 2).coerceAtMost(n - 1)
         for (i in lo..hi) {
-            key(i) {
+            // 按「这一格是哪一部」认（位置 + 海报地址）：换一批片单、自动翻页以后，同一个位置不再留着上一部的海报（新海报没到时画片名斜纹）
+            key(i, posters.getOrNull(i)) {
                 val center = i == state.settled
                 Box(
                     Modifier
