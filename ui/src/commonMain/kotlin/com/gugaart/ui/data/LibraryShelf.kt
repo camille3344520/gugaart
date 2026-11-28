@@ -71,10 +71,16 @@ suspend fun libraryCount(client: EmbyClient, library: LibraryEntry): Int? = try 
  * 真实数据的代码路径：上游 :core 的 `EmbyClient.getViewList()`（`/Users/{id}/Views`，只读）+ 每个库各数一次部数（并行）。
  * 数不出来的库不写数字（null），不退回 `ChildCount`。
  */
-suspend fun loadLibraries(client: EmbyClient): List<LibraryEntry> = coroutineScope {
-    val views = client.getViewList().map { it.toLibraryEntry().copy(titles = null) }.filter { isListedLibrary(it.kind) }
+suspend fun loadLibraries(client: EmbyClient, onViews: ((List<LibraryEntry>) -> Unit)? = null): List<LibraryEntry> = coroutineScope {
+    val views = loadLibraryViews(client)
+    // 先把库名交出去（大库数部数要好几秒：几千、上万部的库，Emby 递归数一次不快）
+    onViews?.invoke(views)
     views.map { lib -> async { lib.copy(titles = libraryCount(client, lib)) } }.awaitAll()
 }
+
+/** 只要库名和类型、不数部数（一次 `/Views`）：进一个库之前认它是什么库用这个，不等每个库都数完。 */
+suspend fun loadLibraryViews(client: EmbyClient): List<LibraryEntry> =
+    client.getViewList().map { it.toLibraryEntry().copy(titles = null) }.filter { isListedLibrary(it.kind) }
 
 /** 一次加载的三种结果；界面按它画「加载中（她在摆稿纸）/ 目录 / 连不上」。 */
 sealed interface Shelf {

@@ -88,6 +88,8 @@ import com.gugugaga.ds.icons.GuguIcon
 import com.gugugaga.ds.physics.PressState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 
 /** 片库 / 海报墙 / 合集列表的版式数（设计稿 `tv/css/pages.css`）。 */
 object TvBrowseSpec {
@@ -132,17 +134,28 @@ fun TvLibsScreen(today: Today) {
     val session by g.session.session.collectAsState()
     val chrome = LocalChrome.current
     LaunchedEffect(Unit) { chrome.spot = null }
-    val load = rememberLoad("tv-libs") { c ->
-        val libs = loadLibraries(c)
-        TvLibs(libs, libs.associate { lib ->
-            lib.id to try {
-                if (lib.kind == "boxsets") loadSets(c, lib.id).take(4) else c.getLatest(parentId = lib.id, limit = 4, o = LATEST_FIELDS).map { c.titleOf(it) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                emptyList()
-            }
-        })
+    // 分步上版面（2026-11-28 主理人：「点开片库，正在排片的位置很慢」）：库名先上（一次 /Views）；
+    // 各库的最新四张并行取、到了再上；部数最后（几千、上万部的库，Emby 递归数一次要好几秒）
+    val load = com.gugaart.ui.data.rememberLoadSteps("tv-libs") { c, emit ->
+        kotlinx.coroutines.coroutineScope {
+            val views = com.gugaart.ui.data.loadLibraryViews(c)
+            emit(TvLibs(views, emptyMap()))
+            val counts = async { views.map { lib -> async { com.gugaart.ui.data.libraryCount(c, lib) } }.awaitAll() }
+            val latest = views.map { lib ->
+                async {
+                    lib.id to try {
+                        if (lib.kind == "boxsets") loadSets(c, lib.id).take(4) else c.getLatest(parentId = lib.id, limit = 4, o = LATEST_FIELDS).map { c.titleOf(it) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+            }.awaitAll().toMap()
+            emit(TvLibs(views, latest))
+            val n = counts.await()
+            TvLibs(views.mapIndexed { i, lib -> lib.copy(titles = n[i]) }, latest)
+        }
     }
     val data = load.value
     var at by remember { mutableStateOf<String?>(null) }
@@ -287,7 +300,8 @@ private fun TvWallLoading(seed: Int) {
 /** 一个媒体库 = 海报墙（`p=lib`：7 列，筛选栏打开时 5 列）；合集库 = 合集列表。 */
 @Composable
 fun TvLibraryScreen(id: String, today: Today) {
-    val libs = rememberLoad("tv-library-kind") { loadLibraries(it) }
+    // 只认这个库是什么库：一次 /Views，不等每个库数部数
+    val libs = rememberLoad("tv-library-kind") { com.gugaart.ui.data.loadLibraryViews(it) }
     val list = libs.value
     val lib = list?.firstOrNull { it.id == id }
     when {
@@ -326,7 +340,7 @@ private fun TvWallScreen(lib: LibraryEntry, today: Today) {
     }
     var panel by remember { mutableStateOf(preset.state == "filter" || preset.wallPanel != null) }
     var from by remember { mutableStateOf<PressState?>(null) }
-    val load = rememberLoad("tv-wall", lib.id, sort) { loadWall(it, lib, sort) }
+    val load = com.gugaart.ui.data.rememberLoadSteps("tv-wall", lib.id, sort) { c, emit -> loadWall(c, lib, sort, onPage = emit) }
     val all = load.value?.first
     val total = load.value?.second
     val shown = remember(all, filter) { all?.filter(filter::accepts) }

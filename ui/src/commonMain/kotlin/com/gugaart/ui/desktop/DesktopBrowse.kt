@@ -140,6 +140,8 @@ import com.gugugaga.ds.theme.LocalWindowDp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.async
 
 /** 浏览类界面的数（设计稿 `d2.css` / `d3.css`，rem）。 */
 object DeskBrowseSpec {
@@ -221,16 +223,28 @@ data class LibShelf(val library: LibraryEntry, val titles: List<Title>)
 
 private val SHELF_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspectRatio", "Genres", "CommunityRating"))
 
-/** 只读：上游 :core 的 `getViewList` + 每个库的 `getLatest`（合集库没有「最近添加」，取头几套合集）。 */
-suspend fun loadLibShelves(client: EmbyClient): List<LibShelf> = loadLibraries(client).map { lib ->
-    val titles = try {
-        if (lib.kind == "boxsets") loadSets(client, null).take(16) else client.getLatest(parentId = lib.id, limit = 16, o = SHELF_FIELDS).map { client.titleOf(it) }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (_: Exception) {
-        emptyList()
-    }
-    LibShelf(lib, titles)
+/**
+ * 只读：上游 :core 的 `getViewList` + 每个库的 `getLatest`（合集库没有「最近添加」，取头几套合集）。
+ * [emit]：分步交出（库名先上；各库的最近添加并行取、到了再上；部数最后——大库数一次要好几秒）。
+ */
+suspend fun loadLibShelves(client: EmbyClient, emit: ((List<LibShelf>) -> Unit)? = null): List<LibShelf> = kotlinx.coroutines.coroutineScope {
+    val views = com.gugaart.ui.data.loadLibraryViews(client)
+    emit?.invoke(views.map { LibShelf(it, emptyList()) })
+    val counts = async { views.map { lib -> async { com.gugaart.ui.data.libraryCount(client, lib) } }.awaitAll() }
+    val shelves = views.map { lib ->
+        async {
+            try {
+                if (lib.kind == "boxsets") loadSets(client, null).take(16) else client.getLatest(parentId = lib.id, limit = 16, o = SHELF_FIELDS).map { client.titleOf(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }.awaitAll()
+    emit?.invoke(views.zip(shelves) { lib, t -> LibShelf(lib, t) })
+    val n = counts.await()
+    views.mapIndexed { i, lib -> LibShelf(lib.copy(titles = n[i]), shelves[i]) }
 }
 
 /** 右边排几张小海报：给它的宽 ÷（海报宽 + 间隔），3–10 张。纯函数，有单测。 */
@@ -246,7 +260,7 @@ fun DesktopLibsScreen(today: Today) {
     val dimens = Guga.dimens
     val win = LocalWindowDp.current
     LaunchedEffect(Unit) { chrome.spot = null }
-    val load = rememberLoad("lib-shelves") { loadLibShelves(it) }
+    val load = com.gugaart.ui.data.rememberLoadSteps("lib-shelves") { c, emit -> loadLibShelves(c, emit) }
     val shelves = load.value
     DesktopPage(Modifier.testTag("desktop-libs")) {
         val total = shelves?.sumOf { it.library.titles ?: 0 } ?: 0
@@ -330,7 +344,8 @@ private val LETTERS: List<Char> = listOf('#') + ('A'..'Z').toList()
 /** 一个媒体库 = 海报墙（设计稿 `p=wall`）；合集库 = 合集列表。 */
 @Composable
 fun DesktopLibraryScreen(id: String, today: Today) {
-    val libs = rememberLoad("libraries") { loadLibraries(it) }
+    // 只认这个库是什么库：一次 /Views，不等每个库数部数
+    val libs = rememberLoad("library-kind") { com.gugaart.ui.data.loadLibraryViews(it) }
     val list = libs.value
     val lib = list?.firstOrNull { it.id == id }
     when {
@@ -376,7 +391,7 @@ private fun DesktopWall(lib: LibraryEntry, today: Today) {
     var panel by remember { mutableStateOf(preset.state == "filter") }
     var sortOpen by remember { mutableStateOf(preset.state == "sort") }
     var listView by rememberSaveable { mutableStateOf(preset.state == "list") }
-    val wall = rememberLoad(lib.id, sort) { loadWall(it, lib, sort) }
+    val wall = com.gugaart.ui.data.rememberLoadSteps(lib.id, sort) { c, emit -> loadWall(c, lib, sort, onPage = emit) }
     val all = wall.value?.first.takeIf { preset.state != "loading" }
     val total = lib.titles ?: wall.value?.second
     val conditions = filter.count + if (minRating != null) 1 else 0

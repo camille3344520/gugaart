@@ -83,6 +83,7 @@ import com.gugugaga.ds.icons.Icon
 import com.gugugaga.ds.physics.pressGraphics
 import com.gugugaga.ds.physics.pressable
 import com.gugugaga.ds.physics.rememberPressState
+import com.gugaart.ui.data.rememberLoadSteps
 
 /** 排序的四种（服务器排，走上游 `LibraryQuery.sortBy`）。 */
 enum class WallSort(val label: String, val sortBy: String, val descending: Boolean) {
@@ -169,26 +170,46 @@ private val WALL_FIELDS = ItemsRequestOptions(fields = listOf("PrimaryImageAspec
  * 排序要对全部条目排：翻到 600 条之后顺序仍对。内存只留片名 / 年份 / 题材 / 评分 / 图地址这些轻字段，
  * 一万部约几 MB；取数期间旧结果留着（rememberLoad），不闪。
  */
-suspend fun loadWall(client: EmbyClient, library: LibraryEntry, sort: WallSort, limit: Int = 600): Pair<List<Title>, Int> {
+suspend fun loadWall(
+    client: EmbyClient,
+    library: LibraryEntry,
+    sort: WallSort,
+    limit: Int = 600,
+    /**
+     * 每取到一页就交出「到目前为止的全部 + 总部数」（[rememberLoadSteps] 的 emit）。给了它就按 [WALL_STEPS] 阶梯取：
+     * 第一页小、马上上墙，后面一页比一页大（2026-11-28 主理人：「几千、1w 部…先加载多少部，显示出来后按阶梯都显示出来」）。
+     * 不给 = 每页 [limit] 部、取完才返回（老的用法、单测）。
+     */
+    onPage: ((Pair<List<Title>, Int>) -> Unit)? = null,
+): Pair<List<Title>, Int> {
     val types = libraryItemTypes(library.kind)
     val out = ArrayList<Title>()
     var total = 0
+    var step = 0
     while (true) {
+        val size = if (onPage == null) limit else WALL_STEPS[minOf(step, WALL_STEPS.lastIndex)]
+        step++
         val r = client.getItems(
             LibraryQuery(
                 parentId = library.id, includeItemTypes = types, recursive = true,
                 sortBy = listOf(sort.sortBy), sortOrder = if (sort.descending) "Descending" else "Ascending",
-                limit = limit, startIndex = out.size.takeIf { it > 0 },
+                limit = size, startIndex = out.size.takeIf { it > 0 },
             ),
             WALL_FIELDS,
         )
         total = maxOf(total, r.totalRecordCount)
         if (r.items.isEmpty()) break
         out += r.items.map { client.titleOf(it) }
-        if (r.items.size < limit || out.size >= total) break
+        val done = r.items.size < size || out.size >= total
+        // 服务器按 [sort] 排好序一页页给：后面的页接在后面，前面的顺序不会变
+        if (!done) onPage?.invoke(out.toList() to maxOf(total, out.size))
+        if (done) break
     }
     return out to maxOf(total, out.size)
 }
+
+/** 海报墙分页的阶梯：第一页 120 部（电视 7 列 × 十几行、手机三列翻好几屏），后面越取越多。 */
+val WALL_STEPS = intArrayOf(120, 300, 600, 1200, 2000)
 
 /**
  * 片库（手机第三个标签）/ 一个媒体库的海报墙（`Route.Library(id)`）。设计稿 `p=wall`。
@@ -208,7 +229,7 @@ fun WallScreen(libraryId: String?) {
     val settings = LocalGugaSettings.current
     val initialFilter = remember { WallFilter(genres = preset.wallGenres, decades = Decade.entries.filter { it.label in preset.wallDecades }.toSet()) }
     val initialPanel = preset.wallPanel
-    val libs = rememberLoad("libraries") { c -> loadLibraries(c) }
+    val libs = rememberLoadSteps("libraries") { c, emit -> loadLibraries(c, emit) }
     var picked by rememberSaveable { mutableStateOf(libraryId ?: preset.wallLibrary) }
     val library = libs.value?.let { list -> list.firstOrNull { it.id == picked } ?: list.firstOrNull() }
     // 1.3.1：筛选 / 排序按片库记住（进详情返回、重开应用都还在）；测试预置优先于存着的
@@ -223,7 +244,7 @@ fun WallScreen(libraryId: String?) {
     }
     // 哪一块推开着：filter / sort / null
     var panel by remember { mutableStateOf(initialPanel) }
-    val wall = rememberLoad(library?.id, sort) { c -> library?.let { loadWall(c, it, sort) } }
+    val wall = rememberLoadSteps(library?.id, sort) { c, emit -> library?.let { loadWall(c, it, sort, onPage = { p -> emit(p) }) } }
     val all = wall.value?.first
     // 总数 = 这次查询的 TotalRecordCount（1.3.1 分页取全）；还没取到时先用库名上的那个数
     val total = wall.value?.second ?: library?.titles

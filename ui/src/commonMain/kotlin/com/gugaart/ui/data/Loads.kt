@@ -129,7 +129,16 @@ fun errorKindOf(message: String): ErrorKind = when {
  * 不会挂着另一台的片库（D14「切换服务器的时候得马上更新主页画报」的本意）。
  */
 @Composable
-fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load<T> {
+fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load<T> =
+    rememberLoadSteps(*keys) { c, _ -> loader(c) }
+
+/**
+ * 同 [rememberLoad]，但取数分几步、每一步的结果马上上版面：[loader] 拿到的 `emit` 每调一次，[Load.value] 就换成这一份
+ * （第一步到了骨架就收起；旧参数的结果留到第一步到为止）。最后返回的才是完整结果、才进 [LoadCache]。
+ * 2026-11-28 主理人：「点开片库，正在排片的位置很慢…几千、1w 部…先加载多少部，显示出来后按阶梯都显示出来」。
+ */
+@Composable
+fun <T> rememberLoadSteps(vararg keys: Any?, loader: suspend (EmbyClient, emit: (T) -> Unit) -> T): Load<T> {
     val graph = LocalGraph.current
     val session by graph.session.session.collectAsState()
     // 1.6 A1：别台的详情页（data/RemoteBrowse.kt）里，取数用那台的客户端；缓存按那台分键
@@ -162,8 +171,14 @@ fun <T> rememberLoad(vararg keys: Any?, loader: suspend (EmbyClient) -> T): Load
         }
         load.account = account
         load.refreshing = true
+        val emit: (T) -> Unit = { part ->
+            load.value = part
+            load.valueKeys = keyList
+            load.error = null
+            load.showSkeleton = false
+        }
         try {
-            val v = if (offMain) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { loader(client) } else loader(client)
+            val v = if (offMain) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { loader(client, emit) } else loader(client, emit)
             load.value = v
             load.valueKeys = keyList
             load.error = null

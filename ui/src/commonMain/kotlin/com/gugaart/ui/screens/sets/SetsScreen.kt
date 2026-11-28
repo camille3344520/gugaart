@@ -303,7 +303,8 @@ private fun MemberRow(number: Int, m: Title, played: Boolean, onClick: () -> Uni
  */
 @Composable
 fun LibraryScreen(id: String) {
-    val libs = rememberLoad("library-kind") { com.gugaart.ui.data.loadLibraries(it) }
+    // 只认库的种类：一次 /Views，不等每个库数部数（大库数一次要好几秒）
+    val libs = rememberLoad("library-kind") { com.gugaart.ui.data.loadLibraryViews(it) }
     val list = libs.value
     when {
         list == null && libs.error == null -> Box(Modifier.fillMaxSize())
