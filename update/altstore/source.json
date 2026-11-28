@@ -1,0 +1,24 @@
+{
+  "name": "咕嘎画报 · EMBY",
+  "identifier": "com.gugugaga.art.altstore",
+  "sourceURL": "https://raw.githubusercontent.com/camille3344520/gugaart/main/update/altstore/source.json",
+  "apps": [
+    {
+      "name": "咕咕嘎嘎",
+      "bundleIdentifier": "com.gugugaga.art",
+      "developerName": "咕嘎画报 · EMBY",
+      "localizedDescription": "咕嘎画报是一个第三方 Emby 客户端（应用名「咕咕嘎嘎」），把你的 Emby 片库排成每天出刊的画报。支持内置 libmpv 播放、弹幕、智能字幕、多服务器与观影称号。",
+      "iconURL": "https://raw.githubusercontent.com/camille3344520/gugaart/main/shell-ios/xcode/Gugaart/Assets.xcassets/AppIcon.appiconset/icon-1024.png",
+      "versions": [
+        {
+          "version": "1.6.0",
+          "date": "2026-11-28T04:23:34Z",
+          "localizedDescription": "这是一个大版本，把基础功能补齐：\n- 离线下载：手机和 iPhone 能把片子下到本机，没网也能看。\n- 多台服务器一起搜：片子在别的服务器上也能搜到、点进去就能看。\n- 第一次用更省事：自动找到家里网络上的 Emby，登录时直接列出用户。\n- 播放：双语字幕、进度条缩略图、音频直通开关；iPhone 能 AirPlay 投屏。\n- 电视：用 mpv 不再卡死；匹配片源帧率、片库翻页更顺、遥控器语音搜索、系统首页「继续观看」。\n- iPhone 用 AltStore 安装：加一次源，以后自动更新、自动续签。",
+          "downloadURL": "https://github.com/camille3344520/gugaart/releases/download/v1.6.0/gugaart-1.6.0-ios-unsigned.ipa",
+          "size": 59332072,
+          "minOSVersion": "15.0"
+        }
+      ]
+    }
+  ]
+}
